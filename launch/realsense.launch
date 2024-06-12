@@ -1,0 +1,88 @@
+<!-- connect to the physical camera device -->
+<launch>
+  <arg name="external_manager"    default="false"/>
+  <arg name="manager"             default="realsense2_camera_manager"/>
+  <arg name="camera"              default="realsense"/>
+  <arg name="serial_no"           default="239122074092"/>
+  <arg name="device_type"         default=""/>     
+  <arg name="respawn"             default="false"/>
+  <arg name="usb_port_id"         default=""/> 
+  <arg name="tf_prefix"           default="$(arg camera)"/>
+  <arg name="enable_depth"        default="true"/>
+  <arg name="depth_width"         default="1280"/>
+  <arg name="depth_height"        default="720"/>  
+  <arg name="depth_fps"           default="30"/>
+  <arg name="align_depth"               default="false"/>
+  <arg name="enable_confidence"   default="false"/>
+  <arg name="confidence_width"    default="$(arg depth_width)"/>
+  <arg name="confidence_height"   default="$(arg depth_height)"/>
+  <arg name="confidence_fps"      default="30"/>
+  <arg name="enable_infra"        default="false"/>
+  <arg name="enable_infra1"       default="false"/>
+  <arg name="enable_infra2"       default="false"/>
+  <arg name="infra_rgb"           default="false"/>
+  <arg name="infra_fps"           default="30"/>
+  <arg name="infra_width"         default="$(arg depth_width)"/>
+  <arg name="infra_height"        default="$(arg depth_height)"/>
+  <arg name="enable_color"        default="true"/>
+  <arg name="color_width"         default="1920"/>
+  <arg name="color_height"        default="1080"/>
+  <arg name="color_fps"           default="30"/>
+  <arg name="enable_pointcloud"         default="true"/>
+  <arg name="pointcloud_texture_stream" default="RS2_STREAM_COLOR"/>
+  <arg name="pointcloud_texture_index"  default="0"/>
+  <arg name="allow_no_texture_points"   default="false"/>
+  <arg name="ordered_pc"                default="false"/>
+  <arg name="enable_sync"               default="false"/>
+  <arg name="publish_tf"                default="true"/>
+  <arg name="tf_publish_rate"           default="0"/>
+  <arg name="filters"                   default=""/>
+  <arg name="clip_distance"             default="-2"/>
+  <arg name="initial_reset"             default="false"/>
+  <arg name="reconnect_timeout"         default="6.0"/>
+  <arg name="wait_for_device_timeout"   default="-1.0"/>
+
+  <include file="$(find realsense2_camera)/launch/rs_camera.launch">
+    <arg name="external_manager" value="$(arg external_manager)"/>
+    <arg name="manager"                   value="$(arg manager)"/>
+    <arg name="camera"                   value="$(arg camera)"/>
+    <arg name="serial_no"                value="$(arg serial_no)"/>
+    <arg name="usb_port_id"              value="$(arg usb_port_id)"/>
+    <arg name="tf_prefix"                   value="$(arg tf_prefix)"/>
+    <arg name="device_type"              value="$(arg device_type)"/>
+    <arg name="respawn"                   value="$(arg respawn)"/>
+    <arg name="enable_depth"              value="$(arg enable_depth)"/>
+    <arg name="depth_width"                 value="$(arg depth_width)"/>
+    <arg name="depth_height"                 value="$(arg depth_height)"/>
+    <arg name="depth_fps"           value="$(arg depth_fps)"/>
+    <arg name="enable_confidence"         value="$(arg enable_confidence)"/>
+    <arg name="confidence_width"    value="$(arg confidence_width)"/>
+    <arg name="confidence_height"   value="$(arg confidence_height)"/>
+    <arg name="confidence_fps"      value="$(arg confidence_fps)"/>
+    <arg name="enable_infra"              value="$(arg enable_infra)"/>
+    <arg name="enable_infra1"             value="$(arg enable_infra1)"/>
+    <arg name="enable_infra2"             value="$(arg enable_infra2)"/>
+    <arg name="infra_rgb"                 value="$(arg infra_rgb)"/>
+    <arg name="infra_width"         value="$(arg infra_width)"/>
+    <arg name="infra_height"        value="$(arg infra_height)"/>
+    <arg name="infra_fps"           value="$(arg infra_fps)"/>
+    <arg name="enable_color"              value="$(arg enable_color)"/>
+    <arg name="color_width"         value="$(arg color_width)"/>
+    <arg name="color_height"        value="$(arg color_height)"/>
+    <arg name="color_fps"           value="$(arg color_fps)"/>
+    <arg name="enable_pointcloud"         value="$(arg enable_pointcloud)"/>
+    <arg name="pointcloud_texture_stream" value="$(arg pointcloud_texture_stream)"/>
+    <arg name="pointcloud_texture_index"  value="$(arg pointcloud_texture_index)"/>
+    <arg name="allow_no_texture_points"   value="$(arg allow_no_texture_points)"/>
+    <arg name="ordered_pc"                value="$(arg ordered_pc)"/>
+    <arg name="enable_sync"               value="$(arg enable_sync)"/>
+    <arg name="align_depth"               value="$(arg align_depth)"/>
+    <arg name="publish_tf"                value="$(arg publish_tf)"/>
+    <arg name="tf_publish_rate"           value="$(arg tf_publish_rate)"/>
+    <arg name="filters"                   value="$(arg filters)"/>
+    <arg name="clip_distance"             value="$(arg clip_distance)"/>
+    <arg name="initial_reset"             value="$(arg initial_reset)"/>
+    <arg name="reconnect_timeout"         value="$(arg reconnect_timeout)"/>
+    <arg name="wait_for_device_timeout"   value="$(arg wait_for_device_timeout)"/>
+  </include>
+</launch>
