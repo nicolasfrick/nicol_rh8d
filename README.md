@@ -33,5 +33,54 @@ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim
 ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/data
 ln -s "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/tests "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/tests
 
+## Cam
+Check video devices:
+$ sudo apt install v4l-utils
+$ v4l2-ctl --list-devices
+$ sudo apt install ffmpeg # to fix unknonwn libx264 error compile from source: https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu  
+$ ffplay /dev/video0
 
+Create virtual video device:
+$ sudo apt-get install v4l2loopback-dkms v4l2loopback-utils gstreamer1.0-tools gstreamer1.0-plugins-good libopencv-dev build-essential vlc 
+$ v4l2loopback-ctl --version # version
+$ sudo modprobe v4l2loopback devices=2 exclusive_caps=1,1 video_nr=6,7 card_label="VideoTest","OpenCV Camera" # add device
+$ v4l2-ctl --list-devices -d5
+$ sudo modprobe -r v4l2loopback # remove device
+
+(v4l2loopback-ctl add and remove are n/a for older versions)
+
+Test image:
+$ gst-launch-1.0 videotestsrc ! v4l2sink device=/dev/video6
+Map to virtual device:
+$ ffmpeg -f v4l2 -i /dev/video4 -f v4l2 /dev/video6
+Check mapping:
+$ ffplay /dev/video6
+Negate colors:
+$ ffmpeg -f v4l2 -i /dev/video4 -vf negate -f v4l2 /dev/video6
+Probe frames:
+$ ffprobe -v 0 -select_streams v -show_frames /dev/video4
+Trim:
+ffmpeg -f v4l2 -i /dev/video4 -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6
+<!-- $ ffmpeg -y -nostdin -i INPUT.mkv -ss 8 -to 68 -map 0:v:0 -vsync 0 -enc_time_base -1 -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -c:v libx264 -crf 12 -bf 0 OUTPUT.mp4 -->
+
+Modify RGB cam setting online via 
+$ realsense-viewer
+restore settings by unplugging the camera
+
+Note: For Realsense, video4 is the rgb camera dev
+
+## Test
+$ conda activate nicol_rh8d
+$ python mmscripts/pose_video.py --video "/dev/video6" \
+    --det \
+    "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py" \
+    "https://download.openmmlab.com/mmpose/mmdet_pretrained/cascade_rcnn_x101_64x4d_fpn_20e_onehand10k-dac19597_20201030.pth" \
+    --2d \
+    "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/onehand10k/ hrnetv2_w18_onehand10k_256x256_dark.py" \
+    "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
+    --vis 
+
+Line 46 in needs an integer for accessing a video device -> change args.video to int(args.video) in order to use a device like video0
+
+  configuration: --prefix=/opt/conda/conda-bld/ffmpeg_1597178665428/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeh --cc=/opt/conda/conda-bld/ffmpeg_1597178665428/_build_env/bin/x86_64-conda_cos6-linux-gnu-cc --disable-doc --disable-openssl --enable-avresample --enable-gnutls --enable-hardcoded-tables --enable-libfreetype --enable-libopenh264 --enable-pic --enable-pthreads --enable-shared --disable-static --enable-version3 --enable-zlib --enable-libmp3lame
 

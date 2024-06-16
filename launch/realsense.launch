@@ -3,7 +3,7 @@
   <arg name="external_manager"    default="false"/>
   <arg name="manager"             default="realsense2_camera_manager"/>
   <arg name="camera"              default="realsense"/>
-  <arg name="serial_no"           default="239122074092"/>
+  <arg name="serial_no"           default="822512060411"/>
   <arg name="device_type"         default=""/>     
   <arg name="respawn"             default="false"/>
   <arg name="usb_port_id"         default=""/> 
@@ -12,7 +12,7 @@
   <arg name="depth_width"         default="1280"/>
   <arg name="depth_height"        default="720"/>  
   <arg name="depth_fps"           default="30"/>
-  <arg name="align_depth"               default="false"/>
+  <arg name="align_depth"         default="false"/>
   <arg name="enable_confidence"   default="false"/>
   <arg name="confidence_width"    default="$(arg depth_width)"/>
   <arg name="confidence_height"   default="$(arg depth_height)"/>
@@ -28,7 +28,7 @@
   <arg name="color_width"         default="1920"/>
   <arg name="color_height"        default="1080"/>
   <arg name="color_fps"           default="30"/>
-  <arg name="enable_pointcloud"         default="true"/>
+  <arg name="enable_pointcloud"         default="false"/>
   <arg name="pointcloud_texture_stream" default="RS2_STREAM_COLOR"/>
   <arg name="pointcloud_texture_index"  default="0"/>
   <arg name="allow_no_texture_points"   default="false"/>
