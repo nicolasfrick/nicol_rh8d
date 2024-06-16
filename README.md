@@ -1,43 +1,46 @@
 # Installation
 
 ## Install miniconda3
-mkdir -p ~/miniconda3
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
-bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
-rm -rf ~/miniconda3/miniconda.sh
-~/miniconda3/bin/conda init bash
+$ mkdir -p ~/miniconda3
+$ wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda3/miniconda.sh
+$ bash ~/miniconda3/miniconda.sh -b -u -p ~/miniconda3
+$ rm -rf ~/miniconda3/miniconda.sh
+$ ~/miniconda3/bin/conda init bash
 
 ## Install env
-Follows nicol_demos/commands_env.txt NICOL Frozen Environment
 
-ENV=nicol_rh8d
-PYTHON=3.9
-DATASETS_DIR=~/nicol_rh8d/datasets/OpenMM/data
-NICOL_RH8D=~/nicol_rh8d
-conda create -n $ENV python=$PYTHON
-conda activate $ENV
+Either 
 
-## PyTorch
-conda install -c pytorch numpy=1.22 cudatoolkit=10.2 pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 torchtext==0.13.1 'libtiff<4.5'
+$ conda env create --name nicol_rh8d --file nicol_rh8d/environment.yml
+
+Or following nicol_demos/commands_env.txt NICOL Frozen Environment
+
+$ ENV=nicol_rh8d
+$ PYTHON=3.9
+$ DATASETS_DIR=~/nicol_rh8d/datasets/OpenMM/data
+$ NICOL_RH8D=~/nicol_rh8d
+$ conda create -n $ENV python=$PYTHON
+$ conda activate $ENV
+$ conda install -c pytorch numpy=1.22 cudatoolkit=10.2 pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 torchtext==0.13.1 'libtiff<4.5'
 
 ## OpenMM
-pip install --upgrade openmim
-mim install 'mmtrack<1' 'mmpose<1' 'mmdet<3' mmcls 'mmcv-full<1.7'
-mim list
-pip uninstall xtcocotools  # <-- Otherwise import mmpose.apis fails...
-pip install --no-binary xtcocotools xtcocotools
-pip check
+$ pip install --upgrade openmim
+$ mim install 'mmtrack<1' 'mmpose<1' 'mmdet<3' mmcls 'mmcv-full<1.7'
+$ mim list
+$ pip uninstall xtcocotools  # <-- Otherwise import mmpose.apis fails...
+$ pip install --no-binary xtcocotools xtcocotools
+$ pip check
 
 ## Config
-ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim/data
-ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/data
-ln -s "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/tests "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/tests
+$ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim/data
+$ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/data
+$ ln -s "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/tests "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/tests
 
 ## Cam
 Check video devices:
 $ sudo apt install v4l-utils
 $ v4l2-ctl --list-devices
-$ sudo apt install ffmpeg # to fix unknonwn libx264 error compile from source: https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu  
+$ sudo snap install ffmpeg # to fix unknonwn libx264 error compile from source: https://trac.ffmpeg.org/wiki/CompilationGuide/Ubuntu  
 $ ffplay /dev/video0
 
 Create virtual video device:
@@ -81,6 +84,3 @@ $ python mmscripts/pose_video.py --video "/dev/video6" \
     --vis 
 
 Line 46 in needs an integer for accessing a video device -> change args.video to int(args.video) in order to use a device like video0
-
-  configuration: --prefix=/opt/conda/conda-bld/ffmpeg_1597178665428/_h_env_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placehold_placeh --cc=/opt/conda/conda-bld/ffmpeg_1597178665428/_build_env/bin/x86_64-conda_cos6-linux-gnu-cc --disable-doc --disable-openssl --enable-avresample --enable-gnutls --enable-hardcoded-tables --enable-libfreetype --enable-libopenh264 --enable-pic --enable-pthreads --enable-shared --disable-static --enable-version3 --enable-zlib --enable-libmp3lame
-
