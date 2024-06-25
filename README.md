@@ -91,7 +91,7 @@ ffmpeg -i input.mov -preset slow -codec:a libfdk_aac -b:a 128k -codec:v libx264 
                                   - medium,slow,slower,veryslow,placebo |
 
 OpenCV cannot open h264 encoding by default, use other format like rawvideo/yuyv422 (as relasense):
-***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf negate -f v4l2 /dev/video6***
+***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6***
 
 Modify RGB cam setting online via 
 $ realsense-viewer
@@ -110,4 +110,12 @@ $ python mmscripts/pose_video.py --video "/dev/video6" \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
     --vis 
 
-Line 46 in needs an integer for accessing a video device -> change args.video to int(args.video) in order to use a device like video0
+### 3D
+python mmscripts/pose_video.py --video '/dev/video6' \
+    --det "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py" \
+    "https://download.openmmlab.com/mmpose/mmdet_pretrained/cascade_rcnn_x101_64x4d_fpn_20e_onehand10k-dac19597_20201030.pth" \
+    --2d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/onehand10k/hrnetv2_w18_onehand10k_256x256_dark.py" \
+    "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
+    --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py" \
+    "https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth" \
+    --vis 
