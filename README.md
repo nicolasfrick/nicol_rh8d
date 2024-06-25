@@ -64,7 +64,34 @@ Probe frames:
 $ ffprobe -v 0 -select_streams v -show_frames /dev/video4
 Trim:
 ffmpeg -f v4l2 -i /dev/video4 -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6
-<!-- $ ffmpeg -y -nostdin -i INPUT.mkv -ss 8 -to 68 -map 0:v:0 -vsync 0 -enc_time_base -1 -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -c:v libx264 -crf 12 -bf 0 OUTPUT.mp4 -->
+List device capabilities:
+ffmpeg -f v4l2 -list_formats all -i /dev/video4
+Codecs and formats avl.
+ffmpeg -codecs
+ffmpeg -formats
+Adjusting camera functions:
+v4l2-ctl -L
+v4l2-ctl -c <option>=<value>
+Encoding to mkv:
+ffmpeg -f v4l2 -framerate 25 -video_size 640x480 -i /dev/video4 output.mkv
+Encoding to mp4:
+ffmpeg -i input.mov -preset slow -codec:a libfdk_aac -b:a 128k -codec:v libx264 -pix_fmt yuv420p -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf scale=-1:720 output.mp4
+| Flag | Options | Description |
+| ---- | ------- | ----------- |
+| `-codec:a` | libfaac, libfdk_aac, libvorbis | Audio Codec |
+| `-quality` | best, good, realtime | Video Quality |
+| `-b:a` | 128k, 192k, 256k, 320k | Audio Bitrate |
+| `-codec:v` | mpeg4, libx264, libvpx-vp9 | Video Codec |
+| `-b:v` | 1000, 2500, 5000, 8000 | Video Bitrate |
+| `-vf scale` | -1:X | Resize Video (X is height) |
+| `-qmin 10 -qmax 42` | Quantization | https://gist.github.com/dvlden/b9d923cb31775f92fa54eb8c39ccd5a9#gistcomment-2972745 |
+|       --preset <string>  |      Use a preset to select encoding settings [medium]
+                                  Overridden by user settings.
+                                  - ultrafast,superfast,veryfast,faster,fast
+                                  - medium,slow,slower,veryslow,placebo |
+
+OpenCV cannot open h264 encoding by default, use other format like rawvideo/yuyv422 (as relasense):
+***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf negate -f v4l2 /dev/video6***
 
 Modify RGB cam setting online via 
 $ realsense-viewer
