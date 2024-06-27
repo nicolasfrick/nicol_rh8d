@@ -46,7 +46,7 @@ $ ffplay /dev/video0
 Create virtual video device:
 $ sudo apt-get install v4l2loopback-dkms v4l2loopback-utils gstreamer1.0-tools gstreamer1.0-plugins-good libopencv-dev build-essential vlc 
 $ v4l2loopback-ctl --version # version
-$ sudo modprobe v4l2loopback devices=2 exclusive_caps=1,1 video_nr=6,7 card_label="VideoTest","OpenCV Camera" # add device
+$ sudo modprobe v4l2loopback devices=1 exclusive_caps=1 video_nr=6 card_label="OpenCV Camera" # add device
 $ v4l2-ctl --list-devices -d5
 $ sudo modprobe -r v4l2loopback # remove device
 
@@ -119,3 +119,29 @@ python mmscripts/pose_video.py --video '/dev/video6' \
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py" \
     "https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth" \
     --vis 
+
+#### Test with whole body pose (long video latency)
+    python mmscripts/pose_video.py --vis --video '/dev/video6' \
+    --det "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py" \
+    "https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_r50_fpn_1x_coco/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth" \
+    --2d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192.py" \
+    "https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w48_coco_256x192-b9e0b3ab_20200708.pth" \
+    --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py" \
+    "https://download.openmmlab.com/mmpose/body3d/videopose/videopose_h36m_243frames_fullconv_supervised_cpn_ft-88f5abbb_20210527.pth" 
+
+
+## MMPose v1.x
+$ conda create -n mmpose python=3.9
+$ conda activate mmpose
+$ conda install pytorch torchvision -c pytorch
+$ pip install -U openmim
+$ pip install ffspec
+$ mim install mmengine
+$ mim install "mmcv>=2.0.1"
+$ mim install "mmdet>=3.1.0"
+$ mim install "mmpose>=1.1.0"
+$ conda install pytorch torchvision -c pytorch
+
+### Inferencer 
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py ~/catkin_ws/src/nicol_rh8d/datasets/OpenMM/data/image29590.jpg --pose2d hand2d --pose3d hand3d --vis-out-dir vis_results/hand3d
+    
