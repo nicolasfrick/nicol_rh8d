@@ -110,7 +110,7 @@ $ python mmscripts/pose_video.py --video "/dev/video6" \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
     --vis 
 
-### 3D
+### 3D lifting
 python mmscripts/pose_video.py --video '/dev/video6' \
     --det "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py" \
     "https://download.openmmlab.com/mmpose/mmdet_pretrained/cascade_rcnn_x101_64x4d_fpn_20e_onehand10k-dac19597_20201030.pth" \
@@ -119,6 +119,13 @@ python mmscripts/pose_video.py --video '/dev/video6' \
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py" \
     "https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth" \
     --vis 
+
+-> 3d demo config: 
+miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py
+<class 'mmpose.models.detectors.pose_lifter.PoseLifter'>
+-> 3d hand config:
+/export/home/9frick/miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py
+<class 'mmpose.models.detectors.interhand_3d.Interhand3D'>
 
 #### Test with whole body pose (long video latency)
     python mmscripts/pose_video.py --vis --video '/dev/video6' \
