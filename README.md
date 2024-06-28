@@ -99,7 +99,7 @@ restore settings by unplugging the camera
 
 Note: For Realsense, video4 is the rgb camera dev
 
-## Test
+### Test 2D
 $ conda activate nicol_rh8d
 $ python mmscripts/pose_video.py --video "/dev/video6" \
     --det \
@@ -108,9 +108,21 @@ $ python mmscripts/pose_video.py --video "/dev/video6" \
     --2d \
     "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/onehand10k/ hrnetv2_w18_onehand10k_256x256_dark.py" \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
-    --vis --vis_autorun --2d_nosmooth
+    --vis --vis_autorun 
 
-### 3D lifting
+### Test 2D Interhand
+python mmscripts/pose_video.py --video "/dev/video6" \
+    --det \
+    "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py" \
+    "https://download.openmmlab.com/mmpose/mmdet_pretrained/cascade_rcnn_x101_64x4d_fpn_20e_onehand10k-dac19597_20201030.pth" \
+    --2d \
+    "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/interhand2d/res50_interhand2d_all_256x256.py" \
+    "https://download.openmmlab.com/mmpose/hand/resnet/res50_interhand2d_256x256_all-78cc95d4_20201102.pth" \
+    --vis --vis_autorun 
+
+weights: ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/interhand2d/resnet_interhand2d.yml
+
+### Hand 3D lifting not working for pose_video.py 
 python mmscripts/pose_video.py --video '/dev/video6' \
     --det "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py" \
     "https://download.openmmlab.com/mmpose/mmdet_pretrained/cascade_rcnn_x101_64x4d_fpn_20e_onehand10k-dac19597_20201030.pth" \
@@ -118,11 +130,8 @@ python mmscripts/pose_video.py --video '/dev/video6' \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py" \
     "https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth" \
-    --vis --vis_autorun --2d_nosmooth
+    --vis --vis_autorun 
 
--> 3d demo config: 
-miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py
-<class 'mmpose.models.detectors.pose_lifter.PoseLifter'>
 -> 3d hand config:
 /export/home/9frick/miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py
 <class 'mmpose.models.detectors.interhand_3d.Interhand3D'>
@@ -135,6 +144,47 @@ miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/
     "https://download.openmmlab.com/mmpose/top_down/hrnet/hrnet_w48_coco_256x192-b9e0b3ab_20200708.pth" \
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py" \
     "https://download.openmmlab.com/mmpose/body3d/videopose/videopose_h36m_243frames_fullconv_supervised_cpn_ft-88f5abbb_20210527.pth" 
+
+-> 3d demo config: 
+miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py
+<class 'mmpose.models.detectors.pose_lifter.PoseLifter'>
+
+#### Test 3D Hand Image Demo 
+
+python demo/interhand3d_img_demo.py \
+    ${MMPOSE_CONFIG_FILE} ${MMPOSE_CHECKPOINT_FILE} \
+    --json-file ${JSON_FILE} \
+    --img-root ${IMG_ROOT} \
+    [--camera-param-file ${CAMERA_PARAM_FILE}] \
+    [--gt-joints-file ${GT_JOINTS_FILE}]\
+    [--show] \
+    [--device ${GPU_ID or CPU}] \
+    [--out-img-root ${OUTPUT_DIR}] \
+    [--rebase-keypoint-height] \
+    [--show-ground-truth]
+
+Example with gt keypoints and camera parameters:
+
+python ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/interhand3d_img_demo.py \
+    ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py \
+    https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth \
+    --json-file ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/test_interhand2.6m_data.json \
+    --img-root ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/ \
+    --camera-param-file ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/test_interhand2.6m_camera.json \
+    --gt-joints-file ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/test_interhand2.6m_joint_3d.json \
+    --out-img-root vis_results \
+    --rebase-keypoint-height \
+    --show-ground-truth
+
+Example without gt keypoints and camera parameters:
+
+python ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/interhand3d_img_demo.py \
+    ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py \
+    https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth \
+    --json-file ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/test_interhand2.6m_data.json \
+    --img-root ${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/tests/data/interhand2.6m/ \
+    --out-img-root vis_results \
+    --rebase-keypoint-height
 
 #### All datasets (lib/python3.9/site-packages/mmpose/datasets/__init__.py):
 __all__ = [
