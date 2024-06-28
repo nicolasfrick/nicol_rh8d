@@ -91,7 +91,7 @@ ffmpeg -i input.mov -preset slow -codec:a libfdk_aac -b:a 128k -codec:v libx264 
                                   - medium,slow,slower,veryslow,placebo |
 
 OpenCV cannot open h264 encoding by default, use other format like rawvideo/yuyv422 (as relasense):
-***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf "scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6***
+***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf "fps=1,scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6***
 
 Modify RGB cam setting online via 
 $ realsense-viewer
@@ -108,7 +108,7 @@ $ python mmscripts/pose_video.py --video "/dev/video6" \
     --2d \
     "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/onehand10k/ hrnetv2_w18_onehand10k_256x256_dark.py" \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
-    --vis 
+    --vis --vis_autorun --2d_nosmooth
 
 ### 3D lifting
 python mmscripts/pose_video.py --video '/dev/video6' \
@@ -118,7 +118,7 @@ python mmscripts/pose_video.py --video '/dev/video6' \
     "https://download.openmmlab.com/mmpose/hand/dark/hrnetv2_w18_onehand10k_256x256_dark-a2f80c64_20210330.pth" \
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py" \
     "https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3d_all_256x256-b9c1cf4c_20210506.pth" \
-    --vis 
+    --vis --vis_autorun --2d_nosmooth
 
 -> 3d demo config: 
 miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py
@@ -128,7 +128,7 @@ miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/
 <class 'mmpose.models.detectors.interhand_3d.Interhand3D'>
 
 #### Test with whole body pose (long video latency)
-    python mmscripts/pose_video.py --vis --video '/dev/video6' \
+    python mmscripts/pose_video.py --vis --vis_autorun --video '/dev/video6' \
     --det "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/faster_rcnn_r50_fpn_coco.py" \
     "https://download.openmmlab.com/mmdetection/v2.0/faster_rcnn/faster_rcnn_r50_fpn_1x_coco/faster_rcnn_r50_fpn_1x_coco_20200130-047c8118.pth" \
     --2d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/body/2d_kpt_sview_rgb_img/topdown_heatmap/coco/hrnet_w48_coco_256x192.py" \
@@ -136,6 +136,72 @@ miniconda3/envs/nicol_rh8d/lib/python3.9/site-packages/mmpose/.mim/configs/body/
     --3d "${CONDA_PREFIX}/lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py" \
     "https://download.openmmlab.com/mmpose/body3d/videopose/videopose_h36m_243frames_fullconv_supervised_cpn_ft-88f5abbb_20210527.pth" 
 
+#### All datasets (lib/python3.9/site-packages/mmpose/datasets/__init__.py):
+__all__ = [
+    'TopDownCocoDataset', 'BottomUpCocoDataset', 'BottomUpMhpDataset',
+    'BottomUpAicDataset', 'BottomUpCocoWholeBodyDataset', 'TopDownMpiiDataset',
+    'TopDownMpiiTrbDataset', 'OneHand10KDataset', 'PanopticDataset',
+    'HandCocoWholeBodyDataset', 'FreiHandDataset', 'InterHand2DDataset',
+    'InterHand3DDataset', 'TopDownOCHumanDataset', 'TopDownAicDataset',
+    'TopDownCocoWholeBodyDataset', 'MeshH36MDataset', 'MeshMixDataset',
+    'MoshDataset', 'MeshAdversarialDataset', 'TopDownCrowdPoseDataset',
+    'BottomUpCrowdPoseDataset', 'TopDownFreiHandDataset',
+    'TopDownOneHand10KDataset', 'TopDownPanopticDataset',
+    'TopDownPoseTrack18Dataset', 'TopDownJhmdbDataset', 'TopDownMhpDataset',
+    'DeepFashionDataset', 'Face300WDataset', 'FaceAFLWDataset',
+    'FaceWFLWDataset', 'FaceCOFWDataset', 'FaceCocoWholeBodyDataset',
+    'Body3DH36MDataset', 'AnimalHorse10Dataset', 'AnimalMacaqueDataset',
+    'AnimalFlyDataset', 'AnimalLocustDataset', 'AnimalZebraDataset',
+    'AnimalATRWDataset', 'AnimalPoseDataset', 'TopDownH36MDataset',
+    'TopDownPoseTrack18VideoDataset', 'build_dataloader', 'build_dataset',
+    'Compose', 'DistributedSampler', 'DATASETS', 'PIPELINES', 'DatasetInfo',
+    'Body3DMviewDirectPanopticDataset', 'Body3DMviewDirectShelfDataset',
+    'Body3DMviewDirectCampusDataset', 'NVGestureDataset'
+]
+
+#### Hand datasets (lib/python3.9/site-packages/mmpose/datasets/datasets/hand/__init__.py):
+__all__ = [
+    'FreiHandDataset', 'InterHand2DDataset', 'InterHand3DDataset',
+    'OneHand10KDataset', 'PanopticDataset', 'Rhd2DDataset',
+    'HandCocoWholeBodyDataset'
+]
+
+#### Datasets: type | base | path | config
+##### Hand 2D:
+InterHand2DDataset Kpt2dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/hand/interhand2d_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/interhand2d/res50_interhand2d_all_256x256.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/interhand2d/res50_interhand2d_human_256x256.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/interhand2d/res50_interhand2d_machine_256x256.py
+
+OneHand10KDataset Kpt2dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/hand/onehand10k_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/deeppose/onehand10k/res50_onehand10k_256x256.py
+
+FreiHandDataset Kpt2dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/hand/freihand_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/freihand2d/hrnetv2_w18_freihand2d_256x256.py
+
+HandCocoWholeBodyDataset Kpt2dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/hand/hand_coco_wholebody_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/coco_wholebody_hand/hourglass52_coco_wholebody_hand_256x256.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/coco_wholebody_hand/hrnetv2_w18_coco_wholebody_hand_256x256.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/2d_kpt_sview_rgb_img/topdown_heatmap/coco_wholebody_hand/res50_coco_wholebody_hand_256x256.py
+...
+##### Hand 3D:
+InterHand3DDataset Kpt3dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/hand/interhand3d_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/hand/3d_kpt_sview_rgb_img/internet/interhand3d/res50_interhand3d_all_256x256.py
+
+##### 2D:
+TopDownCocoDataset Kpt2dSviewRgbImgTopDownDataset lib/python3.9/site-packages/mmpose/datasets/datasets/top_down/topdown_coco_dataset.py
+lib/python3.9/site-packages/mmpose/.mim/configs/body/2d_kpt_sview_rgb_img/deeppose/coco/res50_coco_256x192_rle.py
+...
+
+##### 3D:
+lib/python3.9/site-packages/mmpose/.mim/configs/body/3d_kpt_sview_rgb_vid/video_pose_lift/h36m/videopose3d_h36m_243frames_fullconv_supervised_cpn_ft.py
+
+##### Detector (CocoDataset):
+lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/cascade_rcnn_x101_64x4d_fpn_1class.py
+lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/ssdlite_mobilenetv2_scratch_600e_onehand.py
+lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/ssdlite_mobilenetv2_scratch_600e_coco.py 
+lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/yolov3_d53_320_273e_coco.py
+...
 
 ## MMPose v1.x
 $ conda create -n mmpose python=3.9
