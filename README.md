@@ -34,9 +34,24 @@ $ pip check
 ## Config
 $ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim/data
 $ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/data
-$ ln -s "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/tests "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/tests
+# $ ln -s "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/tests "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/tests
+cd ~ &&  git clone https://github.com/open-mmlab/mmpose.git
+ln -s ~/mmpose/tests "$CONDA_PREFIX"/lib/python3.9/site-packages/mmpose/.mim/tests
+
+
 
 ## Cam
+Install realsense-viewer:
+ sudo mkdir -p /etc/apt/keyrings
+ curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | sudo tee /etc/apt/keyrings/librealsense.pgp > /dev/null
+ sudo apt-get install apt-transport-https
+echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo `lsb_release -cs` main" | \
+sudo tee /etc/apt/sources.list.d/librealsense.list
+sudo apt-get update
+sudo apt-get install librealsense2-dkms
+sudo apt-get install librealsense2-utils
+realsense-viewer # test
+
 Check video devices:
 $ sudo apt install v4l-utils
 $ v4l2-ctl --list-devices
@@ -92,6 +107,8 @@ ffmpeg -i input.mov -preset slow -codec:a libfdk_aac -b:a 128k -codec:v libx264 
 
 OpenCV cannot open h264 encoding by default, use other format like rawvideo/yuyv422 (as relasense):
 ***ffmpeg -f v4l2 -i /dev/video4 -preset ultrafast -c:v rawvideo -pix_fmt yuyv422 -b:v 2500k -minrate 1500k -maxrate 4000k -bufsize 5000k -vf "fps=1,scale=w=640:h=480:force_original_aspect_ratio=1,pad=640:480:(ow-iw)/2:(oh-ih)/2,negate" -f v4l2 /dev/video6***
+
+DO NOT USE ffmpeg from conda!
 
 Modify RGB cam setting online via 
 $ realsense-viewer
