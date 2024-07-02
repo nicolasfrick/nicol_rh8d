@@ -257,13 +257,12 @@ lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/yolov3_d53_320_273e
 $ conda create -n mmpose python=3.9
 $ conda activate mmpose
 $ conda install pytorch torchvision -c pytorch
+$ pip install fsspec
 $ pip install -U openmim
-$ pip install ffspec
 $ mim install mmengine
 $ mim install "mmcv>=2.0.1"
 $ mim install "mmdet>=3.1.0"
 $ mim install "mmpose>=1.1.0"
-$ conda install pytorch torchvision -c pytorch
 
 ### Inferencer 
 python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py ~/catkin_ws/src/nicol_rh8d/datasets/OpenMM/data/image29590.jpg --pose2d hand2d --pose3d hand3d --vis-out-dir vis_results/hand3d
