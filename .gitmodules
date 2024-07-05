@@ -2,3 +2,6 @@
 	path = mmscripts
 	url = https://git.informatik.uni-hamburg.de/wtmstaff/mmscripts.git
 	branch = rh8d_detect
+[submodule "kypt_transformer"]
+	path = kypt_transformer
+	url = https://github.com/shreyashampali/kypt_transformer.git
