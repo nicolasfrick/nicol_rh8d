@@ -2,14 +2,14 @@
     "images": [
         {
             "id": 471953,
-            "file_name": "image15.jpg",
+            "file_name": "image2017.jpg",
             "width": 1200,
             "height": 1600,
             "capture": 4,
             "subject": 0,
             "seq_name": "0007_thumbup_normal",
             "camera": "410028",
-            "frame_idx": 15
+            "frame_idx": 2017
         }
     ],
     "annotations": [
@@ -17,10 +17,10 @@
             "id": 471953,
             "image_id": 471953,
             "bbox": [
-                150,
-                200,
-                850,
-                1000
+                400,
+                50,
+                100,
+                300
             ],
             "joint_valid": [
                 [
