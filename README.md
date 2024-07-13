@@ -273,14 +273,128 @@ lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/yolov3_d53_320_273e
 ## MMPose v1.x
 $ conda create -n mmpose python=3.9
 $ conda activate mmpose
-$ conda install pytorch torchvision -c pytorch
+$ conda install pytorch torchvision -c pytorch # cuda >= 11
+$ conda install -c pytorch numpy=1.22 cudatoolkit=10.2 pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 torchtext==0.13.1 # cuda < 11
 $ pip install fsspec
 $ pip install -U openmim
 $ mim install mmengine
-$ mim install "mmcv>=2.0.1"
-$ mim install "mmdet>=3.1.0"
-$ mim install "mmpose>=1.1.0"
+$ mim install "mmcv>=2.0.1" "mmdet>=3.1.0" "mmpose>=1.1.0"
+$ pip uninstall xtcocotools 
+$ pip install --no-binary xtcocotools xtcocotools
+$ pip install "numpy<2"
 
-### Inferencer 
-python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py ~/catkin_ws/src/nicol_rh8d/datasets/OpenMM/data/image29590.jpg --pose2d hand2d --pose3d hand3d --vis-out-dir vis_results/hand3d
-    
+## Hand Keypoint Estimation
+### 2D Hand Image Demo
+
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/topdown_demo_with_mmdet.py \
+    $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/rtmdet_nano_320-8xb32_hand.py \
+    https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmdet_nano_8xb32-300e_hand-267f9c8f.pth \
+    $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/configs/hand_2d_keypoint/rtmpose/hand5/rtmpose-m_8xb256-210e_hand5-256x256.py \
+    https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmpose-m_simcc-hand5_pt-aic-coco_210e-256x256-74fb594_20230320.pth \
+    --input $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/tests/data/onehand10k/9.jpg \
+    --show --draw-heatmap
+
+### 2D Hand Keypoints Video Demo (@ video0)
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/topdown_demo_with_mmdet.py \
+$CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/mmdetection_cfg/rtmdet_nano_320-8xb32_hand.py \
+https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmdet_nano_8xb32-300e_hand-267f9c8f.pth \
+$CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/configs/hand_2d_keypoint/rtmpose/hand5/rtmpose-m_8xb256-210e_hand5-256x256.py \
+https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/rtmpose-m_simcc-hand5_pt-aic-coco_210e-256x256-74fb594_20230320.pth \
+--input webcam --show --kpt-thr 0.1 --draw-heatmap --draw-bbox # --save-predictions  --output-root /home/nic/catkin_ws/src/nicol_rh8d/datasets/OpenMM/out
+
+press 100x 'esc' to exit display
+use pose anything for 3D lifting?
+
+### Interhand 3D Hand Pose Estimation Demo
+python demo/hand3d_internet_demo.py \
+    ${MMPOSE_CONFIG_FILE} ${MMPOSE_CHECKPOINT_FILE} \
+    --input ${INPUT_FILE} \
+    --output-root ${OUTPUT_ROOT} \
+    [--save-predictions] \
+    [--gt-joints-file ${GT_JOINTS_FILE}]\
+    [--disable-rebase-keypoint] \
+    [--show] \
+    [--device ${GPU_ID or CPU}] \
+    [--kpt-thr ${KPT_THR}] \
+    [--show-kpt-idx] \
+    [--show-interval] \
+    [--radius ${RADIUS}] \
+    [--thickness ${THICKNESS}]
+
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/hand3d_internet_demo.py \
+    $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/configs/hand_3d_keypoint/internet/interhand3d/internet_res50_4xb16-20e_interhand3d-256x256.py \
+    https://download.openmmlab.com/mmpose/hand3d/internet/res50_intehand3dv1.0_all_256x256-42b7f2ac_20210702.pth \
+    --input webcam --show --kpt-thr 0.1 --radius 4 --thickness 2 --show-kpt-idx \
+    --save-predictions --output-root  /home/nic/catkin_ws/src/nicol_rh8d/datasets/OpenMM/out 
+
+-> apis/inferencers/hand3d_inferencer.py # disables --hand2d, inference only by image
+
+### 2D Hand Keypoints Demo with Inferencer
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py tests/data/onehand10k \
+    --pose2d hand --vis-out-dir vis_results/onehand10k \
+    --bbox-thr 0.5 --kpt-thr 0.05
+
+### 3D Hand Pose Estimation with Inferencer 
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py ~/catkin_ws/src/nicol_rh8d/datasets/OpenMM/data/image29590.jpg --pose2d hand2d --pose3d hand3d --vis-out-dir vis_results/hand3d 
+
+--show-alias
+ALIAS      MODEL_NAME
+animal     rtmpose-m_8xb64-210e_ap10k-256x256
+body       rtmpose-m_8xb256-420e_body8-256x192
+body17     rtmpose-m_8xb256-420e_body8-256x192
+body26     rtmpose-m_8xb512-700e_body8-halpe26-256x192
+edpose     edpose_res50_8xb2-50e_coco-800x1333
+face       rtmpose-m_8xb64-120e_lapa-256x256
+hand       rtmpose-m_8xb256-210e_hand5-256x256
+hand3d     internet_res50_4xb16-20e_interhand3d-256x256     -> hand2d flag ignored
+human      rtmpose-m_8xb256-420e_body8-256x192
+human3d    motionbert_dstformer-ft-243frm_8xb32-120e_h36m
+rtmo       rtmo-l_16xb16-600e_body7-640x640
+rtmpose-l  rtmpose-l_8xb256-420e_body8-384x288
+vitpose    td-hm_ViTPose-base-simple_8xb64-210e_coco-256x192
+vitpose-b  td-hm_ViTPose-base-simple_8xb64-210e_coco-256x192
+vitpose-h  td-hm_ViTPose-huge-simple_8xb64-210e_coco-256x192
+vitpose-l  td-hm_ViTPose-large-simple_8xb64-210e_coco-256x192
+vitpose-s  td-hm_ViTPose-small-simple_8xb64-210e_coco-256x192
+wholebody  rtmw-m_8xb1024-270e_cocktail14-256x192
+
+python $CONDA_PREFIX/lib/python3.9/site-packages/mmpose/.mim/demo/inferencer_demo.py tests/data/onehand10k \
+    --pose2d \
+    --pose2d-weights --show --bbox-thr 0.5 --kpt-thr 0.05
+
+
+# Keypoint Transformer
+## Install
+sudo apt-get install qt5-default
+conda create --name kypt_trans python==3.8.11
+conda activate kypt_trans
+conda install numpy==1.23.1 matplotlib==3.5.2 mkl_fft==1.3.1 mkl_random==1.2.2 mkl-service==2.4.0 open3d==0.15.2 pycocotools==2.0.4 pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 kiwisolver==1.4.2 freetype-py==2.3.0 argon2-cffi==21.3.0 argon2-cffi-bindings==21.2.0 -c pytorch -c conda-forge -c intel -c open3d-admin
+cd kypt_transformer
+pip install -r requirements.txt
+pip uninstall PyQt5 # resolve xcb plugin import error
+
+## Config
+In kypt_transformer/main/config.py set lines
+31: smplx_path = '/home/<uname>/datasets/mano_v1_2/models/' # Path to MANO model files
+36: interhand_anno_dir = '/home/<uname>/datasets/interhand/annotations' # Path to interghand annotations
+37: interhand_images_path = '/home/<uname>/datasets/interhand/InterHand2.6M_5fps_batch1/images' # Path to interghand imgs
+
+Download https://download.is.tue.mpg.de/download.php?domain=mano&resume=1&sfile=mano_v1_2.zip and unzip to smplx_path, mv folder mano_v1_2/models -> mano_v1_2/models/mano
+
+Run scripts/interhand_download_script.py and unzip images via scripts/interhand_unzip.sh to interhand_images_path (80GB!)
+
+Download annotations https://1drv.ms/f/s!All7gdNh7XE5k2k8pAXys2xIRpNn?e=rVFzlj and unzip to interhand_anno_dir, mkdir interhand_anno_dir/all; cp interhand_anno_dir/test/* interhand_anno_dir/all; cp interhand_anno_dir/train/* interhand_anno_dir/all; mv interhand_anno_dir/all/InterHand2.6M_train_MANO_NeuralAnnot.json interhand_anno_dir/all/InterHand2.6M_train_MANO.json; mv interhand_anno_dir/all/InterHand2.6M_test_MANO_NeuralAnnot.json interhand_anno_dir/all/InterHand2.6M_test_MANO.json
+
+Download checkpoint from https://1drv.ms/u/s!AsG9HA3ULXQRgskO89bIy8j3h-HTXQ?e=J6FHVu to a <checkpoints_dir>
+
+## Run
+cd kypt_transformer/main
+
+In demo.py add:
+```
+#!/usr/bin/env python3
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+```
+
+python demo.py --ckpt_path checkpoints_dir--use_big_decoder --dec_layers 6
