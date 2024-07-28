@@ -11,13 +11,15 @@
   <url type="repository">https://git.informatik.uni-hamburg.de/</url>
   <buildtool_depend>catkin</buildtool_depend>
   <depend>roscpp</depend>
+  <depend>rospy</depend>
   <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>nicol_msgs</depend>
   <depend>cmake_modules</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
   <depend>camera_info_manager</depend>
-  <depend>rospy</depend>
   <depend>realsense2_camera</depend>
-
+  <depend>dynamic_reconfigure</depend>
 </package>

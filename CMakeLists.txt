@@ -13,6 +13,9 @@ find_package(catkin REQUIRED COMPONENTS
     roscpp
     std_msgs
     sensor_msgs
+    geometry_msgs
+    nicol_msgs
+    dynamic_reconfigure
     cmake_modules
     rospy
     cv_bridge
@@ -32,12 +35,17 @@ find_package(catkin REQUIRED COMPONENTS
 ################################################################################
 ## Declare ROS dynamic reconfigure parameters
 ################################################################################
+# Generate dynamic reconfigure parameters in the 'cfg' folder
+generate_dynamic_reconfigure_options(
+  cfg/RH8DDatasetCollectorConfig.cfg
+)
 
 ################################################################################
 # Declare catkin specific configuration to be passed to dependent projects
 ################################################################################
 catkin_package(
-  CATKIN_DEPENDS  roscpp
+  CATKIN_DEPENDS  
+                  roscpp
                   std_msgs
                   sensor_msgs
                   cmake_modules
@@ -46,6 +54,9 @@ catkin_package(
                   image_transport
                   camera_info_manager
                   realsense2_camera
+                  geometry_msgs
+                  nicol_msgs
+                  dynamic_reconfigure
 )
 
 ################################################################################
