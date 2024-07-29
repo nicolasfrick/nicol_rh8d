@@ -23,7 +23,7 @@ from nicol_rh8d.cfg import RH8DDatasetCollectorConfig
 
 # Main function
 def main():
-	rospy.init_node('rh8d_dataset_collector')
+	rospy.init_node('RH8D_dataset_collector')
 	RH8DDatasetCollector(
 		move_hand=rospy.get_param('~move_hand', False),
 		hand_period=rospy.get_param('~hand_period', 1.3),

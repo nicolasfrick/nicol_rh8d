@@ -69,7 +69,7 @@
 	</include>
 
 	<!-- dataset collector script -->
-	<node pkg="nicol_rh8d" name="collect_rh8d_dataset" type="collect_rh8d_dataset.py" output="screen" required="true">
+	<node pkg="nicol_rh8d" name="RH8D_dataset_collector" type="collect_rh8d_dataset.py" output="screen" required="true">
 		<param name="move_hand"        type="bool"   value="$(arg move_hand)" />
 		<param name="hand_period"      type="double" value="$(arg hand_period)" />
 		<param name="hand_increment"   type="double" value="$(arg hand_increment)" />
@@ -91,6 +91,6 @@
 	</node>
 
 	<!-- record detection results -->
-	<node if="$(eval bool(record_visbag))" pkg="rosbag" type="record" name="record_camera_visbag" output="screen" args="--lz4 --output-name $(arg record_visbag) /collect_rh8d_dataset/marker_realsense/visimg" required="false" />
+	<node if="$(eval bool(record_visbag))" pkg="rosbag" type="record" name="record_camera_visbag" output="screen" args="--lz4 --output-name $(arg record_visbag) /RH8D_dataset_collector/marker_realsense/visimg" required="false" />
 
 </launch>
