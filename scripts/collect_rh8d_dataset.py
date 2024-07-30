@@ -34,11 +34,11 @@ def main():
 		detect_markers=rospy.get_param('~detect_markers', True),
 		refmarker_csv=rospy.get_param('~refmarker_csv', ''),  # Note: Don't append '.csv'
 		use_cameras=(rospy.get_param('~use_markers_camera', True), rospy.get_param('~use_depth', False)),
-        camera_width=rospy.get_param('~camera_width', 1920),
+		camera_width=rospy.get_param('~camera_width', 1920),
 		camera_height=rospy.get_param('~camera_height', 1080),
 		record_visbag=rospy.get_param('~record_visbag', ''),
 		debug=rospy.get_param('~debug', False),
-	    depth_width=rospy.get_param('~depth_width', 1280),
+		depth_width=rospy.get_param('~depth_width', 1280),
 		depth_height=rospy.get_param('~depth_height', 720),
 		tf_listener=rospy.get_param('~use_tf', True),
 	).run(rate_hz=rospy.get_param('~f_loop', 1.0))
@@ -70,6 +70,9 @@ class RefMarker:
 class RH8DDatasetCollector():
 
 	CAMERAS = ('marker_realsense/color/image_raw', 'marker_realsense/aligned_depth_to_color/image_raw')
+	RGB_IDX = 0
+	DEPTH_IDX = 1
+	IMG_FORMAT = 'rgb8'
 	JOINT_SERVICE = '/right/open_manipulator_p/goal_joint_space_path'
 	JOINT_STATES = '/right/open_manipulator_p/actuator_states'
 	LABEL_THICKNESS = 3
@@ -81,24 +84,24 @@ class RH8DDatasetCollector():
 	tf_buffer: Optional[tf2_ros.Buffer]
 
 	def __init__(self, 
-			                move_hand: bool, 
-                            hand_period: float, 
-                            hand_increment: float, 
-                            min_pitch: float, 
-                            max_pitch: float, 
-                            max_yaw: float, 
-                            detect_markers: bool, 
-                            refmarker_csv: str, 
-                            use_cameras: bool, 
-                            camera_width: int, 
-                            camera_height: int, 
-                            record_visbag: str, 
+							move_hand: bool, 
+							hand_period: float, 
+							hand_increment: float, 
+							min_pitch: float, 
+							max_pitch: float, 
+							max_yaw: float, 
+							detect_markers: bool, 
+							refmarker_csv: str, 
+							use_cameras: bool, 
+							camera_width: int, 
+							camera_height: int, 
+							record_visbag: str, 
 							debug: bool, 
-                            depth_width: int, 
-                            depth_height: int, 
+							depth_width: int, 
+							depth_height: int, 
 							camera_force_copy: bool = False,
-			                tf_listener: Union[bool, float] = False,
-			                tf_camera_qsize: int = 15):
+							tf_listener: Union[bool, float] = False,
+							tf_camera_qsize: int = 15):
 
 		self.move_hand = move_hand
 		self.hand_period = max(hand_period, 1.3)
@@ -129,7 +132,7 @@ class RH8DDatasetCollector():
 		self.config_server = self.config = None
 
 		# Iterable of topics to subscribe to for camera images (None/empty = skip)
-		self.camera_image_topics = tuple(f'/{camera}' if use_camera else None for camera, use_camera in zip(self.CAMERAS, self.use_cameras)),
+		self.camera_image_topics = tuple(f'/{camera}' if use_camera else None for camera, use_camera in zip(self.CAMERAS, self.use_cameras))
 		self.num_cameras = len(self.camera_image_topics)
 
 		# Iterable of topics to subscribe to for camera info or None/empty to ignore (all ignored if False, all auto-constructed from image topic if True, length must match camera_image_topics if iterable provided)
@@ -138,7 +141,7 @@ class RH8DDatasetCollector():
 			raise ValueError(f"Must have equal number of camera image and info topics ({self.num_cameras} vs {len(self.camera_info_topics)})")
 		
 		# Iterable of target camera resolutions as (width, height) pairs or None to keep received resolution (None = Keep resolution for all, single value = use for all, length must match camera_image_topics if iterable provided)
-		self.camera_resolutions = ((self.camera_width, self.camera_height), (self.depth_width, self.depth_height))
+		self.camera_resolutions = tuple(((resolution[0], resolution[1]) if resolution is not None else None) for resolution in [(self.camera_width, self.camera_height), (self.depth_width, self.depth_height) if self.use_cameras[self.DEPTH_IDX] else None])
 		if len(self.camera_resolutions) != self.num_cameras:
 			raise ValueError(f"Must have equal number of camera image topics and resolutions ({self.num_cameras} vs {len(self.camera_resolutions)})")
 
@@ -201,22 +204,13 @@ class RH8DDatasetCollector():
 		if self.config_type is not None:
 			self.config_server = dynamic_reconfigure.server.Server(self.config_type, self.config_callback)
 
-		# camera_listeners = []
-		# for c, (image_topic, info_topic, info_yaml, resolution) in enumerate(zip(self.camera_image_topics, self.camera_info_topics, self.camera_info_yamls, self.camera_resolutions)):
-		# 	if not image_topic:
-		# 		camera_listeners.append(None)
-		# 	else:
-		# 		if not info_topic or info_yaml:
-		# 			info_data = camera_models.load_calibration_file(info_yaml) if info_yaml else None
-					# camera_listener = rospy.Subscriber(image_topic, sensor_msgs.msg.Image, functools.partial(self.camera_callback, info_data=info_data, camera_id=c, resolution=resolution), queue_size=1, buff_size=40000000)
-				# else:
-					# sub_image = message_filters.Subscriber(image_topic, sensor_msgs.msg.Image, queue_size=1, buff_size=40000000)
-					# sub_info = message_filters.Subscriber(info_topic, sensor_msgs.msg.CameraInfo)
-					# camera_listener = message_filters.TimeSynchronizer((sub_image, sub_info), queue_size=3, reset=True)
-					# camera_listener.registerCallback(functools.partial(self.camera_callback, camera_id=c, resolution=resolution))
-		# 		camera_listeners.append(camera_listener)
-		# 		rospy.loginfo(f"Subscribed to camera {c}")
-		# self.camera_listeners = tuple(camera_listeners)
+		if self.use_cameras:
+			self.rgb_info = rospy.wait_for_message(self.camera_info_topics[self.RGB_IDX], sensor_msgs.msg.CameraInfo, 10)
+			rgb = rospy.wait_for_message(self.camera_image_topics[self.RGB_IDX], sensor_msgs.msg.Image, 10)
+			if rgb.encoding != self.IMG_FORMAT:
+				raise ValueError(f"Wrong image encoding: ({rgb.encoding} vs {self.IMG_FORMAT})")
+			if self.use_cameras[self.DEPTH_IDX]:
+				self.depth_info = rospy.wait_for_message(self.camera_info_topics[self.DEPTH_IDX], sensor_msgs.msg.CameraInfo, 10)
 
 		if self.move_hand:
 			rospy.loginfo("Moving hand to generate calibration data")
@@ -301,17 +295,17 @@ class RH8DDatasetCollector():
 
 	def process_camera_image(self, camera_id, stamp, frame_id, img, raw_img, raw_ratio, camera_model, camera_tfrm):
 
-		scalesq = (1920 * 1080) / (img.shape[0] * img.shape[1])  # Note: The cutoffs/constants used in this method are relative to the nominal calibration resolution of 1920x1440
+		scalesq = (1920 * 1080) / (img.shape[0] * img.shape[1])  # Note: The cutoffs/constants used in this method are relative to the nominal calibration resolution of 1920x1080
 		scale = math.sqrt(scalesq)
 
 		kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, ksize=(3, 3))
-		img_binary = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+		img_binary = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
 		img_binary = cv2.threshold(img_binary, thresh=self.config.binary_threshold, maxval=255, type=cv2.THRESH_BINARY_INV)[1]
 		img_binary = cv2.morphologyEx(img_binary, cv2.MORPH_OPEN, kernel, iterations=1)
 		img_binary = cv2.morphologyEx(img_binary, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-		img_red_mask = np.where(img_binary[:, :, None], np.array((0, 0, 255), dtype=img.dtype)[None, None, :], img)
-		cv2.addWeighted(src1=img, alpha=0.3, src2=img_red_mask, beta=0.7, gamma=0.0, dst=img)
+		# img_red_mask = np.where(img_binary[:, :, None], np.array((0, 0, 255), dtype=img.dtype)[None, None, :], img)
+		# cv2.addWeighted(src1=img, alpha=0.3, src2=img_red_mask, beta=0.7, gamma=0.0, dst=img)
 
 		refmarkers = []
 		for contour in cv2.findContours(img_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
@@ -419,7 +413,7 @@ class RH8DDatasetCollector():
 			self.reset_camera_history(camera_id)
 		self.camera_stamp[camera_id] = stamp
 		frame_id = image_data.header.frame_id
-		raw_img = self.camera_cv_bridge.imgmsg_to_cv2(image_data, 'bgr8')
+		raw_img = self.camera_cv_bridge.imgmsg_to_cv2(image_data, self.IMG_FORMAT)
 		raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 
 		img_size = resolution if resolution is not None else raw_img_size
@@ -465,7 +459,6 @@ class RH8DDatasetCollector():
 	def run(self, rate_hz=45.0):
 		if not self.prepared_run:
 			self.prepare_run()
-		
 		rospy.loginfo(f"Running {self.name} at {rate_hz:.1f}Hz")
 		rate = rospy.Rate(rate_hz, reset=True)
 		self.running = True
@@ -477,7 +470,13 @@ class RH8DDatasetCollector():
 				break
 				
 	def step(self):
-		pass
+		if self.use_cameras:    
+			rgb = rospy.wait_for_message(self.camera_image_topics[self.RGB_IDX], sensor_msgs.msg.Image)
+			self.rgb_info.header.stamp = rgb.header.stamp
+			self.preprocess_camera_image(rgb, self.rgb_info, self.RGB_IDX, self.camera_resolutions[self.RGB_IDX])
+			if self.use_cameras[self.DEPTH_IDX]:
+				depth = rospy.wait_for_message(self.camera_image_topics[self.DEPTH_IDX], sensor_msgs.msg.Image)
+				print("Depth images not processed")
 
 # Run main function
 if __name__ == "__main__":
