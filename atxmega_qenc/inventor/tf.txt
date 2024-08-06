@@ -1,0 +1,36 @@
+tf joint6 flange to camera
+all CS are aligned to the flange CS
+
+joint6 -> wrist part
+to checkpoint:
+		X-Abstand	33,032 mm
+		Y-Abstand	60,000 mm
+		Z-Abstand	31,000 mm
+to pipe:
+-> angle part
+offset ruler wall to center: Z 30 mm
+to checkpoint:
+		X-Abstand	-37,500 mm
+		Y-Abstand	0,000 mm
+		Z-Abstand	-18,000 mm
+to lower pipe (center at ruler wall):
+		X-Abstand	0,000 mm
+		Y-Abstand	-30,050 mm
+		Z-Abstand	40,000 mm
+		y               pi/2
+-> end part (center at ruler wall)
+to checkpoint:
+		X-Abstand	45,000 mm
+		Y-Abstand	15,025 mm
+		Z-Abstand	37,975 mm
+to hole:
+		X-Abstand	27,409 mm
+		Y-Abstand	20,000 mm
+		Z-Abstand	20,000 mm
+-> camera base (center at upper hole -> realsense link)
+offset lower hole to upper: Y 11 mm
+to checkpoint:
+		X-Abstand	17,000 mm
+		Y-Abstand	-9,018 mm
+		Z-Abstand	0,000 mm
+
