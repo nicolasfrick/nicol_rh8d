@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 camera_cv_bridge = cv_bridge.CvBridge()
+cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
 
 NUM_MARKERS = 33
 MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
@@ -137,7 +138,8 @@ def main():
 
 				else:
 					rospy.logwarn_throttle(10, "No marker found")
-				print(marker_poses)
+				# print(marker_poses)
+				
 				out_img = aru.drawDetectedMarkers(img_cpy, corners, ids)
 				if marker_poses:
 					for id, pose in marker_poses.items():
@@ -152,7 +154,7 @@ def main():
 # cv2.imshow("image", im)
 # cv2.waitKey(0)
 
-				cv2.imshow('img', out_img)
+				cv2.imshow('im_out', out_img)
 				if cv2.waitKey(1) == ord("q"):
 					break				
 

@@ -4,19 +4,6 @@
 	roslaunch nicol_controller NICOL_launch_all.launch use_platform:=false launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false
  -->
 
-	<!-- motion params -->
-	<arg name="move_hand"      default="false" />
-	<arg name="hand_period"    default="1.3" />
-	<arg name="hand_increment" default="0.1" />
-	<arg name="min_pitch"      default="1.0" />
-	<arg name="max_pitch"      default="0.2" />
-	<arg name="max_yaw"        default="0.8" />
-	<arg name="detect_markers" default="true" />
-	<arg name="refmarker_csv"  default="" />
-	<arg name="debug"          default="false" />
-	<arg name="use_tf"          default="false" />
-	<arg name="f_loop"          default="1" />
-
 	<!-- marker cam params -->
 	<arg name="use_markers_camera"  default="true" />
 	<arg name="serial_no"           default="822512060411"/>
@@ -35,14 +22,18 @@
 	<!-- <arg name="use_wrist_camera" default="false" />
 	<arg name="use_top_camera" default="false" /> -->
 
-	<!-- rosbag params -->
-	<arg name="play_bag"         default="" />
-	<arg name="play_bag_rate" default="1" />
-	<arg name="play_bag_pause" default="false" />
-	<arg name="play_bag_args" default="" />
-	<arg name="record_bag"       default="" />
-	<arg name="record_bag_delay" default="$(eval 4.5 * hand_period)" />
-	<arg name="record_visbag"    default="" />
+	<!-- model args -->
+	<arg name="theta"      default="0" doc="Angle of wrist part wrt. z axis of link6"/>
+    <arg name="x_dist"      default="-0.45" doc="Distance along x axis"/>
+    <arg name="z_dist"      default="0.25" doc="Distance along z axis"/>
+    <arg name="attached"      default="false"/>
+
+	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+		<arg name="theta"      value="$(arg theta)"/>
+		<arg name="x_dist"      value="$(arg x_dist)" />
+		<arg name="z_dist"      value="$(arg z_dist)" />
+		<arg name="attached" value="$(arg attached)"/>
+	</include>
 
 	<!-- common manager -->
 	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="rs_manager" args="manager" output="screen" required="true" />
@@ -64,37 +55,11 @@
 		<arg name="filters"                   value="$(arg filters)"/>
 		<arg name="clip_distance"             value="$(arg clip_distance)"/>
 		<arg name="align_depth"               value="$(arg align_depth)"/>
-		<arg name="play_bag" value="$(arg play_bag)"/>
-		<arg name="play_bag_rate" value="$(arg play_bag_rate)"/>
-		<arg name="play_bag_pause" value="$(arg play_bag_pause)"/>
-		<arg name="play_bag_args" value="$(arg play_bag_args)"/>
-		<arg name="record_bag" value="$(arg record_bag)"/>
-		<arg name="record_bag_delay" value="$(arg record_bag_delay)"/>
 	</include>
 
 	<!-- dataset collector script -->
 	<node pkg="nicol_rh8d" name="RH8D_dataset_collector" type="dataset_collector.py" output="screen" required="true">
-		<param name="move_hand"        type="bool"   value="$(arg move_hand)" />
-		<param name="hand_period"      type="double" value="$(arg hand_period)" />
-		<param name="hand_increment"   type="double" value="$(arg hand_increment)" />
-		<param name="min_pitch"        type="double" value="$(arg min_pitch)" />
-		<param name="max_pitch"        type="double" value="$(arg max_pitch)" />
-		<param name="max_yaw"          type="double" value="$(arg max_yaw)" />
-		<param name="detect_markers"   type="bool"   value="$(arg detect_markers)" />
-		<param name="refmarker_csv"    type="string" value="$(arg refmarker_csv)" />
-		<param name="use_markers_camera"  type="bool"   value="$(arg use_markers_camera)" />
-		<param name="camera_width"     type="int"    value="$(arg color_width)" />
-		<param name="camera_height"    type="int"    value="$(arg color_height)" />
-		<param name="record_visbag"    type="string" value="$(arg record_visbag)" />
-		<param name="debug"            type="bool"   value="$(arg debug)" />
-		<param name="use_depth" type="bool"   value="$(arg enable_depth)" />
-		<param name="depth_width" type="int"   value="$(arg depth_width)" />
-		<param name="depth_height" type="int"   value="$(arg depth_height)" />
-		<param name="use_tf" type="bool"   value="$(arg use_tf)" />
-		<param name="f_loop" type="double"   value="$(arg f_loop)" />
+		<!-- <param name="move_hand"        type="bool"   value="$(arg move_hand)" /> -->
 	</node>
-
-	<!-- record detection results -->
-	<node if="$(eval bool(record_visbag))" pkg="rosbag" type="record" name="record_camera_visbag" output="screen" args="--lz4 --output-name $(arg record_visbag) /RH8D_dataset_collector/marker_realsense/visimg" required="false" />
 
 </launch>
