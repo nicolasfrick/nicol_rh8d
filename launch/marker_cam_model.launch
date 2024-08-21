@@ -9,6 +9,6 @@
         <param name="robot_description" command="xacro '$(find nicol_rh8d)/urdf/marker_cam.xacro' theta:=$(arg theta) x_dist:=$(arg x_dist) z_dist:=$(arg z_dist)" />
         <node if="$(arg attached)" name="marker_cam_static_transform_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 /world /world"/>
         <node name="marker_cam_robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
-        <node if="$(eval launch_rviz and not attached)" name="rviz" pkg="rviz" type="rviz" args="-d $(find nicol_rh8d)/cfg/marker_cam.rviz" required="true" output="screen"/>
+        <node if="$(eval launch_rviz and not attached)" name="rviz" pkg="rviz" type="rviz" args="-d $(find nicol_rh8d)/cfg/marker_cam.rviz" required="false" output="screen"/>
     </group>
 </launch>

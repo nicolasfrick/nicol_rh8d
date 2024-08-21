@@ -100,10 +100,14 @@ def main():
 				rgb_info = rospy.wait_for_message('marker_realsense/color/camera_info', sensor_msgs.msg.CameraInfo, 10)
 				rgb = rospy.wait_for_message('marker_realsense/color/image_raw', sensor_msgs.msg.Image)
 				raw_img = camera_cv_bridge.imgmsg_to_cv2(rgb, 'bgr8')
-				img_cpy = np.copy(raw_img)
+				# img_cpy = np.copy(raw_img)
 				stamp = rgb.header.stamp
 				frame_id = rgb.header.frame_id
 				raw_img_size = (raw_img.shape[1], raw_img.shape[0])
+				
+				raw_img = raw_img[382:1000, 615:1326]
+				raw_img = cv2.fastNlMeansDenoisingColored(raw_img,None,10,10,7,21)
+                
 				
 				marker_poses = {}
 				tick = cv2.getTickCount()
@@ -140,7 +144,7 @@ def main():
 					rospy.logwarn_throttle(10, "No marker found")
 				# print(marker_poses)
 				
-				out_img = aru.drawDetectedMarkers(img_cpy, corners, ids)
+				out_img = aru.drawDetectedMarkers(raw_img, corners, ids)
 				if marker_poses:
 					for id, pose in marker_poses.items():
 						out_img = cv2.drawFrameAxes(out_img, cmx, dist, pose['rvec'], pose['tvec'], MARKER_LENGTH*1.5, 2)
