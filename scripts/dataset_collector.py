@@ -25,9 +25,9 @@ cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
 
 NUM_MARKERS = 20
 MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
-MARKER_SCALING = 3 # factor to scale marker matrix img
-MARKER_LENGTH = 10 # dimension of markers in mm
-ARUCO_DICT = aru.DICT_4X4_50 # 4 cols, 4 rows, 50 pcs
+MARKER_SCALING = 5 # factor to scale marker matrix img
+MARKER_LENGTH = 0.008 # dimension of markers in m
+ARUCO_DICT = aru.DICT_4X4_50 # 4 cols, 4 rows, 50 pcs 
 
 def focalMM_to_focalPixel( focalMM, pixelPitch ):
     f = focalMM / pixelPitch
@@ -104,7 +104,7 @@ def saveArucoImgMatrix(aruco_dict: dict, show: bool=False, filename: str="aruco_
 		if cv2.waitKey(0) == ord("q"):
 			cv2.destroyAllWindows()
 
-aruco_dict = loadArucoYaml('custom_matrix_4x4_20.yml') # aru.getPredefinedDictionary(ARUCO_DICT)
+aruco_dict = loadArucoYaml('custom_matrix_4x4_20_consider_flipped.yml') # aru.getPredefinedDictionary(ARUCO_DICT)
 det_params = aru.DetectorParameters()
 aruco_det = aru.ArucoDetector(aruco_dict, det_params)
 
