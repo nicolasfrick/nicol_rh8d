@@ -2,3 +2,4 @@
 *.mp4
 *.pyc
 # aruco
+inventor/lockfile.lck
