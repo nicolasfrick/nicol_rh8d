@@ -23,7 +23,7 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 camera_cv_bridge = cv_bridge.CvBridge()
 cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
 
-NUM_MARKERS = 20
+NUM_MARKERS = 32
 MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
 MARKER_SCALING = 5 # factor to scale marker matrix img
 MARKER_LENGTH = 0.008 # dimension of markers in m
@@ -79,7 +79,7 @@ def saveArucoImgMatrix(aruco_dict: dict, show: bool=False, filename: str="aruco_
 	matrix = h_border.copy()
 
 	# draw
-	idx = 0
+	idx = 1
 	print("Order of ", num_markers, " Aruco markers:")
 	print("-"*num_markers)
 	# cols
@@ -201,9 +201,9 @@ def main():
 	    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-	main()
-	# dct = loadArucoYaml('custom_matrix_4x4_20.yml')
-	# saveArucoImgMatrix(dct, True, "custom_matrix_4x4_20_scale_3.png")
+	# main()
+	dct = loadArucoYaml('custom_matrix_4x4_32_consider_flipped.yml')
+	saveArucoImgMatrix(dct, False, "custom_matrix_4x4_32_scale_5.png")
 
 # /camera_info
 # header:
