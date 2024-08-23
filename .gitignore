@@ -1,4 +1,4 @@
 *.code-workspace
 *.mp4
 *.pyc
-aruco
+# aruco

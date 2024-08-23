@@ -23,9 +23,9 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 camera_cv_bridge = cv_bridge.CvBridge()
 cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
 
-NUM_MARKERS = 33
+NUM_MARKERS = 20
 MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
-MARKER_SCALING = 5 # factor to scale marker matrix img
+MARKER_SCALING = 3 # factor to scale marker matrix img
 MARKER_LENGTH = 10 # dimension of markers in mm
 ARUCO_DICT = aru.DICT_4X4_50 # 4 cols, 4 rows, 50 pcs
 
@@ -100,12 +100,11 @@ def saveArucoImgMatrix(aruco_dict: dict, show: bool=False, filename: str="aruco_
 	matrix = cv2.resize(matrix, None, fx=MARKER_SCALING, fy=MARKER_SCALING, interpolation= cv2.INTER_AREA)
 	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
 	if show:
-		cv2.imshow("matrix", matrix)
+		cv2.imshow("im_out", matrix)
 		if cv2.waitKey(0) == ord("q"):
 			cv2.destroyAllWindows()
 
-aruco_dict = aru.getPredefinedDictionary(ARUCO_DICT)
-# saveArucoImgMatrix(aruco_dict)
+aruco_dict = loadArucoYaml('custom_matrix_4x4_20.yml') # aru.getPredefinedDictionary(ARUCO_DICT)
 det_params = aru.DetectorParameters()
 aruco_det = aru.ArucoDetector(aruco_dict, det_params)
 
@@ -202,9 +201,9 @@ def main():
 	    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-	# main()
-	dct = loadArucoYaml('custom_matrix_4x4_20.yml')
-	saveArucoImgMatrix(dct, False, "custom_matrix_4x4_20.png")
+	main()
+	# dct = loadArucoYaml('custom_matrix_4x4_20.yml')
+	# saveArucoImgMatrix(dct, True, "custom_matrix_4x4_20_scale_3.png")
 
 # /camera_info
 # header:
