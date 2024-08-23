@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
+# generate markers with opencv (custom build)
+# .opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /home/nic/catkin_ws/src/nicol_rh8d/datasets/aruco/custom_matrix_4x4_20.yml -nMarkers=20 -markerSize=4 -r
+
 import os, sys
+import yaml
 import numpy as np
 import cv2
 import cv2.aruco as aru
@@ -29,44 +33,72 @@ def focalMM_to_focalPixel( focalMM, pixelPitch ):
     f = focalMM / pixelPitch
     return f
 
-def saveArucoImgMatrix(aruco_dict: dict, show: bool=False):
+def loadArucoYaml(filename: str):
+
+	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename)
+	dct = aru.Dictionary()
+
+	with open(fl, 'r') as fr:
+		txt = yaml.safe_load(fr)
+		num_markers = txt.pop('nmarkers')
+		dct.markerSize = txt.pop('markersize')
+		dct.maxCorrectionBits = txt.pop('maxCorrectionBits')
+		nbytes =  int((dct.markerSize * dct.markerSize + 8 - 1) / 8)
+		dct.bytesList = np.empty(shape=(num_markers, nbytes , 4), dtype = np.uint8)
+
+		for key, val in txt.items():
+			# convert str to int array
+			bit_arr = np.array(list(map(int, val)), dtype=np.uint8)
+			# size  # TODO: check if this works with n cols > 8
+			bit_arr = bit_arr.reshape(dct.markerSize, dct.markerSize)
+			compressed = aru.Dictionary.getByteListFromBits(bit_arr)
+			# append to index
+			idx = int(key.replace('marker_', ""))
+			dct.bytesList[idx] = compressed
+
+	return dct
+
+def saveArucoImgMatrix(aruco_dict: dict, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1):
 	"""Aligns the markers in a mxn matrix where m >= n ."""
 
+	num_markers = aruco_dict.bytesList.shape[0]
+	size = aruco_dict.markerSize + 2*bbits
+
 	# matrix
-	n = int(np.sqrt(NUM_MARKERS))  # cols
-	residual = NUM_MARKERS - np.square(n)
+	n = int(np.sqrt(num_markers))  # cols
+	residual = num_markers - np.square(n)
 	m = n + residual//n + (1 if residual%n > 0 else 0) # rows
 
 	# entries
-	v_border = np.ones((MARKER_SIZE, MARKER_SIZE))*255 # white vertical spacing = 1 *marker size
-	v_border[:, 1] = v_border[:, -2] = [MARKER_SIZE*30] # add grey border lines
-	h_border = np.ones((MARKER_SIZE, (2*n*MARKER_SIZE) + MARKER_SIZE))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
-	h_border[1, :] = h_border[-2, :] = [MARKER_SIZE*30] # add horizontal grey border lines
-	h_border[:, 1::2*MARKER_SIZE] = h_border[:, MARKER_SIZE-2::2*MARKER_SIZE] = [MARKER_SIZE*30]  # add vertical grey border lines
+	v_border = np.ones((size, size))*255 # white vertical spacing = 1 *marker size
+	v_border[:, 1] = v_border[:, -2] = [size*30] # add grey border lines
+	h_border = np.ones((size, (2*n*size) + size))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
+	h_border[1, :] = h_border[-2, :] = [size*30] # add horizontal grey border lines
+	h_border[:, 1::2*size] = h_border[:, size-2::2*size] = [size*30]  # add vertical grey border lines
 	rows = v_border.copy()
 	matrix = h_border.copy()
 
 	# draw
 	idx = 0
-	print("Order of ", NUM_MARKERS, " Aruco markers:")
-	print("-"*NUM_MARKERS)
+	print("Order of ", num_markers, " Aruco markers:")
+	print("-"*num_markers)
 	# cols
 	for _ in range(m):
 			# rows
 			for _ in range(n):
-				print(idx, " ", end="") if idx < NUM_MARKERS else print("pad ", end="")
-				aruco_img = aru.generateImageMarker(aruco_dict, idx, MARKER_SIZE) if idx < NUM_MARKERS else v_border
+				print(idx, " ", end="") if idx < num_markers else print("pad ", end="")
+				aruco_img = aru.generateImageMarker(aruco_dict, idx, size) if idx < num_markers else v_border
 				rows = np.hstack((rows, aruco_img, v_border))
 				idx += 1
 			matrix = np.vstack((matrix, rows, h_border))
 			rows = v_border.copy()
 			print()
-	print("-"*NUM_MARKERS)
+	print("-"*num_markers)
 	print("Scaling by factor ", MARKER_SCALING)
 
 	# resize and save
 	matrix = cv2.resize(matrix, None, fx=MARKER_SCALING, fy=MARKER_SCALING, interpolation= cv2.INTER_AREA)
-	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/aruco_matrix_scale_" + str(MARKER_SCALING) + ".png"),  matrix)
+	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
 	if show:
 		cv2.imshow("matrix", matrix)
 		if cv2.waitKey(0) == ord("q"):
@@ -170,7 +202,9 @@ def main():
 	    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-	main()
+	# main()
+	dct = loadArucoYaml('custom_matrix_4x4_20.yml')
+	saveArucoImgMatrix(dct, False, "custom_matrix_4x4_20.png")
 
 # /camera_info
 # header:

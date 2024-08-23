@@ -18,7 +18,6 @@ import geometry_msgs.msg
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
 import dynamic_reconfigure.server
-import camera_models
 from nicol_rh8d.cfg import RH8DDatasetCollectorConfig
 
 # Main function
