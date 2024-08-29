@@ -28,14 +28,16 @@
 	<arg name="y_dist"      default="0.01245" doc="Distance along y axis"/>
     <arg name="z_dist"      default="0.2406" doc="Distance along z axis"/>
     <arg name="attached"      default="false"/>
+	<arg name="launch_rviz"      default="false"/>
 
-	<!-- <include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
 		<arg name="theta"      value="$(arg theta)"/>
 		<arg name="x_dist"      value="$(arg x_dist)" />
 		<arg name="y_dist"      value="$(arg y_dist)" />
 		<arg name="z_dist"      value="$(arg z_dist)" />
 		<arg name="attached" value="$(arg attached)"/>
-	</include> -->
+		<arg name="launch_rviz" value="$(arg launch_rviz)"/>
+	</include>
 
 	<!-- common manager -->
 	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="rs_manager" args="manager" output="screen" required="true" />
