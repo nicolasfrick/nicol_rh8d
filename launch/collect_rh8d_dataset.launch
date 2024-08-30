@@ -19,6 +19,8 @@
 	<arg name="clip_distance"             default="-2"/>
 	<arg name="align_depth"               default="true"/>
 
+	<arg name="play_bag"               default="false"/>
+
 	<!-- <arg name="use_wrist_camera" default="false" />
 	<arg name="use_top_camera" default="false" /> -->
 
