@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, math
+import os
 import yaml
 import numpy as np
 import cv2
