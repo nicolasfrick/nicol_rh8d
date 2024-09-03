@@ -181,11 +181,13 @@ class CameraPose():
 			# T[:3, 3] = pose_dct[id]['tvec'][0]
 			v = pose_dct[id]['tvec'].reshape(3)
 			T[:3, 3] = v # np.array([v[2], v[0], v[1]])
+			if id==4:
+				print(id, ros_euler, v)
 			
 			res = W@M@T
 			res_rot = R.from_matrix(res[:3,:3])
 			res_trans = res[:3, 3]
-			print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
+			# print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
 
 # 1 [ 1.56979128 -0.05076977 -2.8955113 ] [0.54192703 0.04593562 1.96145853]
 
@@ -216,7 +218,7 @@ class CameraPose():
 					frame_id = rgb.header.frame_id
 					raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
-					(marker_poses, out_img) = self.det.detectMarker(raw_img)
+					(marker_poses, out_img) = self.det.detMarkerPoses(raw_img)
 					if marker_poses:
 						# self.getTf(marker_poses)
 						self.getExtrinsics(marker_poses)

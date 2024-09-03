@@ -78,7 +78,7 @@ dependencies:
       - lap==0.4.0
       - matplotlib==3.4.0
       - numpy==1.23.0
-      - opencv-python==4.10.0.84
+      - opencv-contrib-python==4.10.0.84
       - openmim==0.3.9
       - packaging==24.1
       - pycparser==2.22

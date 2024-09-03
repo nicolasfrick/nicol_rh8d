@@ -70,9 +70,12 @@ class ArucoDetector():
 							dict_type: Optional[str]="DICT_4X4_50",
 							dict_yaml: Optional[str]="") -> None:
 		
-		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
-		self.det_params = aru.DetectorParameters()
-		self.aruco_det = aru.ArucoDetector(self.aruco_dict, self.det_params)
+		# self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml) # deprecated
+		self.aruco_dict = aru.Dictionary_get(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
+		self.det_params = aru.DetectorParameters() # deprecated
+		# self.det_params = aru.DetectorParameters_create() 
+		# self.estimate_params = aru.Es
+		# self.aruco_det = aru.ArucoDetector(self.aruco_dict, self.det_params)
 		self.marker_length = marker_length
 		self.genSquarePoints(marker_length)
 		self.cmx = np.asanyarray(K).reshape(3,3)
@@ -202,18 +205,21 @@ class ArucoDetector():
 	def denoiseImage(self, img: np.ndarray) -> np.ndarray:
 		return cv2.fastNlMeansDenoisingColored(img, None, 10,10,7,21)
 
-	def detectMarker(self, img: np.ndarray) -> dict:
+	def detMarkerPoses(self, img: np.ndarray) -> dict:
 		tick = cv2.getTickCount()
-		marker_poses = {}
 
-		(corners, ids, rejected) = self.aruco_det.detectMarkers(img)
+		marker_poses = {}
+		# (corners, ids, rejected) = self.aruco_det.detectMarkers(img) # deprecated
+		(corners, ids, rejected) = aru.detectMarkers(img, self.aruco_dict, parameters=self.det_params)
 		if len(corners) > 0:
 			ids = ids.flatten()
-			for id, corner in zip(ids, corners):
+			zipped = zip(ids, corners)
+			for id, corner in sorted(zipped):
 				# estimate camera pose relative to the marker using the unit provided by obj_points
-				(res, rvec, tvec) = cv2.solvePnP(self.obj_points, corner.reshape(4,2), self.cmx, self.dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
-				if res:
-					marker_poses.update({id: {'rvec': rvec, 'tvec': tvec}})
+				# (res, rvec, tvec) = cv2.solvePnP(self.obj_points, corner.reshape(4,2), self.cmx, self.dist, flags=cv2.SOLVEPNP_IPPE_SQUARE) # deprecated
+				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist)#, estimateParameters=)
+				# if res:
+				marker_poses.update({id: {'rvec': rvec, 'tvec': tvec}})
 
 			t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
 			self.t_total += t_current
@@ -234,8 +240,10 @@ class ArucoDetector():
 		return marker_poses, out_img
 
 if __name__ == "__main__":
-	ad = ArucoDetector(0.010, dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
-	ad.saveArucoImgMatrix(False, "custom_marker_scale_5.png", num=5)
+	ad = ArucoDetector(0.010, np.eye(3), [], dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
+	img = cv2.imread("/home/nic/catkin_ws/src/nicol_rh8d/datasets/perspective_transform/bookComputeTransforms_main_warpedPerspective1.png", 1)
+	ad.detMarkerPoses(img)
+	# ad.saveArucoImgMatrix(False, "custom_marker_scale_5.png", num=5)
 
 # /camera_info
 # header:
