@@ -5,9 +5,6 @@ import yaml
 import numpy as np
 import cv2
 import cv2.aruco as aru
-from scipy.spatial.transform import Rotation as R
-import dynamic_reconfigure.server
-from nicol_rh8d.cfg import RH8DDatasetCollectorConfig
 from typing import Sequence, Optional, Tuple, Union, Any
 
 class ArucoDetector():
@@ -28,6 +25,12 @@ class ArucoDetector():
 		@type  str
 		@param dict_yaml:  path to a dictionary yaml file in 'datasets/aruco/' directory used in favour of dict_type
 		@type  str
+		@param det_marker_center Location of the marker center (centered, top left corner)
+		@type bool
+		@param solvepnp_square Whether to use ippe square method for solvePnp method, else default value (iterative)
+		@type bool
+		@param print_stats Print detection statistics
+		@type bool
 
 		 Generate markers with opencv (custom build in opencv_build directory):
 		.opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /
@@ -68,14 +71,20 @@ class ArucoDetector():
 							bbox: Optional[Tuple]=None,
 							denoise: Optional[bool]=False,
 							dict_type: Optional[str]="DICT_4X4_50",
-							dict_yaml: Optional[str]="") -> None:
+							dict_yaml: Optional[str]="",
+							det_marker_center: Optional[bool]=True,
+							solvepnp_square: Optional[bool]=True,
+							print_stats: Optional[bool]=True) -> None:
 		
-		# self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml) # deprecated
-		self.aruco_dict = aru.Dictionary_get(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
-		self.det_params = aru.DetectorParameters() # deprecated
-		# self.det_params = aru.DetectorParameters_create() 
-		# self.estimate_params = aru.Es
-		# self.aruco_det = aru.ArucoDetector(self.aruco_dict, self.det_params)
+		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
+		self.det_params = aru.DetectorParameters()
+
+		self.estimate_params = aru.EstimateParameters()
+		self.estimate_params.pattern = aru.ARUCO_CCW_CENTER if det_marker_center else aru.ARUCO_CW_TOP_LEFT_CORNER
+		if solvepnp_square:
+			self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE
+		self.estimate_params.useExtrinsicGuess = False # not implemented here
+
 		self.marker_length = marker_length
 		self.genSquarePoints(marker_length)
 		self.cmx = np.asanyarray(K).reshape(3,3)
@@ -84,10 +93,12 @@ class ArucoDetector():
 		self.denoise = denoise
 		self.t_total = 0
 		self.it_total = 0
+		self.print_stats = print_stats
 		
 	def setBBox(self, bbox: Tuple) -> None:
 		self.bbox = bbox
 
+	@classmethod
 	def loadArucoYaml(self, filename: str) -> aru.Dictionary:
 		"""Load yaml dict from 'datasets/aruco/' directory"""
 
@@ -115,65 +126,6 @@ class ArucoDetector():
 
 		return dct
 
-	def saveArucoImgMatrix(self, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5) -> None:
-		"""Aligns the markers in a mxn matrix where m >= n .
-			Saves markers with border as image in  'datasets/aruco/' directory
-
-			@param show:  show image in cv2 window
-			@type  bool
-			@param filename:  image filename, saved inside 'datasets/aruco/' directory
-			@type  str
-			@param bbits:  border bits for the marker, adds to marker size
-			@type  int
-			@param num:  number of markers added to the image
-			@type  int
-			@param scale:  scaling applied to the marker image
-			@type  float
-	"""
-
-		num_markers = self.aruco_dict.bytesList.shape[0] if num == 0 else num
-		size = self.aruco_dict.markerSize + 2*bbits
-
-		# matrix
-		n = int(np.sqrt(num_markers))  # cols
-		residual = num_markers - np.square(n)
-		m = n + residual//n + (1 if residual%n > 0 else 0) # rows
-
-		# entries
-		v_border = np.ones((size, size))*255 # white vertical spacing = 1 *marker size
-		v_border[:, 1] = v_border[:, -2] = [size*30] # add grey border lines
-		h_border = np.ones((size, (2*n*size) + size))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
-		h_border[1, :] = h_border[-2, :] = [size*30] # add horizontal grey border lines
-		h_border[:, 1::2*size] = h_border[:, size-2::2*size] = [size*30]  # add vertical grey border lines
-		rows = v_border.copy()
-		matrix = h_border.copy()
-
-		# draw
-		idx = 1
-		print("Order of ", num_markers, " Aruco markers:")
-		print("-"*num_markers)
-		# cols
-		for _ in range(m):
-				# rows
-				for _ in range(n):
-					print(idx, " ", end="") if idx < num_markers else print("pad ", end="")
-					aruco_img = aru.generateImageMarker(self.aruco_dict, idx, size) if idx < num_markers else v_border
-					rows = np.hstack((rows, aruco_img, v_border))
-					idx += 1
-				matrix = np.vstack((matrix, rows, h_border))
-				rows = v_border.copy()
-				print()
-		print("-"*num_markers)
-		print("Scaling by factor ", scale)
-
-		# resize and save
-		matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
-		cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
-		if show:
-			cv2.imshow("aruco_img", matrix)
-			if cv2.waitKey(0) == ord("q"):
-				cv2.destroyAllWindows()
-
 	def genSquarePoints(self, length: float) -> None:
 		"""
 			https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
@@ -199,37 +151,38 @@ class ArucoDetector():
 	# 	for p in projPoints:
 	# 	cv2.circle(im, (int(p[0][0]), int(p[0][1])), 3, (255,0,0), -1)
 
-	def cropImage(self, img: np.ndarray, x: tuple, y: tuple) -> np.ndarray:
+	def cropImage(self, img: np.ndarray) -> np.ndarray:
 		return img[self.bbox[0][0]: self.bbox[0][1], self.bbox[1][0]: self.bbox[1][1]]
 	
 	def denoiseImage(self, img: np.ndarray) -> np.ndarray:
 		return cv2.fastNlMeansDenoisingColored(img, None, 10,10,7,21)
+	
+	def printStats(self, tick: int) -> None:
+		t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
+		self.t_total += t_current
+		self.it_total += 1
+		if self.it_total % 100 == 0:
+			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
 
 	def detMarkerPoses(self, img: np.ndarray) -> dict:
 		tick = cv2.getTickCount()
 
 		marker_poses = {}
-		# (corners, ids, rejected) = self.aruco_det.detectMarkers(img) # deprecated
 		(corners, ids, rejected) = aru.detectMarkers(img, self.aruco_dict, parameters=self.det_params)
 		if len(corners) > 0:
 			ids = ids.flatten()
 			zipped = zip(ids, corners)
 			for id, corner in sorted(zipped):
 				# estimate camera pose relative to the marker using the unit provided by obj_points
-				# (res, rvec, tvec) = cv2.solvePnP(self.obj_points, corner.reshape(4,2), self.cmx, self.dist, flags=cv2.SOLVEPNP_IPPE_SQUARE) # deprecated
-				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist)#, estimateParameters=)
-				# if res:
-				marker_poses.update({id: {'rvec': rvec, 'tvec': tvec}})
+				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
+				marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points}})
 
-			t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
-			self.t_total += t_current
-			self.it_total += 1
-			if self.it_total % 100 == 0:
-				print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
-				
+			if self.print_stats:
+				self.printStats(tick)
 		else:
 			print("No marker found")
-			
+		
+		# draw detection
 		out_img = aru.drawDetectedMarkers(img, corners, ids)
 		if marker_poses:
 			for id, pose in marker_poses.items():
@@ -238,12 +191,81 @@ class ArucoDetector():
 			print("No pose detected")
 					
 		return marker_poses, out_img
+	
+def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5) -> None:
+	"""Aligns the markers in a mxn matrix where m >= n .
+		Saves markers with border as image in  'datasets/aruco/' directory
+
+		@param aruco_dict:  Aruco dictionary.
+		@type  aru.Dictionary
+		@param show:  show image in cv2 window
+		@type  bool
+		@param filename:  image filename, saved inside 'datasets/aruco/' directory
+		@type  str
+		@param bbits:  border bits for the marker, adds to marker size
+		@type  int
+		@param num:  number of markers added to the image
+		@type  int
+		@param scale:  scaling applied to the marker image
+		@type  float
+"""
+
+	num_markers = aruco_dict.bytesList.shape[0] if num == 0 else num
+	size = aruco_dict.markerSize + 2*bbits
+
+	# matrix
+	n = int(np.sqrt(num_markers))  # cols
+	residual = num_markers - np.square(n)
+	m = n + residual//n + (1 if residual%n > 0 else 0) # rows
+
+	# entries
+	v_border = np.ones((size, size))*255 # white vertical spacing = 1 *marker size
+	v_border[:, 1] = v_border[:, -2] = [size*30] # add grey border lines
+	h_border = np.ones((size, (2*n*size) + size))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
+	h_border[1, :] = h_border[-2, :] = [size*30] # add horizontal grey border lines
+	h_border[:, 1::2*size] = h_border[:, size-2::2*size] = [size*30]  # add vertical grey border lines
+	rows = v_border.copy()
+	matrix = h_border.copy()
+
+	# draw
+	idx = 1
+	print("Order of ", num_markers, " Aruco markers:")
+	print("-"*num_markers)
+	# cols
+	for _ in range(m):
+			# rows
+			for _ in range(n):
+				print(idx, " ", end="") if idx < num_markers+1 else print("pad ", end="")
+				aruco_img = aru.generateImageMarker(aruco_dict, idx, size) if idx < num_markers+1 else v_border
+				rows = np.hstack((rows, aruco_img, v_border))
+				idx += 1
+			matrix = np.vstack((matrix, rows, h_border))
+			rows = v_border.copy()
+			print()
+	print("-"*num_markers)
+	print("Scaling by factor ", scale)
+
+	# resize and save
+	matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
+	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
+	if show:
+		cv2.imshow("aruco_img", matrix)
+		if cv2.waitKey(0) == ord("q"):
+			cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-	ad = ArucoDetector(0.010, np.eye(3), [], dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
-	img = cv2.imread("/home/nic/catkin_ws/src/nicol_rh8d/datasets/perspective_transform/bookComputeTransforms_main_warpedPerspective1.png", 1)
-	ad.detMarkerPoses(img)
-	# ad.saveArucoImgMatrix(False, "custom_marker_scale_5.png", num=5)
+	# adict = ArucoDetector.loadArucoYaml("custom_matrix_4x4_32_consider_flipped.yml")
+	# saveArucoImgMatrix(adict, False, "custom_matrix_4x4_32_consider_flipped.png", num=5)
+	# ad = ArucoDetector(0.0, np.eye(3), [])
+	rot = np.array([0,0,0], dtype=np.float32)
+	trans = np.array([-1,2,3])
+	r , _ = cv2.Rodrigues(rot)
+	r = np.matrix(r).T
+	print(r)
+	print(r.shape)
+	d = np.dot(-r, trans)
+	print(d)
+	print(d.shape)
 
 # /camera_info
 # header:

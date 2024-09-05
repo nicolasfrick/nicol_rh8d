@@ -90,8 +90,15 @@ def create_transform(rotation, translation):
 	return transform
 
 class CameraPose():
+	"""
+
+		@param invert_pose If true, the detected marker pose will be inverted
+		@type bool
+
+	"""
 	
 	def __init__(self,
+                            invert_pose: Optional[bool]=True,
 							vis :Optional[bool]=True) -> None:
 		self.bridge = cv_bridge.CvBridge()
 		# buf = tf2_ros.Buffer()
@@ -108,6 +115,7 @@ class CameraPose():
 														 K=rgb_info.K, 
 														 D=rgb_info.D, 
 														 dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
+		self.invert_pose = invert_pose
 		self.vis = vis
 		if vis:
 			cv2.namedWindow("aruco_img", cv2.WINDOW_NORMAL)
@@ -172,24 +180,23 @@ class CameraPose():
 			T = np.eye(4)
 			# T[:3, :3] = R.from_euler('xyz', np.array([np.pi,0,-np.pi/2])).as_matrix()
 			# T[:3, 3] = np.array([-0.3,-0.1789,1])
-			roudriges = cv2.Rodrigues(np.array(pose_dct[id]['rvec']))[0]
+			roudriges, _ = cv2.Rodrigues(np.array(pose_dct[id]['rvec']))
 			mat = R.from_matrix(roudriges)
 			cv_euler = mat.as_euler('xyz')
 			# print(cv_euler)
 			ros_euler = np.array([cv_euler[2], cv_euler[0], cv_euler[1]])
 			T[:3, :3] =  R.from_euler('xyz', ros_euler).as_matrix()
 			# T[:3, 3] = pose_dct[id]['tvec'][0]
-			v = pose_dct[id]['tvec'].reshape(3)
+			v = pose_dct[id]['tvec'] # .reshape(3)
 			T[:3, 3] = v # np.array([v[2], v[0], v[1]])
-			if id==4:
-				print(id, ros_euler, v)
+			# if id==4:
+			# 	print(id, ros_euler, v)
 			
 			res = W@M@T
 			res_rot = R.from_matrix(res[:3,:3])
 			res_trans = res[:3, 3]
-			# print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
-
-# 1 [ 1.56979128 -0.05076977 -2.8955113 ] [0.54192703 0.04593562 1.96145853]
+			print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
+			if id==4: print()
 
 		# # marker -> camera tf
 		# C = np.eye(4)
@@ -206,6 +213,14 @@ class CameraPose():
 		# res_rot = R.from_matrix(res[:3,:3])
 		# res_trans = res[:3, 3]
 		# # print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
+		
+	def invPersp(self, rvec: cv2.typing.MatLike, tvec: cv2.typing.MatLike) -> tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
+		"""Apply the inversion to the given vectors"""
+		mat, _ = cv2.Rodrigues(rvec)
+		mat = np.matrix(mat).T
+		inv_tvec = np.dot(-mat, tvec)
+		inv_rvec, _ = cv2.Rodrigues(mat)
+		return inv_rvec, inv_tvec
 		
 	def run(self) -> None:
 		rate = rospy.Rate(6)
