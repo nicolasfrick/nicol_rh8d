@@ -42,23 +42,23 @@ class ArucoDetector():
 
 	# ArUco dictionaries built into the OpenCV library
 	ARUCO_DICT = {
-								"DICT_4X4_50": cv2.aruco.DICT_4X4_50,
-								"DICT_4X4_100": cv2.aruco.DICT_4X4_100,
-								"DICT_4X4_250": cv2.aruco.DICT_4X4_250,
-								"DICT_4X4_1000": cv2.aruco.DICT_4X4_1000,
-								"DICT_5X5_50": cv2.aruco.DICT_5X5_50,
-								"DICT_5X5_100": cv2.aruco.DICT_5X5_100,
-								"DICT_5X5_250": cv2.aruco.DICT_5X5_250,
-								"DICT_5X5_1000": cv2.aruco.DICT_5X5_1000,
-								"DICT_6X6_50": cv2.aruco.DICT_6X6_50,
-								"DICT_6X6_100": cv2.aruco.DICT_6X6_100,
-								"DICT_6X6_250": cv2.aruco.DICT_6X6_250,
-								"DICT_6X6_1000": cv2.aruco.DICT_6X6_1000,
-								"DICT_7X7_50": cv2.aruco.DICT_7X7_50,
-								"DICT_7X7_100": cv2.aruco.DICT_7X7_100,
-								"DICT_7X7_250": cv2.aruco.DICT_7X7_250,
-								"DICT_7X7_1000": cv2.aruco.DICT_7X7_1000,
-								"DICT_ARUCO_ORIGINAL": cv2.aruco.DICT_ARUCO_ORIGINAL
+								"DICT_4X4_50": aru.DICT_4X4_50,
+								"DICT_4X4_100": aru.DICT_4X4_100,
+								"DICT_4X4_250": aru.DICT_4X4_250,
+								"DICT_4X4_1000": aru.DICT_4X4_1000,
+								"DICT_5X5_50": aru.DICT_5X5_50,
+								"DICT_5X5_100": aru.DICT_5X5_100,
+								"DICT_5X5_250": aru.DICT_5X5_250,
+								"DICT_5X5_1000": aru.DICT_5X5_1000,
+								"DICT_6X6_50": aru.DICT_6X6_50,
+								"DICT_6X6_100": aru.DICT_6X6_100,
+								"DICT_6X6_250": aru.DICT_6X6_250,
+								"DICT_6X6_1000": aru.DICT_6X6_1000,
+								"DICT_7X7_50": aru.DICT_7X7_50,
+								"DICT_7X7_100": aru.DICT_7X7_100,
+								"DICT_7X7_250": aru.DICT_7X7_250,
+								"DICT_7X7_1000": aru.DICT_7X7_1000,
+								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
 
 	AXIS_LENGTH = 1.5 # axis drawing
@@ -192,7 +192,7 @@ class ArucoDetector():
 					
 		return marker_poses, out_img
 	
-def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5) -> None:
+def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:
 	"""Aligns the markers in a mxn matrix where m >= n .
 		Saves markers with border as image in  'datasets/aruco/' directory
 
@@ -208,6 +208,8 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 		@type  int
 		@param scale:  scaling applied to the marker image
 		@type  float
+		@param save_indiv Save markers to one file per marker
+		@type bool
 """
 
 	num_markers = aruco_dict.bytesList.shape[0] if num == 0 else num
@@ -221,7 +223,7 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	# entries
 	v_border = np.ones((size, size))*255 # white vertical spacing = 1 *marker size
 	v_border[:, 1] = v_border[:, -2] = [size*30] # add grey border lines
-	h_border = np.ones((size, (2*n*size) + size))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
+	h_border =  np.ones((size, 3* size))*255 if save_indiv else np.ones((size, (2*n*size) + size))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
 	h_border[1, :] = h_border[-2, :] = [size*30] # add horizontal grey border lines
 	h_border[:, 1::2*size] = h_border[:, size-2::2*size] = [size*30]  # add vertical grey border lines
 	rows = v_border.copy()
@@ -235,10 +237,24 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	for _ in range(m):
 			# rows
 			for _ in range(n):
+				if idx >= num_markers+1 and save_indiv:
+					print()
+					break
 				print(idx, " ", end="") if idx < num_markers+1 else print("pad ", end="")
 				aruco_img = aru.generateImageMarker(aruco_dict, idx, size) if idx < num_markers+1 else v_border
+				# append border
 				rows = np.hstack((rows, aruco_img, v_border))
+				if save_indiv:
+					matrix = np.vstack((matrix, rows, h_border))
+					matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
+					cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/individ/" + str(idx) + "_" + filename),  matrix)
+					# reset
+					rows = v_border.copy()
+					matrix = h_border.copy()
 				idx += 1
+			if save_indiv:
+				continue
+			# stack horiz border
 			matrix = np.vstack((matrix, rows, h_border))
 			rows = v_border.copy()
 			print()
@@ -246,8 +262,9 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	print("Scaling by factor ", scale)
 
 	# resize and save
-	matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
-	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
+	if not save_indiv:
+		matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
+		cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
 	if show:
 		cv2.imshow("aruco_img", matrix)
 		if cv2.waitKey(0) == ord("q"):
@@ -255,17 +272,8 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 
 if __name__ == "__main__":
 	# adict = ArucoDetector.loadArucoYaml("custom_matrix_4x4_32_consider_flipped.yml")
-	# saveArucoImgMatrix(adict, False, "custom_matrix_4x4_32_consider_flipped.png", num=5)
-	# ad = ArucoDetector(0.0, np.eye(3), [])
-	rot = np.array([0,0,0], dtype=np.float32)
-	trans = np.array([-1,2,3])
-	r , _ = cv2.Rodrigues(rot)
-	r = np.matrix(r).T
-	print(r)
-	print(r.shape)
-	d = np.dot(-r, trans)
-	print(d)
-	print(d.shape)
+	adict = aru.getPredefinedDictionary(aru.DICT_4X4_50)
+	saveArucoImgMatrix(adict, False, "matrix_4x4_32.png", num=32, save_indiv=False)
 
 # /camera_info
 # header:
