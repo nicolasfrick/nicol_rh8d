@@ -7,6 +7,8 @@ import cv2
 import cv2.aruco as aru
 from typing import Sequence, Optional, Tuple, Union, Any
 
+DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
+
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
 
@@ -102,7 +104,7 @@ class ArucoDetector():
 	def loadArucoYaml(self, filename: str) -> aru.Dictionary:
 		"""Load yaml dict from 'datasets/aruco/' directory"""
 
-		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename)
+		fl = os.path.join(DATA_PTH, filename)
 		dct = aru.Dictionary()
 
 		with open(fl, 'r') as fr:
@@ -229,6 +231,13 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	rows = v_border.copy()
 	matrix = h_border.copy()
 
+	# mkdir
+	if save_indiv:
+		file_pth = filename.replace(".png", "")
+		file_pth = os.path.join(DATA_PTH, file_pth)
+		if not os.path.isdir(file_pth):
+			os.mkdir(file_pth)
+
 	# draw
 	idx = 1
 	print("Order of ", num_markers, " Aruco markers:")
@@ -247,7 +256,7 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 				if save_indiv:
 					matrix = np.vstack((matrix, rows, h_border))
 					matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
-					cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/individ/" + str(idx) + "_" + filename),  matrix)
+					cv2.imwrite(os.path.join(file_pth,  str(idx) + ".png"),  matrix)
 					# reset
 					rows = v_border.copy()
 					matrix = h_border.copy()
@@ -264,7 +273,7 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	# resize and save
 	if not save_indiv:
 		matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
-		cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/" + filename),  matrix)
+		cv2.imwrite(os.path.join(DATA_PTH, filename),  matrix)
 	if show:
 		cv2.imshow("aruco_img", matrix)
 		if cv2.waitKey(0) == ord("q"):
