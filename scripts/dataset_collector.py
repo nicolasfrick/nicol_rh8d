@@ -14,7 +14,7 @@ from tf2_geometry_msgs import PointStamped
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
 import dynamic_reconfigure.server
-from nicol_rh8d.cfg import RH8DDatasetCollectorConfig
+from nicol_rh8d.cfg import ArucoDetectorConfig
 from aruco_detector import ArucoDetector
 from typing import Sequence, Optional, Tuple, Union, Any
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
@@ -111,10 +111,11 @@ class CameraPose():
 
 		rospy.loginfo("Waiting for camera_info")
 		rgb_info = rospy.wait_for_message('marker_realsense/color/camera_info', sensor_msgs.msg.CameraInfo)
-		self.det = ArucoDetector(marker_length=0.052, 
+		self.det = ArucoDetector(marker_length=0.010, 
 														 K=rgb_info.K, 
 														 D=rgb_info.D, 
 														 dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
+		self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		self.invert_pose = invert_pose
 		self.vis = vis
 		if vis:
@@ -236,7 +237,8 @@ class CameraPose():
 					(marker_poses, out_img) = self.det.detMarkerPoses(raw_img)
 					if marker_poses:
 						# self.getTf(marker_poses)
-						self.getExtrinsics(marker_poses)
+						# self.getExtrinsics(marker_poses)
+						pass
 
 					if self.vis:
 						cv2.imshow('aruco_img', out_img)
@@ -254,7 +256,7 @@ class CameraPose():
 			cv2.destroyAllWindows()
 
 def main() -> None:
-	rospy.init_node('RH8D_dataset_collector')
+	rospy.init_node('dataset_collector')
 	CameraPose().run()
 	
 if __name__ == "__main__":

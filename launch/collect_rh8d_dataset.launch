@@ -64,7 +64,7 @@
 	</include>
 
 	<!-- dataset collector script -->
-	<node pkg="nicol_rh8d" name="RH8D_dataset_collector" type="dataset_collector.py" output="screen" required="true">
+	<node pkg="nicol_rh8d" name="dataset_collector" type="dataset_collector.py" output="screen" required="true">
 		<!-- <param name="move_hand"        type="bool"   value="$(arg move_hand)" /> -->
 	</node>
 

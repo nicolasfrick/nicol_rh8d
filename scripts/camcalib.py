@@ -119,3 +119,88 @@ if __name__ == '__main__':
 	parser.add_argument('--outfile', metavar='str', help='Filepath for calib results', default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/camcalib.yaml"))
 	args = parser.parse_args()
 	main(args.video_dev, args.outfile, args.width, args.height, args.num_squares_x, args.num_squares_y, args.sqr_size)
+
+# REALSENSE D415:
+# /camera_info
+# header:
+#   seq: 45
+#   stamp:
+#     secs: 1724064207
+#     nsecs: 449997425
+#   frame_id: "marker_realsense_color_optical_frame"
+# height: 1080
+# width: 1920
+# distortion_model: "plumb_bob"
+
+# The distortion parameters, size depending on the distortion model.
+# For "plumb_bob", the 5 parameters are: (k1, k2, t1, t2, k3).
+# D: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+# Intrinsic camera matrix for the raw (distorted) images.
+#        [fx  0 cx]
+# K = [ 0 fy cy]
+#        [ 0  0  1]
+# Projects 3D points in the camera coordinate frame to 2D pixel
+# coordinates using the focal lengths (fx, fy) and principal point (cx, cy).
+# K: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0]
+
+# Rectification matrix (stereo cameras only)
+# R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+
+# Projection/camera matrix
+#        [fx'  0  cx' Tx]
+# P = [ 0  fy' cy' Ty]
+#        [ 0   0   1   0]
+# By convention, this matrix specifies the intrinsic (camera) matrix
+#  of the processed (rectified) image. That is, the left 3x3 portion
+#  is the normal camera intrinsic matrix for the rectified image.
+# It projects 3D points in the camera coordinate frame to 2D pixel
+#  coordinates using the focal lengths (fx', fy') and principal point
+#  (cx', cy') - these may differ from the values in K.
+# For monocular cameras, Tx = Ty = 0. Normally, monocular cameras will
+#  also have R = the identity and P[1:3,1:3] = K.
+# Given a 3D point [X Y Z]', the projection (x, y) of the point onto
+#  the rectified image is given by:
+#  [u v w]' = P * [X Y Z 1]'
+#         x = u / w
+#         y = v / w
+#  This holds for both images of a stereo pair.
+# P: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 0.0, 1.0, 0.0]
+
+# Binning refers here to any camera setting which combines rectangular
+#  neighborhoods of pixels into larger "super-pixels." It reduces the
+#  resolution of the output image to
+#  (width / binning_x) x (height / binning_y).
+# The default values binning_x = binning_y = 0 is considered the same
+#  as binning_x = binning_y = 1 (no subsampling).
+# binning_x: 0
+# binning_y: 0
+
+# Region of interest (subwindow of full camera resolution), given in
+#  full resolution (unbinned) image coordinates. A particular ROI
+#  always denotes the same window of pixels on the camera sensor,
+#  regardless of binning settings.
+# The default setting of roi (all values 0) is considered the same as
+#  full resolution (roi.width = width, roi.height = height).
+# roi:
+#   x_offset: 0
+#   y_offset: 0
+#   height: 0
+#   width: 0
+#   do_rectify: False
+# ---
+
+# rs-enumerate-devices -c
+# Device info:
+# Name                          :     Intel RealSense D415
+# Serial Number                 :     822512060411
+# ...
+#   Width:        1920
+#   Height:       1080
+#   PPX:          944.551452636719
+#   PPY:          547.094909667969
+#   Fx:           1396.59387207031
+#   Fy:           1395.52648925781
+#   Distortion:   Inverse Brown Conrady
+#   Coeffs:       0       0       0       0       0
+#   FOV (deg):    69 x 42.31

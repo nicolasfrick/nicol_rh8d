@@ -3,6 +3,7 @@
 import os
 import yaml
 import numpy as np
+from threading import Lock
 import cv2
 import cv2.aruco as aru
 from typing import Sequence, Optional, Tuple, Union, Any
@@ -80,12 +81,13 @@ class ArucoDetector():
 		
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
 		self.det_params = aru.DetectorParameters()
+		self.det_params_lock = Lock()
 
 		self.estimate_params = aru.EstimateParameters()
-		self.estimate_params.pattern = aru.ARUCO_CCW_CENTER if det_marker_center else aru.ARUCO_CW_TOP_LEFT_CORNER
-		if solvepnp_square:
-			self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE
-		self.estimate_params.useExtrinsicGuess = False # not implemented here
+		# self.estimate_params.pattern = aru.ARUCO_CCW_CENTER if det_marker_center else aru.ARUCO_CW_TOP_LEFT_CORNER
+		# self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE if solvepnp_square else cv2.SOLVEPNP_ITERATIVE
+		# self.estimate_params.useExtrinsicGuess = False # not implemented here
+		self.est_params_lock = Lock()
 
 		self.marker_length = marker_length
 		self.genSquarePoints(marker_length)
@@ -96,6 +98,47 @@ class ArucoDetector():
 		self.t_total = 0
 		self.it_total = 0
 		self.print_stats = print_stats
+
+	def setDetectorParams(self, config, level):
+		with self.est_params_lock:
+			self.estimate_params.pattern = config.estimate_pattern
+			self.estimate_params.solvePnPMethod = config.solvePnPMethod
+		with self.det_params_lock:
+			self.det_params.adaptiveThreshWinSizeMin = config.adaptiveThreshWinSizeMin 
+			self.det_params.adaptiveThreshWinSizeMax = config.adaptiveThreshWinSizeMax 
+			self.det_params.adaptiveThreshWinSizeStep = config.adaptiveThreshWinSizeStep 
+			self.det_params.adaptiveThreshConstant = config.adaptiveThreshConstant 
+			self.det_params.minMarkerPerimeterRate = config.minMarkerPerimeterRate 
+			self.det_params.maxMarkerPerimeterRate = config.maxMarkerPerimeterRate 
+			self.det_params.polygonalApproxAccuracyRate = config.polygonalApproxAccuracyRate 
+			self.det_params.minCornerDistanceRate = config.minCornerDistanceRate 
+			self.det_params.minDistanceToBorder = config.minDistanceToBorder 
+			self.det_params.minMarkerDistanceRate = config.minMarkerDistanceRate 
+			self.det_params.minGroupDistance = config.minGroupDistance 
+			self.det_params.cornerRefinementMethod = config.cornerRefinementMethod 
+			self.det_params.cornerRefinementWinSize = config.cornerRefinementWinSize 
+			self.det_params.relativeCornerRefinmentWinSize = config.relativeCornerRefinmentWinSize 
+			self.det_params.cornerRefinementMaxIterations = config.cornerRefinementMaxIterations 
+			self.det_params.cornerRefinementMinAccuracy = config.cornerRefinementMinAccuracy 
+			self.det_params.markerBorderBits = config.markerBorderBits 
+			self.det_params.perspectiveRemovePixelPerCell = config.perspectiveRemovePixelPerCell 
+			self.det_params.perspectiveRemoveIgnoredMarginPerCell = config.perspectiveRemoveIgnoredMarginPerCell 
+			self.det_params.maxErroneousBitsInBorderRate = config.maxErroneousBitsInBorderRate 
+			self.det_params.minOtsuStdDev = config.minOtsuStdDev 
+			self.det_params.errorCorrectionRate = config.errorCorrectionRate 
+			self.det_params.aprilTagQuadDecimate = config.aprilTagQuadDecimate 
+			self.det_params.aprilTagQuadSigma = config.aprilTagQuadSigma 
+			self.det_params.aprilTagMinClusterPixels = config.aprilTagMinClusterPixels 
+			self.det_params.aprilTagMaxNmaxima = config.aprilTagMaxNmaxima 
+			self.det_params.aprilTagCriticalRad = config.aprilTagCriticalRad 
+			self.det_params.aprilTagMaxLineFitMse = config.aprilTagMaxLineFitMse 
+			self.det_params.aprilTagMinWhiteBlackDiff = config.aprilTagMinWhiteBlackDiff 
+			self.det_params.aprilTagDeglitch = config.aprilTagDeglitch 
+			self.det_params.detectInvertedMarker = config.detectInvertedMarker 
+			self.det_params.useAruco3Detection = config.useAruco3Detection 
+			self.det_params.minSideLengthCanonicalImg = config.minSideLengthCanonicalImg 
+			self.det_params.minMarkerLengthRatioOriginalImg = config.minMarkerLengthRatioOriginalImg 
+		return config
 		
 	def setBBox(self, bbox: Tuple) -> None:
 		self.bbox = bbox
@@ -170,14 +213,16 @@ class ArucoDetector():
 		tick = cv2.getTickCount()
 
 		marker_poses = {}
-		(corners, ids, rejected) = aru.detectMarkers(img, self.aruco_dict, parameters=self.det_params)
+		with self.det_params_lock:
+			(corners, ids, rejected) = aru.detectMarkers(img, self.aruco_dict, parameters=self.det_params)
 		if len(corners) > 0:
 			ids = ids.flatten()
 			zipped = zip(ids, corners)
 			for id, corner in sorted(zipped):
-				# estimate camera pose relative to the marker using the unit provided by obj_points
-				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
-				marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points}})
+				with self.est_params_lock:
+					# estimate camera pose relative to the marker using the unit provided by obj_points
+					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
+					marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points}})
 
 			if self.print_stats:
 				self.printStats(tick)
@@ -281,89 +326,6 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 
 if __name__ == "__main__":
 	# adict = ArucoDetector.loadArucoYaml("custom_matrix_4x4_32_consider_flipped.yml")
-	adict = aru.getPredefinedDictionary(aru.DICT_4X4_50)
-	saveArucoImgMatrix(adict, False, "matrix_4x4_32.png", num=32, save_indiv=False)
-
-# /camera_info
-# header:
-#   seq: 45
-#   stamp:
-#     secs: 1724064207
-#     nsecs: 449997425
-#   frame_id: "marker_realsense_color_optical_frame"
-# height: 1080
-# width: 1920
-# distortion_model: "plumb_bob"
-
-# The distortion parameters, size depending on the distortion model.
-# For "plumb_bob", the 5 parameters are: (k1, k2, t1, t2, k3).
-# D: [0.0, 0.0, 0.0, 0.0, 0.0]
-
-# Intrinsic camera matrix for the raw (distorted) images.
-#        [fx  0 cx]
-# K = [ 0 fy cy]
-#        [ 0  0  1]
-# Projects 3D points in the camera coordinate frame to 2D pixel
-# coordinates using the focal lengths (fx, fy) and principal point (cx, cy).
-# K: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0]
-
-# Rectification matrix (stereo cameras only)
-# R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-
-# Projection/camera matrix
-#        [fx'  0  cx' Tx]
-# P = [ 0  fy' cy' Ty]
-#        [ 0   0   1   0]
-# By convention, this matrix specifies the intrinsic (camera) matrix
-#  of the processed (rectified) image. That is, the left 3x3 portion
-#  is the normal camera intrinsic matrix for the rectified image.
-# It projects 3D points in the camera coordinate frame to 2D pixel
-#  coordinates using the focal lengths (fx', fy') and principal point
-#  (cx', cy') - these may differ from the values in K.
-# For monocular cameras, Tx = Ty = 0. Normally, monocular cameras will
-#  also have R = the identity and P[1:3,1:3] = K.
-# Given a 3D point [X Y Z]', the projection (x, y) of the point onto
-#  the rectified image is given by:
-#  [u v w]' = P * [X Y Z 1]'
-#         x = u / w
-#         y = v / w
-#  This holds for both images of a stereo pair.
-# P: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 0.0, 1.0, 0.0]
-
-# Binning refers here to any camera setting which combines rectangular
-#  neighborhoods of pixels into larger "super-pixels." It reduces the
-#  resolution of the output image to
-#  (width / binning_x) x (height / binning_y).
-# The default values binning_x = binning_y = 0 is considered the same
-#  as binning_x = binning_y = 1 (no subsampling).
-# binning_x: 0
-# binning_y: 0
-
-# Region of interest (subwindow of full camera resolution), given in
-#  full resolution (unbinned) image coordinates. A particular ROI
-#  always denotes the same window of pixels on the camera sensor,
-#  regardless of binning settings.
-# The default setting of roi (all values 0) is considered the same as
-#  full resolution (roi.width = width, roi.height = height).
-# roi:
-#   x_offset: 0
-#   y_offset: 0
-#   height: 0
-#   width: 0
-#   do_rectify: False
-# ---
-
-# rs-enumerate-devices -c
-# Device info:
-# Name                          :     Intel RealSense D415
-# Serial Number                 :     822512060411
-# ...
-#   Width:        1920
-#   Height:       1080
-#   PPX:          944.551452636719
-#   PPY:          547.094909667969
-#   Fx:           1396.59387207031
-#   Fy:           1395.52648925781
-#   Distortion:   Inverse Brown Conrady
-#   Coeffs:       0       0       0       0       0
-#   FOV (deg):    69 x 42.31
+	# adict = aru.getPredefinedDictionary(aru.DICT_4X4_50)
+	# saveArucoImgMatrix(adict, False, "matrix_4x4_32.png", num=32, save_indiv=False)
+	a = ArucoDetector(0, np.eye(3), [])
