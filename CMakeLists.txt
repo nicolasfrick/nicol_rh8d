@@ -22,7 +22,10 @@ find_package(catkin REQUIRED COMPONENTS
     image_transport
     camera_info_manager
     realsense2_camera
+    nodelet
 )
+
+find_package(OpenCV)
 
 ################################################################################
 # Setup for python modules and scripts
@@ -38,6 +41,7 @@ find_package(catkin REQUIRED COMPONENTS
 # Generate dynamic reconfigure parameters in the 'cfg' folder
 generate_dynamic_reconfigure_options(
   cfg/ArucoDetectorConfig.cfg
+  cfg/VideoStream.cfg
 )
 
 ################################################################################
@@ -57,6 +61,7 @@ catkin_package(
                   geometry_msgs
                   nicol_msgs
                   dynamic_reconfigure
+                  nodelet
 )
 
 ################################################################################
@@ -67,16 +72,16 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
 )
 
-# add_library(${PROJECT_NAME} SHARED src/video_stream.cpp)
-# target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${OpenCV_LIBRARIES})
-# add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg)
+add_library(${PROJECT_NAME} SHARED src/video_stream.cpp)
+target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES} ${OpenCV_LIBRARIES})
+add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg)
 
 ################################################################################
 # Install
 ################################################################################
-# install(TARGETS ${PROJECT_NAME}
-#   RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-# )
+install(TARGETS ${PROJECT_NAME}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
 
 # install(PROGRAMS
 #   scripts/set_defaults_SEE_CAM
@@ -87,8 +92,8 @@ install(DIRECTORY launch scripts
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
-# install(FILES nodelet_plugins.xml
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(FILES nodelet_plugins.xml
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
 
 ################################################################################
 # Test

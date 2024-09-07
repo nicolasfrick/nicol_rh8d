@@ -100,6 +100,7 @@ class CameraPose():
 	def __init__(self,
                             invert_pose: Optional[bool]=True,
 							vis :Optional[bool]=True) -> None:
+		
 		self.bridge = cv_bridge.CvBridge()
 		# buf = tf2_ros.Buffer()
 		# listener = tf2_ros.TransformListener(buf)

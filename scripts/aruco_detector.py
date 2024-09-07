@@ -63,7 +63,6 @@ class ArucoDetector():
 								"DICT_7X7_1000": aru.DICT_7X7_1000,
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
-
 	AXIS_LENGTH = 1.5 # axis drawing
 	AXIS_THICKNESS = 2 # axis drawing
 
@@ -82,7 +81,6 @@ class ArucoDetector():
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
 		self.det_params = aru.DetectorParameters()
 		self.det_params_lock = Lock()
-
 		self.estimate_params = aru.EstimateParameters()
 		# self.estimate_params.pattern = aru.ARUCO_CCW_CENTER if det_marker_center else aru.ARUCO_CW_TOP_LEFT_CORNER
 		# self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE if solvepnp_square else cv2.SOLVEPNP_ITERATIVE
