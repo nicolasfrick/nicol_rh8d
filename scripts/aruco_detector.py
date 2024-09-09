@@ -2,6 +2,7 @@
 
 import os
 import yaml
+import dataclasses
 import numpy as np
 from threading import Lock
 import cv2
@@ -9,6 +10,12 @@ import cv2.aruco as aru
 from typing import Sequence, Optional, Tuple, Union, Any
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
+
+@dataclasses.dataclass(eq=False)
+class ImgDenoising:
+		h: float=10.0
+		templateWindowSize: int=7
+		searchWindowSize: int=21
 
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
@@ -86,18 +93,25 @@ class ArucoDetector():
 		# self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE if solvepnp_square else cv2.SOLVEPNP_ITERATIVE
 		# self.estimate_params.useExtrinsicGuess = False # not implemented here
 		self.est_params_lock = Lock()
+		self.denoise = self.denoise_arg = denoise
+		self.den_params = ImgDenoising()
+		self.den_params_lock = Lock()
 
 		self.marker_length = marker_length
-		self.genSquarePoints(marker_length)
+		self._genSquarePoints(marker_length)
 		self.cmx = np.asanyarray(K).reshape(3,3)
 		self.dist =  np.asanyarray(D)
 		self.bbox = bbox
-		self.denoise = denoise
 		self.t_total = 0
 		self.it_total = 0
 		self.print_stats = print_stats
 
 	def setDetectorParams(self, config, level):
+		with self.den_params_lock:
+			self.denoise = self.denoise_arg or config.denoise
+			self.den_params.h = config.h 
+			self.den_params.templateWindowSize = config.templateWindowSize 
+			self.den_params.searchWindowSize = config.searchWindowSize
 		with self.est_params_lock:
 			self.estimate_params.pattern = config.estimate_pattern
 			self.estimate_params.solvePnPMethod = config.solvePnPMethod
@@ -169,7 +183,7 @@ class ArucoDetector():
 
 		return dct
 
-	def genSquarePoints(self, length: float) -> None:
+	def _genSquarePoints(self, length: float) -> None:
 		"""
 			https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
 			cv::SOLVEPNP_IPPE_SQUARE Special case suitable for marker pose estimation. 
@@ -194,25 +208,33 @@ class ArucoDetector():
 	# 	for p in projPoints:
 	# 	cv2.circle(im, (int(p[0][0]), int(p[0][1])), 3, (255,0,0), -1)
 
-	def cropImage(self, img: np.ndarray) -> np.ndarray:
+	def _cropImage(self, img: np.ndarray) -> np.ndarray:
 		return img[self.bbox[0][0]: self.bbox[0][1], self.bbox[1][0]: self.bbox[1][1]]
-	
-	def denoiseImage(self, img: np.ndarray) -> np.ndarray:
-		return cv2.fastNlMeansDenoisingColored(img, None, 10,10,7,21)
-	
-	def printStats(self, tick: int) -> None:
+			
+	def _printStats(self, tick: int) -> None:
 		t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
 		self.t_total += t_current
 		self.it_total += 1
 		if self.it_total % 100 == 0:
 			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
 
-	def detMarkerPoses(self, img: np.ndarray) -> dict:
+	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray, np.ndarray]:	
+		"""Detect Aruco marker from bgr image.
+			@param img Input image with 'bgr' encoding
+			@type np.ndarray
+			@return Detected marker poses, marker detection image, processed image
+		"""
+		# grasycale image
+		gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+		#  image denoising using Non-local Means Denoising algorithm
+		with self.den_params_lock:
+			if self.denoise:
+				gray = cv2.fastNlMeansDenoising(gray, None, self.den_params.h, self.den_params.templateWindowSize, self.den_params.searchWindowSize)
+			
 		tick = cv2.getTickCount()
-
 		marker_poses = {}
 		with self.det_params_lock:
-			(corners, ids, rejected) = aru.detectMarkers(img, self.aruco_dict, parameters=self.det_params)
+			(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.det_params)
 		if len(corners) > 0:
 			ids = ids.flatten()
 			zipped = zip(ids, corners)
@@ -221,9 +243,8 @@ class ArucoDetector():
 					# estimate camera pose relative to the marker using the unit provided by obj_points
 					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
 					marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points}})
-
 			if self.print_stats:
-				self.printStats(tick)
+				self._printStats(tick)
 		else:
 			print("No marker found")
 		
@@ -235,7 +256,7 @@ class ArucoDetector():
 		else:
 			print("No pose detected")
 					
-		return marker_poses, out_img
+		return marker_poses, out_img, gray
 	
 def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:
 	"""Aligns the markers in a mxn matrix where m >= n .

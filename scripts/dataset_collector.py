@@ -118,14 +118,14 @@ class CameraPose():
 		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
 		self.det = ArucoDetector(marker_length=0.010, 
 														 K=rgb_info.K, 
-														 D=rgb_info.D, 
-														 dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
+														 D=rgb_info.D)
 		self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		self.invert_pose = invert_pose
 		self.img_topic = camera_ns + '/image_raw'
 		self.vis = vis
 		if vis:
-			cv2.namedWindow("aruco_img", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 
 	def transformToWorld(self, id, x, y, z, r, p, ya):
 		# target_pose_from_cam = PoseStamped()
@@ -235,19 +235,19 @@ class CameraPose():
 			while not rospy.is_shutdown():
 					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-
 					stamp = rgb.header.stamp
 					frame_id = rgb.header.frame_id
 					raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
-					(marker_poses, out_img) = self.det.detMarkerPoses(raw_img)
+					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
 					if marker_poses:
 						# self.getTf(marker_poses)
 						# self.getExtrinsics(marker_poses)
 						pass
 
 					if self.vis:
-						cv2.imshow('aruco_img', out_img)
+						cv2.imshow('Detection', det_img)
+						cv2.imshow('Processed', proc_img)
 						if cv2.waitKey(1) == ord("q"):
 							break
 
