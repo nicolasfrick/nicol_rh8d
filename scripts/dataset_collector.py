@@ -91,13 +91,17 @@ def create_transform(rotation, translation):
 
 class CameraPose():
 	"""
-
-		@param invert_pose If true, the detected marker pose will be inverted
+        @param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
+		@type str
+		@param invert_pose Invert detected marker pose 
+		@type bool
+		@param vis Show detection images
 		@type bool
 
 	"""
 	
 	def __init__(self,
+                            camera_ns: Optional[str]='',
                             invert_pose: Optional[bool]=True,
 							vis :Optional[bool]=True) -> None:
 		
@@ -110,14 +114,15 @@ class CameraPose():
 		with open(fl, 'r') as fr:
 			self.marker_table_poses = yaml.safe_load(fr)
 
-		rospy.loginfo("Waiting for camera_info")
-		rgb_info = rospy.wait_for_message('marker_realsense/color/camera_info', sensor_msgs.msg.CameraInfo)
+		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
+		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
 		self.det = ArucoDetector(marker_length=0.010, 
 														 K=rgb_info.K, 
 														 D=rgb_info.D, 
 														 dict_yaml='custom_matrix_4x4_32_consider_flipped.yml')
 		self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		self.invert_pose = invert_pose
+		self.img_topic = camera_ns + '/image_raw'
 		self.vis = vis
 		if vis:
 			cv2.namedWindow("aruco_img", cv2.WINDOW_NORMAL)
@@ -228,7 +233,7 @@ class CameraPose():
 		rate = rospy.Rate(6)
 		try:
 			while not rospy.is_shutdown():
-					rgb = rospy.wait_for_message('marker_realsense/color/image_raw', sensor_msgs.msg.Image)
+					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
 
 					stamp = rgb.header.stamp
@@ -258,7 +263,8 @@ class CameraPose():
 
 def main() -> None:
 	rospy.init_node('dataset_collector')
-	CameraPose().run()
+	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', '')
+			).run()
 	
 if __name__ == "__main__":
 	main()

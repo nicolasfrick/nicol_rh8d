@@ -1,13 +1,13 @@
 
 <launch>
-    <arg name="nodelet_manager"                        default="manager"                               doc="Local or global nodelet manager"/>  
     <arg name="external_manager"                       default="false"                                       doc="Whether to start nodelets with a global nodelet manager "/>  
+    <arg name="nodelet_manager"                        default="manager"                               doc="Local or global nodelet manager"/>  
     <arg name="fps"                                                    default="30.0"                                        doc="set camera fps "/>
     <arg name="always_capture"                            default="false"                                       doc="f true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
     <arg name="camera_name"                              default="webcam"                                 doc="node name and ros graph name"/> 
     <arg name="video_stream_provider"            default="/dev/video0"                         doc="video device"/> 
-    <arg name="width"                                              default="640"                                        doc="set resolution"/> 
-    <arg name="height"                                            default="480"                                         doc="set resolution"/> 
+    <arg name="width"                                              default="1280"                                        doc="set resolution"/> 
+    <arg name="height"                                            default="960"                                         doc="set resolution"/> 
     <arg name="camera_info_url"                          default="file:///$(find nicol_rh8d)/cfg/camcalib_$(arg width)x$(arg height).yaml"  doc=" camera info loading"/>
 
     <!-- start local nodelet manager if no global is used -->
