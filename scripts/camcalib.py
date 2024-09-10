@@ -2,10 +2,23 @@
  
 import os
 import cv2 
-import numpy as np
 import argparse
-  
+import numpy as np
+from pynput import keyboard
+from time import sleep
+
+pressed = False
+def on_activate():
+	global pressed
+	pressed = True
+terminate = False
+def on_terminate():
+	global terminate
+	terminate = True
+
 def main(video_dev: int, outfile: str, width: int, height: int, num_squares_x: int, num_squares_y: int, sqr_size: float):
+	global pressed, terminate
+
 	# Chessboard dimensions
 	number_of_squares_X = num_squares_x 
 	number_of_squares_Y = num_squares_y  
@@ -42,47 +55,52 @@ def main(video_dev: int, outfile: str, width: int, height: int, num_squares_x: i
 		print(f"Video opened with {frame.shape}, detecting chessboard with {number_of_squares_X}x{number_of_squares_Y} squares with length {square_size} m")
 
 	cnt = 0
-	inp = 'start'
-	while vid.isOpened(): 
-		
-		# Capture the video frame by frame 
-		ret, frame = vid.read() 
+	with keyboard.GlobalHotKeys({'<enter>': on_activate,
+							 									 'q': on_terminate}) as h:
+		while vid.isOpened(): 
+			# Capture the video frame by frame 
+			ret, frame = vid.read() 
+			det = False
 
-		inp = input("Position the chessboard and press 'r' to record, 'q' to abort and any other key to show new img." if inp != '' else '')		
+			if pressed:
+				pressed = False
+				# Convert the image to grayscale
+				gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  
+				# Find the corners on the chessboard
+				success, corners = cv2.findChessboardCorners(gray, (nY, nX), None)
+				
+				# If the corners are found by the algorithm, draw them
+				if success:
+					cnt += 1
+					# Append object points
+					object_points.append(object_points_3D)
+					# Find more exact corner pixels       
+					corners_2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)       
+					# Append image points
+					image_points.append(corners_2)
+					# Draw the corners
+					cv2.drawChessboardCorners(frame, (nY, nX), corners_2, success)
+					print(f"Chessboard detected, recorded {cnt} images")
+					det = True
+				else:
+					print("No chessboard detected")
 
-		if inp == "r":
-			# Convert the image to grayscale
-			gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  
-			# Find the corners on the chessboard
-			success, corners = cv2.findChessboardCorners(gray, (nY, nX), None)
-			
-			# If the corners are found by the algorithm, draw them
-			if success == True:
-				# Append object points
-				object_points.append(object_points_3D)
-				# Find more exact corner pixels       
-				corners_2 = cv2.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)       
-				# Append image points
-				image_points.append(corners_2)
-				# Draw the corners
-				cv2.drawChessboardCorners(frame, (nY, nX), corners_2, success)
-				print(f"Chessboard detected, recorded {cnt} images")
-				cnt += 1
-
-		elif inp=="q":
-			break
-
-		# display
-		cv2.imshow("Image", frame) 
-		if cv2.waitKey(1) & 0xFF == ord('q'): 
-			break
+			# display
+			cv2.imshow("Image", frame) 
+			if cv2.waitKey(1) & 0xFF == ord('q') or terminate: 
+				h.stop()
+				h.join()
+				break
+			if det:
+				sleep(1)
 	
 	# After the loop release the cap object 
 	vid.release() 
 	# Destroy all the windows 
 	cv2.destroyAllWindows() 
 
-	if len(image_points):																								  
+	if len(image_points):						
+		print("Detection completed, computing ...")																		  
 		# Perform camera calibration to return the camera matrix, distortion coefficients, rotation and translation vectors etc 
 		ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(object_points, 
 															image_points, 
@@ -107,6 +125,8 @@ def main(video_dev: int, outfile: str, width: int, height: int, num_squares_x: i
 		print(mtx) 
 		print("\n Distortion coefficient:") 
 		print(dist) 
+	else:
+		print("No detection to compute")
 	  
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Camera calibration with a chessboard pattern')
