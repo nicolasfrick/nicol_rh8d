@@ -13,56 +13,14 @@ DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 
 @dataclasses.dataclass(eq=False)
 class ReconfParams(aru.DetectorParameters):
-
 	# denoising
 	denoise: bool = False
 	h: float=10.0
 	templateWindowSize: int=7
 	searchWindowSize: int=21
-
 	def __init__(self):
 		# detector params
 		super().__init__()
-
-	# adaptiveThreshWinSizeMin: int = 3
-	# adaptiveThreshWinSizeMax: int = 23
-	# adaptiveThreshWinSizeStep: int = 10
-	# adaptiveThreshConstant: float = 7.0
-	# minMarkerPerimeterRate: float = 0.03
-	# maxMarkerPerimeterRate: float = 4.0  
-	# polygonalApproxAccuracyRate: float = 0.03
-	# minCornerDistanceRate: float = 0.05
-	# minDistanceToBorder: int = 3 
-	# minMarkerDistanceRate: float =  0.125
-	# minGroupDistance: float = 0.21
-	# cornerRefinementMethod: int = 3
-	# cornerRefinementWinSize: int = 5
-	# relativeCornerRefinmentWinSize: float = 0.3
-	# cornerRefinementMaxIterations: int = 30
-	# cornerRefinementMinAccuracy: float = 0.1
-	# markerBorderBits: int = 1
-	# perspectiveRemovePixelPerCell: int = 4
-	# perspectiveRemoveIgnoredMarginPerCell: float = 0.13
-	# maxErroneousBitsInBorderRate: float = 0.35
-	# minOtsuStdDev: float = 5.0
-	# errorCorrectionRate: float = 0.6
-	# aprilTagQuadDecimate: float = 0.0
-	# aprilTagQuadSigma: float = 0.0
-	# aprilTagMinClusterPixels: int = 5
-	# aprilTagMaxNmaxima: int = 10
-	# aprilTagCriticalRad: float = 0.1745329201221466
-	# aprilTagMaxLineFitMse: float = 10.0
-	# aprilTagMinWhiteBlackDiff: int = 5
-	# aprilTagDeglitch: int = 0  
-	# detectInvertedMarker: bool = False
-	# useAruco3Detection: bool = False
-	# minSideLengthCanonicalImg: int = 32
-	# minMarkerLengthRatioOriginalImg: float = 0.0 
-	# # denoise params
-	# denoise: bool = False
-	# h: float = 10.0
-	# templateWindowSize: int = 7
-	# searchWindowSize: int = 21
 
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
@@ -126,14 +84,14 @@ class ArucoDetector():
 	CIRCLE_CLR = BLUE
 
 	def __init__(self,
-							marker_length: float,
 							K: Tuple,
 							D: Tuple,
+							marker_length: float,
 							bbox: Optional[Tuple]=None,
 							denoise: Optional[bool]=False,
-							dict_type: Optional[str]="DICT_4X4_50",
-							dict_yaml: Optional[str]="",
 							print_stats: Optional[bool]=True,
+							dict_yaml: Optional[str]="",
+							dict_type: Optional[str]="DICT_4X4_50",
 							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
 							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE) -> None:
 		
@@ -173,50 +131,6 @@ class ArucoDetector():
 				self.params.__setattr__(k, v)
 			for k,v in config.groups.groups.marker_detection.parameters.items():
 				self.params.__setattr__(k, v)
-
-		# with self.den_params_lock:
-		# 	self.denoise = self.denoise_arg or config.denoise
-		# 	self.den_params.h = config.h 
-		# 	self.den_params.templateWindowSize = config.templateWindowSize 
-		# 	self.den_params.searchWindowSize = config.searchWindowSize
-		# with self.est_params_lock:
-		# 	self.estimate_params.pattern = config.estimate_pattern
-		# 	self.estimate_params.solvePnPMethod = config.solvePnPMethod
-		# with self.det_params_lock:
-		# 	self.det_params.adaptiveThreshWinSizeMin = config.adaptiveThreshWinSizeMin 
-		# 	self.det_params.adaptiveThreshWinSizeMax = config.adaptiveThreshWinSizeMax 
-		# 	self.det_params.adaptiveThreshWinSizeStep = config.adaptiveThreshWinSizeStep 
-		# 	self.det_params.adaptiveThreshConstant = config.adaptiveThreshConstant 
-		# 	self.det_params.minMarkerPerimeterRate = config.minMarkerPerimeterRate 
-		# 	self.det_params.maxMarkerPerimeterRate = config.maxMarkerPerimeterRate 
-		# 	self.det_params.polygonalApproxAccuracyRate = config.polygonalApproxAccuracyRate 
-		# 	self.det_params.minCornerDistanceRate = config.minCornerDistanceRate 
-		# 	self.det_params.minDistanceToBorder = config.minDistanceToBorder 
-		# 	self.det_params.minMarkerDistanceRate = config.minMarkerDistanceRate 
-		# 	self.det_params.minGroupDistance = config.minGroupDistance 
-		# 	self.det_params.cornerRefinementMethod = config.cornerRefinementMethod 
-		# 	self.det_params.cornerRefinementWinSize = config.cornerRefinementWinSize 
-		# 	self.det_params.relativeCornerRefinmentWinSize = config.relativeCornerRefinmentWinSize 
-		# 	self.det_params.cornerRefinementMaxIterations = config.cornerRefinementMaxIterations 
-		# 	self.det_params.cornerRefinementMinAccuracy = config.cornerRefinementMinAccuracy 
-		# 	self.det_params.markerBorderBits = config.markerBorderBits 
-		# 	self.det_params.perspectiveRemovePixelPerCell = config.perspectiveRemovePixelPerCell 
-		# 	self.det_params.perspectiveRemoveIgnoredMarginPerCell = config.perspectiveRemoveIgnoredMarginPerCell 
-		# 	self.det_params.maxErroneousBitsInBorderRate = config.maxErroneousBitsInBorderRate 
-		# 	self.det_params.minOtsuStdDev = config.minOtsuStdDev 
-		# 	self.det_params.errorCorrectionRate = config.errorCorrectionRate 
-		# 	self.det_params.aprilTagQuadDecimate = config.aprilTagQuadDecimate 
-		# 	self.det_params.aprilTagQuadSigma = config.aprilTagQuadSigma 
-		# 	self.det_params.aprilTagMinClusterPixels = config.aprilTagMinClusterPixels 
-		# 	self.det_params.aprilTagMaxNmaxima = config.aprilTagMaxNmaxima 
-		# 	self.det_params.aprilTagCriticalRad = config.aprilTagCriticalRad 
-		# 	self.det_params.aprilTagMaxLineFitMse = config.aprilTagMaxLineFitMse 
-		# 	self.det_params.aprilTagMinWhiteBlackDiff = config.aprilTagMinWhiteBlackDiff 
-		# 	self.det_params.aprilTagDeglitch = config.aprilTagDeglitch 
-		# 	self.det_params.detectInvertedMarker = config.detectInvertedMarker 
-		# 	self.det_params.useAruco3Detection = config.useAruco3Detection 
-		# 	self.det_params.minSideLengthCanonicalImg = config.minSideLengthCanonicalImg 
-		# 	self.det_params.minMarkerLengthRatioOriginalImg = config.minMarkerLengthRatioOriginalImg 
 		return config
 		
 	def setBBox(self, bbox: Tuple) -> None:
