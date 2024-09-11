@@ -136,7 +136,7 @@ if __name__ == '__main__':
 	parser.add_argument('--num_squares_x', metavar='int', help='Number of vertical squares', default=10)
 	parser.add_argument('--num_squares_y', metavar='int', help='Number of horizontal squares', default=7)
 	parser.add_argument('--sqr_size', metavar='float', help='Sidelength of a square in meter', default=0.025)
-	parser.add_argument('--outfile', metavar='str', help='Filepath for calib results', default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/camcalib.yaml"))
+	parser.add_argument('--outfile', metavar='str', help='Filepath for calib results', default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camcalib.yaml"))
 	args = parser.parse_args()
 	main(args.video_dev, args.outfile, args.width, args.height, args.num_squares_x, args.num_squares_y, args.sqr_size)
 

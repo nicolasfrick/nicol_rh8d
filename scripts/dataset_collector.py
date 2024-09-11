@@ -91,7 +91,7 @@ def create_transform(rotation, translation):
 
 class CameraPose():
 	"""
-        @param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
+		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
 		@type str
 		@param invert_pose Invert detected marker pose 
 		@type bool
@@ -99,11 +99,19 @@ class CameraPose():
 		@type bool
 
 	"""
+
+	FONT_THCKNS = 2
+	FONT_SCALE = 0.5
+	FONT_CLR =  (255,0,0)
+	RND_DEC = 3
+	TXT_OFFSET = 50
 	
 	def __init__(self,
-                            camera_ns: Optional[str]='',
-                            invert_pose: Optional[bool]=True,
-							vis :Optional[bool]=True) -> None:
+			  				marker_length: float=0.010,
+							camera_ns: Optional[str]='',
+							invert_pose: Optional[bool]=True,
+							vis :Optional[bool]=True,
+							use_reconfigure: Optional[bool]=True) -> None:
 		
 		self.bridge = cv_bridge.CvBridge()
 		# buf = tf2_ros.Buffer()
@@ -116,16 +124,17 @@ class CameraPose():
 
 		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
 		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
-		self.det = ArucoDetector(marker_length=0.010, 
+		self.det = ArucoDetector(marker_length=marker_length, 
 														 K=rgb_info.K, 
 														 D=rgb_info.D)
-		self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+		if use_reconfigure:
+			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		self.invert_pose = invert_pose
 		self.img_topic = camera_ns + '/image_raw'
 		self.vis = vis
 		if vis:
-			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 
 	def transformToWorld(self, id, x, y, z, r, p, ya):
 		# target_pose_from_cam = PoseStamped()
@@ -222,12 +231,36 @@ class CameraPose():
 		# # print(id, res_rot.as_euler('xyz', degrees=False), res_trans)
 		
 	def invPersp(self, rvec: cv2.typing.MatLike, tvec: cv2.typing.MatLike) -> tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
-		"""Apply the inversion to the given vectors"""
-		mat, _ = cv2.Rodrigues(rvec)
-		mat = np.matrix(mat).T
-		inv_tvec = np.dot(-mat, tvec)
-		inv_rvec, _ = cv2.Rodrigues(mat)
-		return inv_rvec, inv_tvec
+		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 1]]"""
+		mat, _ = cv2.Rodrigues(rvec) # axis-angle to mat
+		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
+		inv_tvec = np.dot(-mat, tvec) # -R^-1*d
+		inv_rvec = R.from_matrix(mat)
+		inv_rvec = inv_rvec.as_euler('xyz')
+		return inv_rvec.flatten(), np.array(inv_tvec.flat)
+	
+	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
+			pos_txt = f"X: {round(trans[0], self.RND_DEC)}, Y: {round(trans[1], self.RND_DEC)}, Z: {round(trans[2], self.RND_DEC)}"
+			ori_txt = f"R: {round(rot[0], self.RND_DEC)}, P: {round(rot[1], self.RND_DEC)}, Y: {round(rot[2], self.RND_DEC)}"
+			x_max = int(np.max(corners[:, :, 0]))
+			y_max = int(np.max(corners[:, :, 1]))
+			y_min = int(np.min(corners[:, :, 1]))
+			x_offset = 0 if x_max <= img.shape[1]/2 else -int(len(pos_txt)*20*self.FONT_SCALE)
+			y_offset1 = self.TXT_OFFSET if y_max <= img.shape[0]/2 else -self.TXT_OFFSET-(y_max-y_min)
+			y_offset2 = y_offset1 + int(self.FONT_SCALE*50) if y_offset1 > 0 else y_offset1 - int(self.FONT_SCALE*50)
+			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+	
+	def ddd(self, markers, img):
+		for id, vecs in markers.items():
+			roudriges, _ = cv2.Rodrigues(np.array(vecs['rvec']))
+			mat = R.from_matrix(roudriges)
+			euler = mat.as_euler('xyz')
+			tvec = vecs['tvec']
+			# euler, tvec = self.invPersp(vecs['rvec'], vecs['tvec'])
+			# ros_euler = np.array([cv_euler[2], cv_euler[0], cv_euler[1]])
+			if self.vis:
+				self.labelDetection(img, tvec, euler, vecs['corners'])
 		
 	def run(self) -> None:
 		rate = rospy.Rate(6)
@@ -241,13 +274,11 @@ class CameraPose():
 					
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
 					if marker_poses:
-						# self.getTf(marker_poses)
-						# self.getExtrinsics(marker_poses)
-						pass
+						self.ddd(marker_poses, det_img)
 
 					if self.vis:
-						cv2.imshow('Detection', det_img)
 						cv2.imshow('Processed', proc_img)
+						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):
 							break
 

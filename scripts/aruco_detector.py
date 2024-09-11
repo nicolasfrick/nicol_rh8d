@@ -2,20 +2,67 @@
 
 import os
 import yaml
+import cv2
+import cv2.aruco as aru
 import dataclasses
 import numpy as np
 from threading import Lock
-import cv2
-import cv2.aruco as aru
 from typing import Sequence, Optional, Tuple, Union, Any
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
 
 @dataclasses.dataclass(eq=False)
-class ImgDenoising:
-		h: float=10.0
-		templateWindowSize: int=7
-		searchWindowSize: int=21
+class ReconfParams(aru.DetectorParameters):
+
+	# denoising
+	denoise: bool = False
+	h: float=10.0
+	templateWindowSize: int=7
+	searchWindowSize: int=21
+
+	def __init__(self):
+		# detector params
+		super().__init__()
+
+	# adaptiveThreshWinSizeMin: int = 3
+	# adaptiveThreshWinSizeMax: int = 23
+	# adaptiveThreshWinSizeStep: int = 10
+	# adaptiveThreshConstant: float = 7.0
+	# minMarkerPerimeterRate: float = 0.03
+	# maxMarkerPerimeterRate: float = 4.0  
+	# polygonalApproxAccuracyRate: float = 0.03
+	# minCornerDistanceRate: float = 0.05
+	# minDistanceToBorder: int = 3 
+	# minMarkerDistanceRate: float =  0.125
+	# minGroupDistance: float = 0.21
+	# cornerRefinementMethod: int = 3
+	# cornerRefinementWinSize: int = 5
+	# relativeCornerRefinmentWinSize: float = 0.3
+	# cornerRefinementMaxIterations: int = 30
+	# cornerRefinementMinAccuracy: float = 0.1
+	# markerBorderBits: int = 1
+	# perspectiveRemovePixelPerCell: int = 4
+	# perspectiveRemoveIgnoredMarginPerCell: float = 0.13
+	# maxErroneousBitsInBorderRate: float = 0.35
+	# minOtsuStdDev: float = 5.0
+	# errorCorrectionRate: float = 0.6
+	# aprilTagQuadDecimate: float = 0.0
+	# aprilTagQuadSigma: float = 0.0
+	# aprilTagMinClusterPixels: int = 5
+	# aprilTagMaxNmaxima: int = 10
+	# aprilTagCriticalRad: float = 0.1745329201221466
+	# aprilTagMaxLineFitMse: float = 10.0
+	# aprilTagMinWhiteBlackDiff: int = 5
+	# aprilTagDeglitch: int = 0  
+	# detectInvertedMarker: bool = False
+	# useAruco3Detection: bool = False
+	# minSideLengthCanonicalImg: int = 32
+	# minMarkerLengthRatioOriginalImg: float = 0.0 
+	# # denoise params
+	# denoise: bool = False
+	# h: float = 10.0
+	# templateWindowSize: int = 7
+	# searchWindowSize: int = 21
 
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
@@ -35,12 +82,12 @@ class ArucoDetector():
 		@type  str
 		@param dict_yaml:  path to a dictionary yaml file in 'datasets/aruco/' directory used in favour of dict_type
 		@type  str
-		@param det_marker_center Location of the marker center (centered, top left corner)
-		@type bool
-		@param solvepnp_square Whether to use ippe square method for solvePnp method, else default value (iterative)
-		@type bool
 		@param print_stats Print detection statistics
 		@type bool
+		@param 	estimate_pattern Enum to set Aruco estimate pattern. One of [ARUCO_CCW_CENTER, ARUCO_CW_TOP_LEFT_CORNER]
+		@type int
+		@param solve_pnp_method Enum to set Aruco solver method. One of [SOLVEPNP_ITERATIVE, SOLVEPNP_EPNP, SOLVEPNP_P3P, SOLVEPNP_DLS, SOLVEPNP_UPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE, SOLVEPNP_SQPNP, SOLVEPNP_MAX_COUNT]
+		@type int
 
 		 Generate markers with opencv (custom build in opencv_build directory):
 		.opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /
@@ -70,8 +117,13 @@ class ArucoDetector():
 								"DICT_7X7_1000": aru.DICT_7X7_1000,
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
+	RED = (0,0,255)
+	GREEN = (0,255,0)
+	BLUE = (255,0,0)
 	AXIS_LENGTH = 1.5 # axis drawing
 	AXIS_THICKNESS = 2 # axis drawing
+	CIRCLE_SIZE = 3
+	CIRCLE_CLR = BLUE
 
 	def __init__(self,
 							marker_length: float,
@@ -81,75 +133,90 @@ class ArucoDetector():
 							denoise: Optional[bool]=False,
 							dict_type: Optional[str]="DICT_4X4_50",
 							dict_yaml: Optional[str]="",
-							det_marker_center: Optional[bool]=True,
-							solvepnp_square: Optional[bool]=True,
-							print_stats: Optional[bool]=True) -> None:
+							print_stats: Optional[bool]=True,
+							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
+							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE) -> None:
 		
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
-		self.det_params = aru.DetectorParameters()
-		self.det_params_lock = Lock()
 		self.estimate_params = aru.EstimateParameters()
-		# self.estimate_params.pattern = aru.ARUCO_CCW_CENTER if det_marker_center else aru.ARUCO_CW_TOP_LEFT_CORNER
-		# self.estimate_params.solvePnPMethod = cv2.SOLVEPNP_IPPE_SQUARE if solvepnp_square else cv2.SOLVEPNP_ITERATIVE
-		# self.estimate_params.useExtrinsicGuess = False # not implemented here
-		self.est_params_lock = Lock()
-		self.denoise = self.denoise_arg = denoise
-		self.den_params = ImgDenoising()
-		self.den_params_lock = Lock()
+		assert(estimate_pattern >= aru.ARUCO_CCW_CENTER and estimate_pattern <= aru.ARUCO_CW_TOP_LEFT_CORNER)
+		self.estimate_params.pattern = estimate_pattern
+		assert(solve_pnp_method >= cv2.SOLVEPNP_ITERATIVE and solve_pnp_method <= cv2.SOLVEPNP_MAX_COUNT)
+		self.estimate_params.solvePnPMethod = solve_pnp_method
+		self.params_lock = Lock()
+		self.params = ReconfParams()
 
+		self.denoise = denoise
+		self.print_stats = print_stats
 		self.marker_length = marker_length
-		self._genSquarePoints(marker_length)
 		self.cmx = np.asanyarray(K).reshape(3,3)
 		self.dist =  np.asanyarray(D)
 		self.bbox = bbox
 		self.t_total = 0
 		self.it_total = 0
-		self.print_stats = print_stats
+		self.printSettings()
+
+	def printSettings(self) -> None:
+		txt = f"Running Aruco Detector\n \
+					denoise: {self.denoise},\n\
+					print_stats: {self.print_stats},\n\
+					marker_length: {self.marker_length},\n \
+					estimate_pattern: {self.estimate_params.pattern},\n \
+				    solvePnPMethod: {self.estimate_params.solvePnPMethod}"
+		print()
+		print(txt)
+		print()
 
 	def setDetectorParams(self, config, level):
-		with self.den_params_lock:
-			self.denoise = self.denoise_arg or config.denoise
-			self.den_params.h = config.h 
-			self.den_params.templateWindowSize = config.templateWindowSize 
-			self.den_params.searchWindowSize = config.searchWindowSize
-		with self.est_params_lock:
-			self.estimate_params.pattern = config.estimate_pattern
-			self.estimate_params.solvePnPMethod = config.solvePnPMethod
-		with self.det_params_lock:
-			self.det_params.adaptiveThreshWinSizeMin = config.adaptiveThreshWinSizeMin 
-			self.det_params.adaptiveThreshWinSizeMax = config.adaptiveThreshWinSizeMax 
-			self.det_params.adaptiveThreshWinSizeStep = config.adaptiveThreshWinSizeStep 
-			self.det_params.adaptiveThreshConstant = config.adaptiveThreshConstant 
-			self.det_params.minMarkerPerimeterRate = config.minMarkerPerimeterRate 
-			self.det_params.maxMarkerPerimeterRate = config.maxMarkerPerimeterRate 
-			self.det_params.polygonalApproxAccuracyRate = config.polygonalApproxAccuracyRate 
-			self.det_params.minCornerDistanceRate = config.minCornerDistanceRate 
-			self.det_params.minDistanceToBorder = config.minDistanceToBorder 
-			self.det_params.minMarkerDistanceRate = config.minMarkerDistanceRate 
-			self.det_params.minGroupDistance = config.minGroupDistance 
-			self.det_params.cornerRefinementMethod = config.cornerRefinementMethod 
-			self.det_params.cornerRefinementWinSize = config.cornerRefinementWinSize 
-			self.det_params.relativeCornerRefinmentWinSize = config.relativeCornerRefinmentWinSize 
-			self.det_params.cornerRefinementMaxIterations = config.cornerRefinementMaxIterations 
-			self.det_params.cornerRefinementMinAccuracy = config.cornerRefinementMinAccuracy 
-			self.det_params.markerBorderBits = config.markerBorderBits 
-			self.det_params.perspectiveRemovePixelPerCell = config.perspectiveRemovePixelPerCell 
-			self.det_params.perspectiveRemoveIgnoredMarginPerCell = config.perspectiveRemoveIgnoredMarginPerCell 
-			self.det_params.maxErroneousBitsInBorderRate = config.maxErroneousBitsInBorderRate 
-			self.det_params.minOtsuStdDev = config.minOtsuStdDev 
-			self.det_params.errorCorrectionRate = config.errorCorrectionRate 
-			self.det_params.aprilTagQuadDecimate = config.aprilTagQuadDecimate 
-			self.det_params.aprilTagQuadSigma = config.aprilTagQuadSigma 
-			self.det_params.aprilTagMinClusterPixels = config.aprilTagMinClusterPixels 
-			self.det_params.aprilTagMaxNmaxima = config.aprilTagMaxNmaxima 
-			self.det_params.aprilTagCriticalRad = config.aprilTagCriticalRad 
-			self.det_params.aprilTagMaxLineFitMse = config.aprilTagMaxLineFitMse 
-			self.det_params.aprilTagMinWhiteBlackDiff = config.aprilTagMinWhiteBlackDiff 
-			self.det_params.aprilTagDeglitch = config.aprilTagDeglitch 
-			self.det_params.detectInvertedMarker = config.detectInvertedMarker 
-			self.det_params.useAruco3Detection = config.useAruco3Detection 
-			self.det_params.minSideLengthCanonicalImg = config.minSideLengthCanonicalImg 
-			self.det_params.minMarkerLengthRatioOriginalImg = config.minMarkerLengthRatioOriginalImg 
+		with self.params_lock:
+			for k,v in config.groups.groups.image_denoising.parameters.items():
+				self.params.__setattr__(k, v)
+			for k,v in config.groups.groups.marker_detection.parameters.items():
+				self.params.__setattr__(k, v)
+
+		# with self.den_params_lock:
+		# 	self.denoise = self.denoise_arg or config.denoise
+		# 	self.den_params.h = config.h 
+		# 	self.den_params.templateWindowSize = config.templateWindowSize 
+		# 	self.den_params.searchWindowSize = config.searchWindowSize
+		# with self.est_params_lock:
+		# 	self.estimate_params.pattern = config.estimate_pattern
+		# 	self.estimate_params.solvePnPMethod = config.solvePnPMethod
+		# with self.det_params_lock:
+		# 	self.det_params.adaptiveThreshWinSizeMin = config.adaptiveThreshWinSizeMin 
+		# 	self.det_params.adaptiveThreshWinSizeMax = config.adaptiveThreshWinSizeMax 
+		# 	self.det_params.adaptiveThreshWinSizeStep = config.adaptiveThreshWinSizeStep 
+		# 	self.det_params.adaptiveThreshConstant = config.adaptiveThreshConstant 
+		# 	self.det_params.minMarkerPerimeterRate = config.minMarkerPerimeterRate 
+		# 	self.det_params.maxMarkerPerimeterRate = config.maxMarkerPerimeterRate 
+		# 	self.det_params.polygonalApproxAccuracyRate = config.polygonalApproxAccuracyRate 
+		# 	self.det_params.minCornerDistanceRate = config.minCornerDistanceRate 
+		# 	self.det_params.minDistanceToBorder = config.minDistanceToBorder 
+		# 	self.det_params.minMarkerDistanceRate = config.minMarkerDistanceRate 
+		# 	self.det_params.minGroupDistance = config.minGroupDistance 
+		# 	self.det_params.cornerRefinementMethod = config.cornerRefinementMethod 
+		# 	self.det_params.cornerRefinementWinSize = config.cornerRefinementWinSize 
+		# 	self.det_params.relativeCornerRefinmentWinSize = config.relativeCornerRefinmentWinSize 
+		# 	self.det_params.cornerRefinementMaxIterations = config.cornerRefinementMaxIterations 
+		# 	self.det_params.cornerRefinementMinAccuracy = config.cornerRefinementMinAccuracy 
+		# 	self.det_params.markerBorderBits = config.markerBorderBits 
+		# 	self.det_params.perspectiveRemovePixelPerCell = config.perspectiveRemovePixelPerCell 
+		# 	self.det_params.perspectiveRemoveIgnoredMarginPerCell = config.perspectiveRemoveIgnoredMarginPerCell 
+		# 	self.det_params.maxErroneousBitsInBorderRate = config.maxErroneousBitsInBorderRate 
+		# 	self.det_params.minOtsuStdDev = config.minOtsuStdDev 
+		# 	self.det_params.errorCorrectionRate = config.errorCorrectionRate 
+		# 	self.det_params.aprilTagQuadDecimate = config.aprilTagQuadDecimate 
+		# 	self.det_params.aprilTagQuadSigma = config.aprilTagQuadSigma 
+		# 	self.det_params.aprilTagMinClusterPixels = config.aprilTagMinClusterPixels 
+		# 	self.det_params.aprilTagMaxNmaxima = config.aprilTagMaxNmaxima 
+		# 	self.det_params.aprilTagCriticalRad = config.aprilTagCriticalRad 
+		# 	self.det_params.aprilTagMaxLineFitMse = config.aprilTagMaxLineFitMse 
+		# 	self.det_params.aprilTagMinWhiteBlackDiff = config.aprilTagMinWhiteBlackDiff 
+		# 	self.det_params.aprilTagDeglitch = config.aprilTagDeglitch 
+		# 	self.det_params.detectInvertedMarker = config.detectInvertedMarker 
+		# 	self.det_params.useAruco3Detection = config.useAruco3Detection 
+		# 	self.det_params.minSideLengthCanonicalImg = config.minSideLengthCanonicalImg 
+		# 	self.det_params.minMarkerLengthRatioOriginalImg = config.minMarkerLengthRatioOriginalImg 
 		return config
 		
 	def setBBox(self, bbox: Tuple) -> None:
@@ -200,13 +267,12 @@ class ArucoDetector():
 		self.obj_points[2,:] = np.array([length/2, -length/2, 0])
 		self.obj_points[3,:] = np.array([-length/2, -length/2, 0])
 		
-	# def drawPoints(self):
-	# 	#Test the solvePnP by projecting the 3D Points to camera
-	# 	projPoints = cv2.projectPoints(points_3D, rvecs, tvecs, K, distCoeffs)[0]
-	# 	for p in points_2D:
-	# 	cv2.circle(im, (int(p[0]), int(p[1])), 3, (0,255,0), -1)
-	# 	for p in projPoints:
-	# 	cv2.circle(im, (int(p[0][0]), int(p[0][1])), 3, (255,0,0), -1)
+	def projPoints(self, img, obj_points, rvec, tvec):
+		"""Test the solvePnP by projecting the 3D Points to camera"""
+		proj, _ = cv2.projectPoints(obj_points, rvec, tvec, self.cmx, self.dist)
+		for p in proj:
+			cv2.circle(img, (int(p[0][0]), int(p[0][1])), self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
+		return img
 
 	def _cropImage(self, img: np.ndarray) -> np.ndarray:
 		return img[self.bbox[0][0]: self.bbox[0][1], self.bbox[1][0]: self.bbox[1][1]]
@@ -218,45 +284,51 @@ class ArucoDetector():
 		if self.it_total % 100 == 0:
 			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
 
+	def drawCamCS(self, img):
+		thckns = 2
+		arw_len = 100
+		img_center =(int(img.shape[1]/2), int(img.shape[0]/2))
+		cv2.arrowedLine(img, img_center, (img_center[0]+arw_len, img_center[1]), self.RED, thckns, cv2.LINE_AA)
+		cv2.arrowedLine(img, img_center, (img_center[0], img_center[1]+arw_len), self.GREEN, thckns, cv2.LINE_AA)
+		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
+		cv2.circle(img, img_center, 5, self.CIRCLE_CLR, -1)
+
 	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray, np.ndarray]:	
 		"""Detect Aruco marker from bgr image.
 			@param img Input image with 'bgr' encoding
 			@type np.ndarray
 			@return Detected marker poses, marker detection image, processed image
 		"""
-		# grasycale image
-		gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-		#  image denoising using Non-local Means Denoising algorithm
-		with self.den_params_lock:
-			if self.denoise:
-				gray = cv2.fastNlMeansDenoising(gray, None, self.den_params.h, self.den_params.templateWindowSize, self.den_params.searchWindowSize)
+		with self.params_lock:
+			tick = cv2.getTickCount()
+			# grasycale image
+			gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+			#  image denoising using Non-local Means Denoising algorithm
+			if self.denoise or self.params.denoise:
+				gray = cv2.fastNlMeansDenoising(gray, None, self.params.h, self.params.templateWindowSize, self.params.searchWindowSize)
 			
-		tick = cv2.getTickCount()
-		marker_poses = {}
-		with self.det_params_lock:
-			(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.det_params)
-		if len(corners) > 0:
-			ids = ids.flatten()
-			zipped = zip(ids, corners)
-			for id, corner in sorted(zipped):
-				with self.est_params_lock:
-					# estimate camera pose relative to the marker using the unit provided by obj_points
+			# detection
+			marker_poses = {}
+			(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params)
+			if len(corners) > 0:
+				ids = ids.flatten()
+				zipped = zip(ids, corners)
+				for id, corner in sorted(zipped):
+					# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
 					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
-					marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points}})
-			if self.print_stats:
-				self._printStats(tick)
-		else:
-			print("No marker found")
-		
-		# draw detection
-		out_img = aru.drawDetectedMarkers(img, corners, ids)
-		if marker_poses:
+					marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points, 'corners': corner}})
+				if self.print_stats:
+					self._printStats(tick)
+			else:
+				print("No marker found")
+			
+			# draw detection
+			out_img = aru.drawDetectedMarkers(img, corners, ids)
+			self.drawCamCS(out_img)
 			for id, pose in marker_poses.items():
 				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
-		else:
-			print("No pose detected")
-					
-		return marker_poses, out_img, gray
+				out_img = self.projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
+			return marker_poses, out_img, gray
 	
 def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:
 	"""Aligns the markers in a mxn matrix where m >= n .
