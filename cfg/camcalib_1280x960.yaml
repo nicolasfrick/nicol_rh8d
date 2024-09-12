@@ -5,8 +5,7 @@ camera_name: markers_camera
 camera_matrix:
   rows: 3
   cols: 3
-  data: [ 1430.8220587685742, 0., 650.4377790331539, 0.,
-       1427.3106583060301, 510.52707357298232, 0., 0., 1. ]
+  data: [ 1430., 0., 480., 0., 1430., 620., 0., 0., 1. ]
 distortion_model: plumb_bob
 distortion_coefficients:
   rows: 1

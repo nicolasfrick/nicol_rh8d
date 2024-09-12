@@ -11,6 +11,12 @@
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
 
+	<!-- detector params -->
+	<arg name="marker_length" default="0.10" />
+	<arg name="invert_pose" default="true" />
+	<arg name="use_reconfigure" default="false" />
+	<arg name="vis" default="true" />
+
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
 	<arg name="enable_depth"        default="false"/>
@@ -85,7 +91,11 @@
 
 	<!-- dataset collector script -->
 	<node pkg="nicol_rh8d" name="dataset_collector" type="dataset_collector.py" output="screen" required="true">
-		<param name="markers_camera_name"              value="$(arg markers_camera_name)/color" />
+		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
+		<param name="marker_length" value="$(arg marker_length)" />
+		<param name="invert_pose" value="$(arg invert_pose)" />
+		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
+		<param name="vis" value="$(arg vis)" />
 	</node>
 
 </launch>

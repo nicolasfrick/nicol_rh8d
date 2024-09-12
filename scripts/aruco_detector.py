@@ -18,9 +18,14 @@ class ReconfParams(aru.DetectorParameters):
 	h: float=10.0
 	templateWindowSize: int=7
 	searchWindowSize: int=21
+	# filtering
+	
 	def __init__(self):
 		# detector params
 		super().__init__()
+		# change defaults in case
+		# dynamic reconfigure is disabled
+		self.cornerRefinementMethod = aru.CORNER_REFINE_APRILTAG
 
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
@@ -115,24 +120,24 @@ class ArucoDetector():
 		self.printSettings()
 
 	def printSettings(self) -> None:
-		txt = f"Running Aruco Detector\n \
-					denoise: {self.denoise},\n\
-					print_stats: {self.print_stats},\n\
-					marker_length: {self.marker_length},\n \
-					estimate_pattern: {self.estimate_params.pattern},\n \
-				    solvePnPMethod: {self.estimate_params.solvePnPMethod}"
-		print()
+		txt =   f"Running Aruco Detector with settings:\n"
+		txt += f"primary denoise: {self.denoise},\n"
+		txt += f"print_stats: {self.print_stats},\n"
+		txt += f"marker_length: {self.marker_length},\n"
+		txt += f"estimate_pattern: {self.estimate_params.pattern},\n"
+		txt += f"solvePnPMethod: {self.estimate_params.solvePnPMethod},\n"
+		for attr in dir(self.params):
+			if not attr.startswith('__'):
+				txt += f"{attr}: {self.params.__getattribute__(attr)},\n"
 		print(txt)
 		print()
 
 	def setDetectorParams(self, config, level):
 		with self.params_lock:
-			for k,v in config.groups.groups.image_denoising.parameters.items():
-				self.params.__setattr__(k, v)
-			for k,v in config.groups.groups.marker_detection.parameters.items():
+			for k,v in config.items():
 				self.params.__setattr__(k, v)
 		return config
-		
+	
 	def setBBox(self, bbox: Tuple) -> None:
 		self.bbox = bbox
 

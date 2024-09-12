@@ -111,7 +111,7 @@ class CameraPose():
 							camera_ns: Optional[str]='',
 							invert_pose: Optional[bool]=True,
 							vis :Optional[bool]=True,
-							use_reconfigure: Optional[bool]=True) -> None:
+							use_reconfigure: Optional[bool]=False) -> None:
 		
 		self.bridge = cv_bridge.CvBridge()
 		# buf = tf2_ros.Buffer()
@@ -294,7 +294,11 @@ class CameraPose():
 
 def main() -> None:
 	rospy.init_node('dataset_collector')
-	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', '')
+	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', ''),
+							 marker_length=rospy.get_param('~marker_length', 0.10),
+							 invert_pose=rospy.get_param('~invert_pose', True),
+							 use_reconfigure=rospy.get_param('~use_reconfigure', False),
+							 vis=rospy.get_param('~vis', True),
 			).run()
 	
 if __name__ == "__main__":
