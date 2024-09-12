@@ -7,7 +7,7 @@ import cv2.aruco as aru
 import dataclasses
 import numpy as np
 from threading import Lock
-from typing import Sequence, Optional, Tuple, Union, Any
+from typing import Optional, Tuple
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
 
