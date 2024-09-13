@@ -25,7 +25,7 @@ class ReconfParams(aru.DetectorParameters):
 		super().__init__()
 		# change defaults in case
 		# dynamic reconfigure is disabled
-		self.cornerRefinementMethod = aru.CORNER_REFINE_APRILTAG
+		self.cornerRefinementMethod = aru.CORNER_REFINE_CONTOUR
 
 class ArucoDetector():
 	"""Detect Aruco marker from an image.
@@ -273,6 +273,7 @@ class ArucoDetector():
 			
 			# draw detection
 			out_img = aru.drawDetectedMarkers(img, corners, ids)
+			gray = aru.drawDetectedMarkers(gray, rejected, np.array(list(range(len(rejected)))))
 			self._drawCamCS(out_img)
 			for id, pose in marker_poses.items():
 				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)

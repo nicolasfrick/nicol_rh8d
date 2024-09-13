@@ -99,7 +99,7 @@ class CameraPose():
 		@type bool
 		@param filter_type
 		@type str
-        @param filter_steps
+		@param filter_steps
 		@type int
 		@param f_ctrl
 		@type
@@ -143,6 +143,7 @@ class CameraPose():
 		self.f_loop = f_ctrl
 		self.img_topic = camera_ns + '/image_raw'
 		self.vis = vis
+		self.poses = {}
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
@@ -265,16 +266,17 @@ class CameraPose():
 			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 	
-	def ddd(self, markers, img):
-		for id, vecs in markers.items():
-			roudriges, _ = cv2.Rodrigues(np.array(vecs['rvec']))
-			mat = R.from_matrix(roudriges)
-			euler = mat.as_euler('xyz')
-			tvec = vecs['tvec']
-			# euler, tvec = self.invPersp(vecs['rvec'], vecs['tvec'])
-			# ros_euler = np.array([cv_euler[2], cv_euler[0], cv_euler[1]])
-			if self.vis:
-				self.labelDetection(img, tvec, euler, vecs['corners'])
+	def ddd(self, markers, refresh):
+		if refresh and markers:
+			for id, vecs in markers.items():
+				roudriges, _ = cv2.Rodrigues(np.array(vecs['rvec']))
+				mat = R.from_matrix(roudriges)
+				euler = mat.as_euler('xyz')
+				tvec = vecs['tvec']
+				# euler, tvec = self.invPersp(vecs['rvec'], vecs['tvec'])
+				# ros_euler = np.array([cv_euler[2], cv_euler[0], cv_euler[1]])
+				self.poses.update({id: {'trans': tvec, 'rot': euler, 'corners': vecs['corners']}})
+		return self.poses
 		
 	def run(self) -> None:
 		rate = rospy.Rate(self.f_loop)
@@ -289,10 +291,11 @@ class CameraPose():
 					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
-					if marker_poses and cnt%self.filter_steps==0:
-						self.ddd(marker_poses, det_img)
+					self.ddd(marker_poses, cnt%self.filter_steps==0)
 
 					if self.vis:
+						for _, vec in self.poses.items():
+							self.labelDetection(det_img, vec['trans'], vec['rot'], vec['corners'])
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):

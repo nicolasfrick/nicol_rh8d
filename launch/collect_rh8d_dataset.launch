@@ -16,7 +16,7 @@
 	<arg name="marker_length" default="0.010" />
 	<arg name="invert_pose" default="true" />
 	<arg name="use_reconfigure" default="false" />
-	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
+	<arg name="filter" default="median" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
 	<arg name="filter_steps" default="100" />
 	<arg name="vis" default="true" />
 
