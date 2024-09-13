@@ -3,9 +3,17 @@
 import cv2
 import numpy as np
 import pandas as pd
+from enum import Enum
 import matplotlib.pyplot as plt
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 from scipy.spatial.transform import Rotation as R
+
+class FilterTypes(Enum):
+	NONE='none'
+	MEAN='mean'
+	MEDIAN='median'
+	KALMAN_LIN_MOTION='kalman_lin_motion'
+	KALMAN_DEFAULT='kalman_default'
 
 class PoseFilterBase():
 
@@ -27,8 +35,11 @@ class PoseFilterBase():
 		raise NotImplementedError()
 	
 	def updateFilter(self, measurement: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-		raise NotImplementedError()
+		self.translation_estimated = measurement[:3]
+		self.rotation_estimated = measurement[3:]
+		return self.translation_estimated, self.rotation_estimated
 	
+	@classmethod
 	def poseToMeasurement(self,  tvec: np.ndarray, rvec: np.ndarray) -> np.ndarray:
 		"""Convert pose vectors to filter input
 			@param tvec Position vector [x,y,z]
@@ -265,6 +276,27 @@ class PoseFilterKalman(PoseFilterBase):
 
 		return self.translation_estimated, self.rotation_estimated
 	
+def createFilter(filter_type: FilterTypes, 
+				 				init_state: Optional[Tuple[float, float, float, float, float, float]]=6*[0],
+								f_ctrl_kalman: Optional[int]=100,
+								process_noise_kalman: Optional[float]=1e-10, 
+								measurement_noise_kalman: Optional[float]=1e-10, 
+								error_post_kalman: Optional[float]=0.0
+								) -> Union[PoseFilterMean, PoseFilterKalman, PoseFilterBase]:
+	
+	if filter_type in [FilterTypes.MEAN, FilterTypes.MEDIAN]:
+		return PoseFilterMean(state_init=init_state, 
+													 use_median=filter_type==FilterTypes.MEDIAN)  
+	elif filter_type in [FilterTypes.KALMAN_DEFAULT, FilterTypes.KALMAN_LIN_MOTION]:
+		return PoseFilterKalman(f_ctrl=f_ctrl_kalman, 
+						  							    state_init=init_state, 
+														measurement_noise=measurement_noise_kalman, 
+														process_noise=process_noise_kalman, 
+														error_post=error_post_kalman,
+														lin_motion=filter_type==FilterTypes.KALMAN_LIN_MOTION)
+	else:
+		return PoseFilterBase()
+	
 def testKalmanFilter(lin):
 	fq, size = 30, 200
 	init = (19, -0.1, 3.142, 1, 1, 0)
@@ -319,5 +351,5 @@ def testMeanFilter(median):
 		plt.show()
 
 if __name__=="__main__":
-	testKalmanFilter(True)
-	# testMeanFilter(True)
+	# testKalmanFilter(True)
+	testMeanFilter(True)

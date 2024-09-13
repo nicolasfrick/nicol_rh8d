@@ -10,11 +10,14 @@
 	<arg name="use_eye_cameras" default="false" />
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
+    <arg name="fps"                             default="30.0" />
 
 	<!-- detector params -->
-	<arg name="marker_length" default="0.10" />
+	<arg name="marker_length" default="0.010" />
 	<arg name="invert_pose" default="true" />
 	<arg name="use_reconfigure" default="false" />
+	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
+	<arg name="filter_steps" default="100" />
 	<arg name="vis" default="true" />
 
 	<!-- rs params -->
@@ -22,17 +25,16 @@
 	<arg name="enable_depth"        default="false"/>
 	<arg name="depth_width"         default="1280"/>
 	<arg name="depth_height"        default="720"/>  
-	<arg name="depth_fps"           default="30"/>
+	<arg name="depth_fps"             default="$(arg fps)"/>
 	<arg name="enable_color"        default="true"/>
 	<arg name="color_width"         default="1920"/>
 	<arg name="color_height"        default="1080"/>
-	<arg name="color_fps"           default="6"/>
+	<arg name="color_fps"           default="$(arg fps)"/>
 	<arg name="filters"                   default="colorizer"/>
 	<arg name="clip_distance"             default="-2"/>
 	<arg name="align_depth"               default="true"/>
 
 	<!-- webcam args -->
-    <arg name="fps"                                                    default="30.0"                                        doc="set camera fps "/>
     <arg name="always_capture"                            default="true"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
     <arg name="video_stream_provider"            default="/dev/video0"                         doc="video device"/> 
     <arg name="width"                                              default="1280"                                        doc="set resolution"/> 
@@ -96,6 +98,9 @@
 		<param name="invert_pose" value="$(arg invert_pose)" />
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
+		<param name="filter" value="$(arg filter)" />
+		<param name="filter_steps" value="$(arg filter_steps)" />
+		<param name="f_ctrl" value="$(arg fps)" />
 	</node>
 
 </launch>

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import os
-import yaml
 import cv2
-import cv2.aruco as aru
+import yaml
 import dataclasses
 import numpy as np
+import cv2.aruco as aru
 from threading import Lock
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Any
+from pose_filter import *
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
 
@@ -18,7 +19,6 @@ class ReconfParams(aru.DetectorParameters):
 	h: float=10.0
 	templateWindowSize: int=7
 	searchWindowSize: int=21
-	# filtering
 	
 	def __init__(self):
 		# detector params
@@ -37,6 +37,8 @@ class ArucoDetector():
 		@type  tuple
 		@param D: camera distorsion coefficients (plumb bob)
 		@type  tuple
+		@param f_ctrl Control loop frequency
+		@type int
 		@param bbox: bounding box ((x_min, x_max),(y_min,y_max)), if provided, image will be cropped
 		@type  tuple
 		@param denoise: Whether to apply denoising to the cropped image
@@ -51,6 +53,8 @@ class ArucoDetector():
 		@type int
 		@param solve_pnp_method Enum to set Aruco solver method. One of [SOLVEPNP_ITERATIVE, SOLVEPNP_EPNP, SOLVEPNP_P3P, SOLVEPNP_DLS, SOLVEPNP_UPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE, SOLVEPNP_SQPNP, SOLVEPNP_MAX_COUNT]
 		@type int
+		@param filter_type Determine whether the detections are filtered and the type of filter
+		@type FilterTypes
 
 		 Generate markers with opencv (custom build in opencv_build directory):
 		.opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /
@@ -92,13 +96,15 @@ class ArucoDetector():
 							K: Tuple,
 							D: Tuple,
 							marker_length: float,
+							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
 							denoise: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
 							dict_yaml: Optional[str]="",
 							dict_type: Optional[str]="DICT_4X4_50",
 							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
-							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE) -> None:
+							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
+							filter_type: Optional[FilterTypes]=FilterTypes.NONE) -> None:
 		
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
 		self.estimate_params = aru.EstimateParameters()
@@ -112,14 +118,17 @@ class ArucoDetector():
 		self.denoise = denoise
 		self.print_stats = print_stats
 		self.marker_length = marker_length
+		self.filter_type = filter_type
+		self.f_ctrl = f_ctrl
+		self.filters = {}
 		self.cmx = np.asanyarray(K).reshape(3,3)
 		self.dist =  np.asanyarray(D)
 		self.bbox = bbox
 		self.t_total = 0
 		self.it_total = 0
-		self.printSettings()
+		self._printSettings()
 
-	def printSettings(self) -> None:
+	def _printSettings(self) -> None:
 		txt =   f"Running Aruco Detector with settings:\n"
 		txt += f"primary denoise: {self.denoise},\n"
 		txt += f"print_stats: {self.print_stats},\n"
@@ -132,14 +141,26 @@ class ArucoDetector():
 		print(txt)
 		print()
 
-	def setDetectorParams(self, config, level):
+	def setDetectorParams(self, config: Any, level: int) -> Any:
 		with self.params_lock:
 			for k,v in config.items():
 				self.params.__setattr__(k, v)
 		return config
 	
-	def setBBox(self, bbox: Tuple) -> None:
+	def setBBox(self, bbox: Tuple[float, float, float, float]) -> None:
 		self.bbox = bbox
+
+	def getFilteredTranslationById(self, id: int) -> Union[np.ndarray, None]:
+		f = self.filters.get(id)
+		if f is not None:
+			return f.est_translation
+		return None
+	
+	def getFilteredRotationEulerById(self, id: int) -> Union[np.ndarray, None]:
+		f = self.filters.get(id)
+		if f is not None:
+			return f.est_rotation_as_euler
+		return None
 
 	@classmethod
 	def loadArucoYaml(self, filename: str) -> aru.Dictionary:
@@ -186,7 +207,7 @@ class ArucoDetector():
 		self.obj_points[2,:] = np.array([length/2, -length/2, 0])
 		self.obj_points[3,:] = np.array([-length/2, -length/2, 0])
 		
-	def projPoints(self, img, obj_points, rvec, tvec):
+	def _projPoints(self, img: cv2.typing.MatLike, obj_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> cv2.typing.MatLike:
 		"""Test the solvePnP by projecting the 3D Points to camera"""
 		proj, _ = cv2.projectPoints(obj_points, rvec, tvec, self.cmx, self.dist)
 		for p in proj:
@@ -203,7 +224,7 @@ class ArucoDetector():
 		if self.it_total % 100 == 0:
 			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
 
-	def drawCamCS(self, img):
+	def _drawCamCS(self, img: cv2.typing.MatLike) -> None:
 		thckns = 2
 		arw_len = 100
 		img_center =(int(img.shape[1]/2), int(img.shape[0]/2))
@@ -232,10 +253,19 @@ class ArucoDetector():
 			if len(corners) > 0:
 				ids = ids.flatten()
 				zipped = zip(ids, corners)
+
 				for id, corner in sorted(zipped):
 					# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
 					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
-					marker_poses.update({id: {'rvec': rvec.flatten(), 'tvec': tvec.flatten(), 'points': obj_points, 'corners': corner}})
+					tvec = tvec.flatten()
+					rvec = rvec.flatten()
+					# filtering
+					if id in self.filters.keys():
+						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec, rvec))
+					else:
+						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec, rvec), self.f_ctrl)} )
+					marker_poses.update({id: {'rvec': rvec, 'tvec': tvec, 'points': obj_points, 'corners': corner, 'ftrans': self.getFilteredTranslationById(id), 'frot': self.getFilteredRotationEulerById(id)}})
+
 				if self.print_stats:
 					self._printStats(tick)
 			else:
@@ -243,10 +273,10 @@ class ArucoDetector():
 			
 			# draw detection
 			out_img = aru.drawDetectedMarkers(img, corners, ids)
-			self.drawCamCS(out_img)
+			self._drawCamCS(out_img)
 			for id, pose in marker_poses.items():
 				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
-				out_img = self.projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
+				out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
 			return marker_poses, out_img, gray
 	
 def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:

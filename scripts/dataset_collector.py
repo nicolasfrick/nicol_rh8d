@@ -97,6 +97,12 @@ class CameraPose():
 		@type bool
 		@param vis Show detection images
 		@type bool
+		@param filter_type
+		@type str
+        @param filter_steps
+		@type int
+		@param f_ctrl
+		@type
 
 	"""
 
@@ -109,9 +115,12 @@ class CameraPose():
 	def __init__(self,
 			  				marker_length: float=0.010,
 							camera_ns: Optional[str]='',
-							invert_pose: Optional[bool]=True,
+							invert_pose: Optional[bool]=False,
 							vis :Optional[bool]=True,
-							use_reconfigure: Optional[bool]=False) -> None:
+							use_reconfigure: Optional[bool]=False,
+							filter_type: Optional[str]='none',
+							filter_steps: Optional[int]=100,
+							f_ctrl: Optional[int]=30) -> None:
 		
 		self.bridge = cv_bridge.CvBridge()
 		# buf = tf2_ros.Buffer()
@@ -126,15 +135,20 @@ class CameraPose():
 		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
 		self.det = ArucoDetector(marker_length=marker_length, 
 														 K=rgb_info.K, 
-														 D=rgb_info.D)
-		if use_reconfigure:
-			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+														 D=rgb_info.D,
+														 f_ctrl=f_ctrl,
+														 filter_type=filter_type)
 		self.invert_pose = invert_pose
+		self.filter_steps = filter_steps if filter_type!='none' else 1
+		self.f_loop = f_ctrl
 		self.img_topic = camera_ns + '/image_raw'
 		self.vis = vis
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
+		if use_reconfigure:
+			print("Using reconfigure server")
+			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 
 	def transformToWorld(self, id, x, y, z, r, p, ya):
 		# target_pose_from_cam = PoseStamped()
@@ -263,17 +277,19 @@ class CameraPose():
 				self.labelDetection(img, tvec, euler, vecs['corners'])
 		
 	def run(self) -> None:
-		rate = rospy.Rate(6)
+		rate = rospy.Rate(self.f_loop)
+		cnt = 0
 		try:
 			while not rospy.is_shutdown():
+					cnt+=1
 					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-					stamp = rgb.header.stamp
-					frame_id = rgb.header.frame_id
-					raw_img_size = (raw_img.shape[1], raw_img.shape[0])
+					# stamp = rgb.header.stamp
+					# frame_id = rgb.header.frame_id
+					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
-					if marker_poses:
+					if marker_poses and cnt%self.filter_steps==0:
 						self.ddd(marker_poses, det_img)
 
 					if self.vis:
@@ -295,10 +311,13 @@ class CameraPose():
 def main() -> None:
 	rospy.init_node('dataset_collector')
 	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', ''),
-							 marker_length=rospy.get_param('~marker_length', 0.10),
-							 invert_pose=rospy.get_param('~invert_pose', True),
+							 marker_length=rospy.get_param('~marker_length', 0.010),
+							 invert_pose=rospy.get_param('~invert_pose', False),
 							 use_reconfigure=rospy.get_param('~use_reconfigure', False),
 							 vis=rospy.get_param('~vis', True),
+							 filter_type=rospy.get_param('~filter', 'none'),
+							 filter_steps=rospy.get_param('~filter_steps', 100),
+							 f_ctrl=rospy.get_param('~f_ctrl', 30),
 			).run()
 	
 if __name__ == "__main__":
