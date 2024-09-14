@@ -14,6 +14,7 @@ class FilterTypes(Enum):
 	MEDIAN='median'
 	KALMAN_LIN_MOTION='kalman_lin_motion'
 	KALMAN_DEFAULT='kalman_default'
+FILTER_TYPES_MAP={ 'none':FilterTypes.NONE, 'mean':FilterTypes.MEAN, 'median':FilterTypes.MEDIAN, 'kalman_lin_motion':FilterTypes.KALMAN_LIN_MOTION, 'kalman_default':FilterTypes.KALMAN_DEFAULT }
 
 class PoseFilterBase():
 
@@ -276,24 +277,24 @@ class PoseFilterKalman(PoseFilterBase):
 
 		return self.translation_estimated, self.rotation_estimated
 	
-def createFilter(filter_type: FilterTypes, 
+def createFilter(filter_type: Union[FilterTypes, str], 
 				 				init_state: Optional[Tuple[float, float, float, float, float, float]]=6*[0],
 								f_ctrl_kalman: Optional[int]=100,
 								process_noise_kalman: Optional[float]=1e-10, 
 								measurement_noise_kalman: Optional[float]=1e-10, 
 								error_post_kalman: Optional[float]=0.0
 								) -> Union[PoseFilterMean, PoseFilterKalman, PoseFilterBase]:
-	
-	if filter_type in [FilterTypes.MEAN, FilterTypes.MEDIAN]:
+	ft = filter_type if isinstance(filter_type, FilterTypes) else FILTER_TYPES_MAP[filter_type]
+	if ft in [FilterTypes.MEAN, FilterTypes.MEDIAN]:
 		return PoseFilterMean(state_init=init_state, 
-													 use_median=filter_type==FilterTypes.MEDIAN)  
-	elif filter_type in [FilterTypes.KALMAN_DEFAULT, FilterTypes.KALMAN_LIN_MOTION]:
+													 use_median=ft==FilterTypes.MEDIAN)  
+	elif ft in [FilterTypes.KALMAN_DEFAULT, FilterTypes.KALMAN_LIN_MOTION]:
 		return PoseFilterKalman(f_ctrl=f_ctrl_kalman, 
-						  							    state_init=init_state, 
+						  								state_init=init_state, 
 														measurement_noise=measurement_noise_kalman, 
 														process_noise=process_noise_kalman, 
 														error_post=error_post_kalman,
-														lin_motion=filter_type==FilterTypes.KALMAN_LIN_MOTION)
+														lin_motion=ft==FilterTypes.KALMAN_LIN_MOTION)
 	else:
 		return PoseFilterBase()
 	

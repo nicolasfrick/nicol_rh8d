@@ -104,7 +104,7 @@ class ArucoDetector():
 							dict_type: Optional[str]="DICT_4X4_50",
 							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
 							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
-							filter_type: Optional[FilterTypes]=FilterTypes.NONE) -> None:
+							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE) -> None:
 		
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
 		self.estimate_params = aru.EstimateParameters()
@@ -118,7 +118,7 @@ class ArucoDetector():
 		self.denoise = denoise
 		self.print_stats = print_stats
 		self.marker_length = marker_length
-		self.filter_type = filter_type
+		self.filter_type = filter_type 
 		self.f_ctrl = f_ctrl
 		self.filters = {}
 		self.cmx = np.asanyarray(K).reshape(3,3)
@@ -253,7 +253,6 @@ class ArucoDetector():
 			if len(corners) > 0:
 				ids = ids.flatten()
 				zipped = zip(ids, corners)
-
 				for id, corner in sorted(zipped):
 					# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
 					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
@@ -273,7 +272,7 @@ class ArucoDetector():
 			
 			# draw detection
 			out_img = aru.drawDetectedMarkers(img, corners, ids)
-			gray = aru.drawDetectedMarkers(gray, rejected, np.array(list(range(len(rejected)))))
+			gray = aru.drawDetectedMarkers(gray, rejected)
 			self._drawCamCS(out_img)
 			for id, pose in marker_poses.items():
 				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)

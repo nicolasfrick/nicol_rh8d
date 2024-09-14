@@ -17,7 +17,6 @@
 	<arg name="invert_pose" default="true" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="median" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
-	<arg name="filter_steps" default="100" />
 	<arg name="vis" default="true" />
 
 	<!-- rs params -->
@@ -99,7 +98,6 @@
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
-		<param name="filter_steps" value="$(arg filter_steps)" />
 		<param name="f_ctrl" value="$(arg fps)" />
 	</node>
 
