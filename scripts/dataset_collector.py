@@ -54,11 +54,13 @@ class CameraPose():
 							vis :Optional[bool]=True,
 							use_reconfigure: Optional[bool]=False,
 							filter_type: Optional[str]='none',
-							f_ctrl: Optional[int]=30) -> None:
+							f_ctrl: Optional[int]=30,
+							invert_perspective: Optional[bool]=True) -> None:
 		
 		self.vis = vis
 		self.f_loop = f_ctrl
 		self.invert_pose = invert_pose
+		self.invert_perspective = invert_perspective
 		self.img_topic = camera_ns + '/image_raw'
 		self.bridge = cv_bridge.CvBridge()
 		# load marker poses
@@ -81,12 +83,12 @@ class CameraPose():
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		
 	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray, axis_angle: bool=True) -> tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
-		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 1]]"""
-		mat, _ = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle to mat
+		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
+		mat, _ = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
 		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
-		inv_tvec = np.dot(-mat, tvec) # -R^-1*d
 		inv_rvec = R.from_matrix(mat)
 		inv_rvec = inv_rvec.as_euler('xyz')
+		inv_tvec = -mat @ tvec # -R^-1*d
 		return np.array(inv_tvec.flat), inv_rvec.flatten()
 	
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
@@ -112,14 +114,15 @@ class CameraPose():
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
 					if self.vis:
 						cv2.putText(det_img, str(cnt), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-						for _, vec in marker_poses.items():
-							(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False)
+						for id, vec in marker_poses.items():
+							# rvec = np.array([np.pi, 0, np.pi*0.5])
+							(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
 							self.labelDetection(det_img, trans, rot, vec['corners'])
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):
 							break
-
+						
 					try:
 						rate.sleep()
 					except:
