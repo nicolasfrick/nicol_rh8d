@@ -6,18 +6,19 @@
 
 	<!-- glob params -->
 	<arg name="use_markers_camera"  default="true" />
-	<arg name="use_realsense"  default="false" />
+	<arg name="use_realsense"  default="true" />
 	<arg name="use_eye_cameras" default="false" />
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
-    <arg name="fps"                             default="30.0" />
+    <arg name="fps"                             default="30" />
 
 	<!-- detector params -->
-	<arg name="marker_length" default="0.010" />
-	<arg name="invert_pose" default="true" />
+	<arg name="marker_length" default="0.01" />
+	<arg name="invert_pose" default="false" />
 	<arg name="use_reconfigure" default="false" />
-	<arg name="filter" default="median" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
+	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
 	<arg name="vis" default="true" />
+	<arg name="use_aruco" default="false" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
@@ -99,6 +100,7 @@
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
 		<param name="f_ctrl" value="$(arg fps)" />
+		<param name="use_aruco" value="$(arg use_aruco)" />
 	</node>
 
 </launch>

@@ -6,8 +6,9 @@ import yaml
 import dataclasses
 import numpy as np
 import cv2.aruco as aru
+import dt_apriltags as apl
 from threading import Lock
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Callable
 from pose_filter import *
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
@@ -26,12 +27,11 @@ class ReconfParams(aru.DetectorParameters):
 		# change defaults in case
 		# dynamic reconfigure is disabled
 		self.cornerRefinementMethod = aru.CORNER_REFINE_CONTOUR
+		
+class MarkerDetectorBase():
+	"""Base clas for fiducial marker detection.
 
-class ArucoDetector():
-	"""Detect Aruco marker from an image.
-
-		@param marker_length:  Physical dimension (sidelength) of the marker in mm to m.
-														  Unit determines the unit of the output
+		@param marker_length:  Physical dimension (sidelength) of the marker in meters!
 		@type  float
 		@param K: camera intrinsics
 		@type  tuple
@@ -43,18 +43,291 @@ class ArucoDetector():
 		@type  tuple
 		@param denoise: Whether to apply denoising to the cropped image
 		@type  bool
-		@param dict_type:  type of the aruco dictionary out of ARUCO_DICT, loaded if no yaml path provided
-		@type  str
-		@param dict_yaml:  path to a dictionary yaml file in 'datasets/aruco/' directory used in favour of dict_type
-		@type  str
 		@param print_stats Print detection statistics
 		@type bool
-		@param 	estimate_pattern Enum to set Aruco estimate pattern. One of [ARUCO_CCW_CENTER, ARUCO_CW_TOP_LEFT_CORNER]
-		@type int
 		@param solve_pnp_method Enum to set Aruco solver method. One of [SOLVEPNP_ITERATIVE, SOLVEPNP_EPNP, SOLVEPNP_P3P, SOLVEPNP_DLS, SOLVEPNP_UPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE, SOLVEPNP_SQPNP, SOLVEPNP_MAX_COUNT]
 		@type int
 		@param filter_type Determine whether the detections are filtered and the type of filter
 		@type FilterTypes
+		@param hist_equalization Apply histogram equalization to the input image
+		@type bool
+	"""
+
+	RED = (0,0,255)
+	GREEN = (0,255,0)
+	BLUE = (255,0,0)
+	AXIS_LENGTH = 1.5
+	AXIS_THICKNESS = 2
+	CIRCLE_SIZE = 3
+	CIRCLE_CLR = BLUE
+	FONT_THCKNS = 2
+	FONT_SCALE = 0.5
+
+	def __init__(self,					
+			  				K: Tuple,
+							D: Tuple,
+							marker_length: float,
+							f_ctrl: Optional[int]=30,
+							bbox: Optional[Tuple]=None,
+							denoise: Optional[bool]=False,
+							print_stats: Optional[bool]=True,
+							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
+							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
+							hist_equalization: Optional[bool]=True
+							) -> None:
+
+		assert(solve_pnp_method >= cv2.SOLVEPNP_ITERATIVE and solve_pnp_method <= cv2.SOLVEPNP_MAX_COUNT)
+		self.solve_pnp_method = solve_pnp_method
+		self.params_lock = Lock()
+		self.params = ReconfParams()		
+		self.denoise = denoise
+		self.print_stats = print_stats
+		self.marker_length = marker_length
+		self.hist_equalization = hist_equalization
+		self.filter_type = filter_type 
+		self.f_ctrl = f_ctrl
+		self.filters = {}
+		self.cmx = np.asanyarray(K).reshape(3,3)
+		self.dist =  np.asanyarray(D)
+		self.bbox = bbox
+		self.t_total = 0
+		self.it_total = 0
+
+	def setDetectorParams(self, config: Any, level: int) -> Any:
+		with self.params_lock:
+			for k,v in config.items():
+				self.params.__setattr__(k, v)
+		return config
+	
+	def setBBox(self, bbox: Tuple[float, float, float, float]) -> None:
+		self.bbox = bbox
+
+	def getFilteredTranslationById(self, id: int) -> Union[np.ndarray, None]:
+		f = self.filters.get(id)
+		if f is not None:
+			return f.est_translation
+		return None
+	
+	def getFilteredRotationEulerById(self, id: int) -> Union[np.ndarray, None]:
+		f = self.filters.get(id)
+		if f is not None:
+			return f.est_rotation_as_euler
+		return None
+	
+	def _genSquarePoints(self, length: float) -> np.ndarray:
+		"""
+			https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
+			cv::SOLVEPNP_IPPE_SQUARE Special case suitable for marker pose estimation. 
+			Number of input points must be 4. Object points must be defined in the following order:
+				point 0: [-squareLength / 2, squareLength / 2, 0]
+				point 1: [ squareLength / 2, squareLength / 2, 0]
+				point 2: [ squareLength / 2, -squareLength / 2, 0]
+				point 3: [-squareLength / 2, -squareLength / 2, 0]
+		"""
+		self.obj_points = np.zeros((4, 3), dtype=np.float32)
+		self.obj_points[0,:] = np.array([-length/2, length/2, 0])
+		self.obj_points[1,:] = np.array([length/2, length/2, 0])
+		self.obj_points[2,:] = np.array([length/2, -length/2, 0])
+		self.obj_points[3,:] = np.array([-length/2, -length/2, 0])
+
+	def _projPoints(self, img: cv2.typing.MatLike, obj_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> cv2.typing.MatLike:
+		"""Test the solvePnP by projecting the 3D Points to camera"""
+		proj, _ = cv2.projectPoints(obj_points, rvec, tvec, self.cmx, self.dist)
+		for p in proj:
+			cv2.circle(img, (int(p[0][0]), int(p[0][1])), self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
+		return img
+
+	def _cropImage(self, img: np.ndarray) -> np.ndarray:
+		return img[self.bbox[0][0]: self.bbox[0][1], self.bbox[1][0]: self.bbox[1][1]]
+			
+	def _printStats(self, tick: int) -> None:
+		t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
+		self.t_total += t_current
+		self.it_total += 1
+		if self.it_total % 100 == 0:
+			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
+
+	def _drawCamCS(self, img: cv2.typing.MatLike) -> None:
+		thckns = 2
+		arw_len = 100
+		img_center =(int(img.shape[1]/2), int(img.shape[0]/2))
+		cv2.arrowedLine(img, img_center, (img_center[0]+arw_len, img_center[1]), self.RED, thckns, cv2.LINE_AA)
+		cv2.arrowedLine(img, img_center, (img_center[0], img_center[1]+arw_len), self.GREEN, thckns, cv2.LINE_AA)
+		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
+		cv2.circle(img, img_center, self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
+
+	def _printSettings(self) -> None:
+		raise NotImplementedError
+	
+	def _detectionRoutine(self):
+		raise NotImplementedError
+		
+	def detMarkerPoses(self, img: cv2.typing.MatLike, subroutine: Callable[[cv2.typing.MatLike, cv2.typing.MatLike], Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]]) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+		"""Generic marker detection method."""
+		with self.params_lock:
+			tick = cv2.getTickCount()
+			# grasycale image
+			gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+			# improve contrast
+			if self.hist_equalization:
+				gray = cv2.equalizeHist(gray)
+			#  image denoising using Non-local Means Denoising algorithm
+			if self.denoise or self.params.denoise:
+				gray = cv2.fastNlMeansDenoising(gray, None, self.params.h, self.params.templateWindowSize, self.params.searchWindowSize)
+
+			(marker_poses, out_img, gray) = subroutine(img, gray)
+
+			self._drawCamCS(out_img)
+			for _, pose in marker_poses.items():
+				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
+				out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
+
+			if self.print_stats:
+				self._printStats(tick)
+
+			return marker_poses, img, gray
+	
+class AprilDetector(MarkerDetectorBase):
+	"""
+		Apriltag marker detector.
+		
+		@param marker_family Type of Apriltag marker
+		@type str
+		@param nthreads Max num threads for detection
+		@type int
+		@param quad_decimate Lower this value for small markers
+		@type float
+		@param quad_sigma Improve image contrast
+		@type float
+		@param refine_edges Refine edges for better detection
+		@type bool
+		@param decode_sharpenin Sharpen image before decoding
+		@type float
+													
+		Max detection distance in meters = t /(2 * tan( (b* f * p) / (2 * r ) ) )
+		t = size of your tag in meters
+		b = the number of bits that span the width of the tag (excluding the white border for Apriltag 2). ex: 36h11 = 8, 25h9 = 6, standard41h12 = 9
+		f = horizontal FOV of your camera
+		r = horizontal resolution of you camera
+		p = the number of pixels required to detect a bit. This is an adjustable constant. We recommend 5. Lowest number we recommend is 2 which is the Nyquist Frequency. 
+				We recommend 5 to avoid some of the detection pitfalls mentioned above.
+	"""
+	def __init__(self,
+			  				K: Tuple,
+							D: Tuple,
+							marker_length: float,
+							f_ctrl: Optional[int]=30,
+							bbox: Optional[Tuple]=None,
+							denoise: Optional[bool]=False,
+							print_stats: Optional[bool]=True,
+							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
+							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
+							marker_family: Optional[str]='tag16h5',
+							nthreads: Optional[int]=4,
+							quad_decimate: Optional[float]=0.0,
+							quad_sigma: Optional[float]=0.0,
+							refine_edges: Optional[bool]=True,
+							decode_sharpening: Optional[float]=0.25,
+							) -> None:
+		
+		super().__init__(K=K, 
+				   						D=D, 
+										marker_length=marker_length, 
+										f_ctrl=f_ctrl, 
+										bbox=bbox, 
+										denoise=denoise, 
+										print_stats=print_stats, 
+										solve_pnp_method=solve_pnp_method, 
+										filter_type=filter_type,
+										)
+		self.det = apl.Detector(families=marker_family, 
+													nthreads=nthreads,
+													quad_decimate=quad_decimate,   
+													quad_sigma=quad_sigma,
+													refine_edges=refine_edges, 
+													decode_sharpening=decode_sharpening,
+													)
+		self.camera_params = (K[0], K[4], K[2], K[5])
+		self._genSquarePoints(marker_length)
+		self._printSettings()
+
+	def _printSettings(self) -> None:
+		txt =   f"Running Apriltag Detector with settings:\n"
+		txt += f"Camera params fx: {self.camera_params[0]}, fy: {self.camera_params[1]}, cx: {self.camera_params[2]}, cy: {self.camera_params[3]}\n"
+		txt += f"Distorsion: {self.dist}\n"
+		txt += f"primary denoise: {self.denoise},\n"
+		txt += f"print_stats: {self.print_stats},\n"
+		txt += f"marker_length: {self.marker_length},\n"
+		txt += f"control frequency: {self.f_ctrl},\n"
+		txt += f"filter type: {self.filter_type},\n"
+		for attr in dir(self.params):
+			if not attr.startswith('__'):
+				txt += f"{attr}: {self.params.__getattribute__(attr)},\n"
+		print(txt)
+		print()
+
+	def validateDetection(self, detection: apl.Detection) -> bool:
+		corners = detection.corners.astype(int)
+		marker_width = np.linalg.norm(corners[0] - corners[1])
+		marker_height = np.linalg.norm(corners[1] - corners[2])
+		return detection.decision_margin > 50 and detection.hamming < 5 and marker_width > 50 and marker_height > 50
+
+	def drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
+		corners = detection.corners.astype(int)
+		cv2.putText(img, str(detection.tag_id), tuple(corners[0]), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.RED, self.FONT_THCKNS)
+		for i in range(4):
+			cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), self.GREEN, self.AXIS_THICKNESS)
+		# axes
+		# cv2.drawFrameAxes(img, self.cmx, self.dist, detection.pose_R, detection.pose_t, 0.5, 1)
+		
+	def _detectionRoutine(self, img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+		marker_poses = {}
+		detections = self.det.detect(gray, estimate_tag_pose=True, camera_params=self.camera_params, tag_size=self.marker_length)
+		if len(detections) > 0:
+			for detection in detections:
+				# proc detections
+				if self.validateDetection(detection):
+					id = detection.tag_id
+					tvec = detection.pose_t.flatten()
+					# filtering
+					if id in self.filters.keys():
+						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=detection.pose_R))
+					else:
+						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=detection.pose_R), self.f_ctrl)} )
+					# result
+					marker_poses.update({id: {'rvec': cv2.Rodrigues(detection.pose_R)[0], 
+							   											'rot_mat': detection.pose_R,
+							   											'tvec': tvec, 
+																		'points': self.obj_points, 
+																		'corners': detection.corners, 
+																		'ftrans': self.getFilteredTranslationById(id), 
+																		'frot': self.getFilteredRotationEulerById(id),
+																		'homography': detection.homography,
+																		'center': detection.center,
+																		'pose_err': detection.pose_err}})
+					self.drawMarkers(detection, img)
+				else:
+					self.drawMarkers(detection, gray)
+
+		return marker_poses, img, gray
+
+	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray]:
+		"""Detect Apriltag marker in bgr image.
+			@param img Input image with 'bgr' encoding
+			@type np.ndarray
+			@return Detected marker poses, marker detection image, processed image
+		"""
+		return super().detMarkerPoses(img, self._detectionRoutine)
+
+class ArucoDetector(MarkerDetectorBase):
+	"""Detect Aruco marker from an image.
+
+		@param dict_type:  type of the aruco dictionary out of ARUCO_DICT, loaded if no yaml path provided
+		@type  str
+		@param dict_yaml:  path to a dictionary yaml file in 'datasets/aruco/' directory used in favour of dict_type
+		@type  str
+		@param 	estimate_pattern Enum to set Aruco estimate pattern. One of [ARUCO_CCW_CENTER, ARUCO_CW_TOP_LEFT_CORNER]
+		@type int
 
 		 Generate markers with opencv (custom build in opencv_build directory):
 		.opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /
@@ -84,52 +357,43 @@ class ArucoDetector():
 								"DICT_7X7_1000": aru.DICT_7X7_1000,
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
-	RED = (0,0,255)
-	GREEN = (0,255,0)
-	BLUE = (255,0,0)
-	AXIS_LENGTH = 1.5 # axis drawing
-	AXIS_THICKNESS = 2 # axis drawing
-	CIRCLE_SIZE = 3
-	CIRCLE_CLR = BLUE
 
 	def __init__(self,
-							K: Tuple,
+			  				K: Tuple,
 							D: Tuple,
 							marker_length: float,
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
 							denoise: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
+							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
+							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							dict_yaml: Optional[str]="",
 							dict_type: Optional[str]="DICT_4X4_50",
 							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
-							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
-							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE) -> None:
+							) -> None:
 		
+		super().__init__(K=K, 
+				   						D=D, 
+										marker_length=marker_length, 
+										f_ctrl=f_ctrl, 
+										bbox=bbox, 
+										denoise=denoise, 
+										print_stats=print_stats, 
+										solve_pnp_method=solve_pnp_method, 
+										filter_type=filter_type,
+										)
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
-		self.estimate_params = aru.EstimateParameters()
 		assert(estimate_pattern >= aru.ARUCO_CCW_CENTER and estimate_pattern <= aru.ARUCO_CW_TOP_LEFT_CORNER)
+		self.estimate_params = aru.EstimateParameters()
 		self.estimate_params.pattern = estimate_pattern
-		assert(solve_pnp_method >= cv2.SOLVEPNP_ITERATIVE and solve_pnp_method <= cv2.SOLVEPNP_MAX_COUNT)
-		self.estimate_params.solvePnPMethod = solve_pnp_method
-		self.params_lock = Lock()
-		self.params = ReconfParams()
-
-		self.denoise = denoise
-		self.print_stats = print_stats
-		self.marker_length = marker_length
-		self.filter_type = filter_type 
-		self.f_ctrl = f_ctrl
-		self.filters = {}
-		self.cmx = np.asanyarray(K).reshape(3,3)
-		self.dist =  np.asanyarray(D)
-		self.bbox = bbox
-		self.t_total = 0
-		self.it_total = 0
+		self.estimate_params.solvePnPMethod = self.solve_pnp_method
 		self._printSettings()
 
 	def _printSettings(self) -> None:
 		txt =   f"Running Aruco Detector with settings:\n"
+		txt += f"Camera matrix: {self.cmx}\n"
+		txt += f"Camera distorsion: {self.dist}\n"
 		txt += f"primary denoise: {self.denoise},\n"
 		txt += f"print_stats: {self.print_stats},\n"
 		txt += f"marker_length: {self.marker_length},\n"
@@ -140,27 +404,6 @@ class ArucoDetector():
 				txt += f"{attr}: {self.params.__getattribute__(attr)},\n"
 		print(txt)
 		print()
-
-	def setDetectorParams(self, config: Any, level: int) -> Any:
-		with self.params_lock:
-			for k,v in config.items():
-				self.params.__setattr__(k, v)
-		return config
-	
-	def setBBox(self, bbox: Tuple[float, float, float, float]) -> None:
-		self.bbox = bbox
-
-	def getFilteredTranslationById(self, id: int) -> Union[np.ndarray, None]:
-		f = self.filters.get(id)
-		if f is not None:
-			return f.est_translation
-		return None
-	
-	def getFilteredRotationEulerById(self, id: int) -> Union[np.ndarray, None]:
-		f = self.filters.get(id)
-		if f is not None:
-			return f.est_rotation_as_euler
-		return None
 
 	@classmethod
 	def loadArucoYaml(self, filename: str) -> aru.Dictionary:
@@ -189,95 +432,48 @@ class ArucoDetector():
 				dct.bytesList[idx] = compressed
 
 		return dct
+	
+	def _detectionRoutine(self,  img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+		# detection
+		marker_poses = {}
+		(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params)
+		if len(corners) > 0:
+			ids = ids.flatten()
+			zipped = zip(ids, corners)
+			for id, corner in sorted(zipped):
+				# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
+				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
+				tvec = tvec.flatten()
+				rvec = rvec.flatten()
+				# filtering
+				if id in self.filters.keys():
+					self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rvec=rvec))
+				else:
+					self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rvec=rvec), self.f_ctrl)} )
+				# results
+				marker_poses.update({id: {'rvec': rvec, 
+							   										'rot_mat': cv2.Rodrigues(rvec)[0],
+							   										'tvec': tvec, 
+																	'points': obj_points, 
+																	'corners': corner.reshape((4,2)), 
+																	'ftrans': self.getFilteredTranslationById(id), 
+																	'frot': self.getFilteredRotationEulerById(id),
+																	'homography': None,
+																	'center': None,
+																	'pose_err': None}})
 
-	def _genSquarePoints(self, length: float) -> None:
-		"""
-			https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
-			cv::SOLVEPNP_IPPE_SQUARE Special case suitable for marker pose estimation. 
-			Number of input points must be 4. Object points must be defined in the following order:
-				point 0: [-squareLength / 2, squareLength / 2, 0]
-				point 1: [ squareLength / 2, squareLength / 2, 0]
-				point 2: [ squareLength / 2, -squareLength / 2, 0]
-				point 3: [-squareLength / 2, -squareLength / 2, 0]
-		"""
-
-		self.obj_points = np.zeros((4, 3), dtype=np.float32)
-		self.obj_points[0,:] = np.array([-length/2, length/2, 0])
-		self.obj_points[1,:] = np.array([length/2, length/2, 0])
-		self.obj_points[2,:] = np.array([length/2, -length/2, 0])
-		self.obj_points[3,:] = np.array([-length/2, -length/2, 0])
-		
-	def _projPoints(self, img: cv2.typing.MatLike, obj_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> cv2.typing.MatLike:
-		"""Test the solvePnP by projecting the 3D Points to camera"""
-		proj, _ = cv2.projectPoints(obj_points, rvec, tvec, self.cmx, self.dist)
-		for p in proj:
-			cv2.circle(img, (int(p[0][0]), int(p[0][1])), self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
-		return img
-
-	def _cropImage(self, img: np.ndarray) -> np.ndarray:
-		return img[self.bbox[0][0]: self.bbox[0][1], self.bbox[1][0]: self.bbox[1][1]]
-			
-	def _printStats(self, tick: int) -> None:
-		t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
-		self.t_total += t_current
-		self.it_total += 1
-		if self.it_total % 100 == 0:
-			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
-
-	def _drawCamCS(self, img: cv2.typing.MatLike) -> None:
-		thckns = 2
-		arw_len = 100
-		img_center =(int(img.shape[1]/2), int(img.shape[0]/2))
-		cv2.arrowedLine(img, img_center, (img_center[0]+arw_len, img_center[1]), self.RED, thckns, cv2.LINE_AA)
-		cv2.arrowedLine(img, img_center, (img_center[0], img_center[1]+arw_len), self.GREEN, thckns, cv2.LINE_AA)
-		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
-		cv2.circle(img, img_center, 5, self.CIRCLE_CLR, -1)
+		# draw detection
+		out_img = aru.drawDetectedMarkers(img, corners, ids)
+		gray = aru.drawDetectedMarkers(gray, rejected)
+		return marker_poses, out_img, gray
 
 	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray, np.ndarray]:	
-		"""Detect Aruco marker from bgr image.
+		"""Detect Aruco marker in bgr image.
 			@param img Input image with 'bgr' encoding
 			@type np.ndarray
 			@return Detected marker poses, marker detection image, processed image
 		"""
-		with self.params_lock:
-			tick = cv2.getTickCount()
-			# grasycale image
-			gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-			#  image denoising using Non-local Means Denoising algorithm
-			if self.denoise or self.params.denoise:
-				gray = cv2.fastNlMeansDenoising(gray, None, self.params.h, self.params.templateWindowSize, self.params.searchWindowSize)
-			
-			# detection
-			marker_poses = {}
-			(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params)
-			if len(corners) > 0:
-				ids = ids.flatten()
-				zipped = zip(ids, corners)
-				for id, corner in sorted(zipped):
-					# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
-					(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
-					tvec = tvec.flatten()
-					rvec = rvec.flatten()
-					# filtering
-					if id in self.filters.keys():
-						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec, rvec))
-					else:
-						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec, rvec), self.f_ctrl)} )
-					marker_poses.update({id: {'rvec': rvec, 'tvec': tvec, 'points': obj_points, 'corners': corner, 'ftrans': self.getFilteredTranslationById(id), 'frot': self.getFilteredRotationEulerById(id)}})
-
-				if self.print_stats:
-					self._printStats(tick)
-			else:
-				print("No marker found")
-			
-			# draw detection
-			out_img = aru.drawDetectedMarkers(img, corners, ids)
-			gray = aru.drawDetectedMarkers(gray, rejected)
-			self._drawCamCS(out_img)
-			for id, pose in marker_poses.items():
-				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
-				out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
-			return marker_poses, out_img, gray
+		return super().detMarkerPoses(img, self._detectionRoutine)
 	
 def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:
 	"""Aligns the markers in a mxn matrix where m >= n .
@@ -365,7 +561,5 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 			cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-	# adict = ArucoDetector.loadArucoYaml("custom_matrix_4x4_32_consider_flipped.yml")
-	# adict = aru.getPredefinedDictionary(aru.DICT_4X4_50)
-	# saveArucoImgMatrix(adict, False, "matrix_4x4_32.png", num=32, save_indiv=False)
-	a = ArucoDetector(0, np.eye(3), [])
+	adict = ArucoDetector.loadArucoYaml("custom_matrix_4x4_32_consider_flipped.yml")
+	saveArucoImgMatrix(adict, False, "matrix_4x4_32.png", num=32, save_indiv=False)
