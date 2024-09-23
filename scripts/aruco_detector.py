@@ -14,20 +14,10 @@ from pose_filter import *
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
 
 @dataclasses.dataclass(eq=False)
-class ReconfParams(aru.DetectorParameters):
-	# denoising
-	denoise: bool = False
-	h: float=10.0
-	templateWindowSize: int=7
-	searchWindowSize: int=21
-	
-	def __init__(self):
-		# detector params
-		super().__init__()
-		# change defaults in case
-		# dynamic reconfigure is disabled
-		self.cornerRefinementMethod = aru.CORNER_REFINE_CONTOUR
-		
+class ReconfParams():
+	aruco_params = aru.DetectorParameters()
+	estimate_params = aru.EstimateParameters()
+
 class MarkerDetectorBase():
 	"""Base clas for fiducial marker detection.
 
@@ -41,16 +31,10 @@ class MarkerDetectorBase():
 		@type int
 		@param bbox: bounding box ((x_min, x_max),(y_min,y_max)), if provided, image will be cropped
 		@type  tuple
-		@param denoise: Whether to apply denoising to the cropped image
-		@type  bool
 		@param print_stats Print detection statistics
 		@type bool
-		@param solve_pnp_method Enum to set Aruco solver method. One of [SOLVEPNP_ITERATIVE, SOLVEPNP_EPNP, SOLVEPNP_P3P, SOLVEPNP_DLS, SOLVEPNP_UPNP, SOLVEPNP_AP3P, SOLVEPNP_IPPE, SOLVEPNP_IPPE_SQUARE, SOLVEPNP_SQPNP, SOLVEPNP_MAX_COUNT]
-		@type int
 		@param filter_type Determine whether the detections are filtered and the type of filter
 		@type FilterTypes
-		@param hist_equalization Apply histogram equalization to the input image
-		@type bool
 	"""
 
 	RED = (0,0,255)
@@ -69,35 +53,42 @@ class MarkerDetectorBase():
 							marker_length: float,
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
-							denoise: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
-							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
-							hist_equalization: Optional[bool]=True
 							) -> None:
-
-		assert(solve_pnp_method >= cv2.SOLVEPNP_ITERATIVE and solve_pnp_method <= cv2.SOLVEPNP_MAX_COUNT)
-		self.solve_pnp_method = solve_pnp_method
+		
+		# params
 		self.params_lock = Lock()
 		self.params = ReconfParams()		
-		self.denoise = denoise
+		# initialize params
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/detector_params.yaml")
+		with open(fl, 'r') as fr:
+			self.params_config = yaml.safe_load(fr)
+		for _, v in self.params_config.items():
+			self.setDetectorParams(v, 0)
+
 		self.print_stats = print_stats
 		self.marker_length = marker_length
-		self.hist_equalization = hist_equalization
 		self.filter_type = filter_type 
 		self.f_ctrl = f_ctrl
+		self.bbox = bbox
 		self.filters = {}
 		self.cmx = np.asanyarray(K).reshape(3,3)
 		self.dist =  np.asanyarray(D)
-		self.bbox = bbox
 		self.t_total = 0
 		self.it_total = 0
 
 	def setDetectorParams(self, config: Any, level: int) -> Any:
 		with self.params_lock:
 			for k,v in config.items():
-				self.params.__setattr__(k, v)
-		return config
+				if k in self.params_config['pose_estimation']:
+					self.params.estimate_params.__setattr__(k, v)
+				elif k in self.params_config['aruco_detection']:
+					self.params.aruco_params.__setattr__(k, v)
+				else:
+					self.params.__setattr__(k, v)
+			self.params_change = True
+			return config
 	
 	def setBBox(self, bbox: Tuple[float, float, float, float]) -> None:
 		self.bbox = bbox
@@ -169,10 +160,10 @@ class MarkerDetectorBase():
 			# grasycale image
 			gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 			# improve contrast
-			if self.hist_equalization:
+			if self.params.hist_equalization:
 				gray = cv2.equalizeHist(gray)
 			#  image denoising using Non-local Means Denoising algorithm
-			if self.denoise or self.params.denoise:
+			if self.params.denoise:
 				gray = cv2.fastNlMeansDenoising(gray, None, self.params.h, self.params.templateWindowSize, self.params.searchWindowSize)
 
 			(marker_poses, out_img, gray) = subroutine(img, gray)
@@ -193,16 +184,6 @@ class AprilDetector(MarkerDetectorBase):
 		
 		@param marker_family Type of Apriltag marker
 		@type str
-		@param nthreads Max num threads for detection
-		@type int
-		@param quad_decimate Lower this value for small markers
-		@type float
-		@param quad_sigma Improve image contrast
-		@type float
-		@param refine_edges Refine edges for better detection
-		@type bool
-		@param decode_sharpenin Sharpen image before decoding
-		@type float
 													
 		Max detection distance in meters = t /(2 * tan( (b* f * p) / (2 * r ) ) )
 		t = size of your tag in meters
@@ -218,16 +199,9 @@ class AprilDetector(MarkerDetectorBase):
 							marker_length: float,
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
-							denoise: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
-							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							marker_family: Optional[str]='tag16h5',
-							nthreads: Optional[int]=4,
-							quad_decimate: Optional[float]=0.0,
-							quad_sigma: Optional[float]=0.0,
-							refine_edges: Optional[bool]=True,
-							decode_sharpening: Optional[float]=0.25,
 							) -> None:
 		
 		super().__init__(K=K, 
@@ -235,18 +209,18 @@ class AprilDetector(MarkerDetectorBase):
 										marker_length=marker_length, 
 										f_ctrl=f_ctrl, 
 										bbox=bbox, 
-										denoise=denoise, 
 										print_stats=print_stats, 
-										solve_pnp_method=solve_pnp_method, 
 										filter_type=filter_type,
 										)
 		self.det = apl.Detector(families=marker_family, 
-													nthreads=nthreads,
-													quad_decimate=quad_decimate,   
-													quad_sigma=quad_sigma,
-													refine_edges=refine_edges, 
-													decode_sharpening=decode_sharpening,
+													nthreads=self.params.nthreads,
+													quad_decimate=self.params.quad_decimate,   
+													quad_sigma=self.params.quad_sigma,
+													refine_edges=self.params.refine_edges, 
+													decode_sharpening=self.params.decode_sharpening,
+													debug=False,
 													)
+		self.params_change = False
 		self.camera_params = (K[0], K[4], K[2], K[5])
 		self._genSquarePoints(marker_length)
 		self._printSettings()
@@ -255,7 +229,6 @@ class AprilDetector(MarkerDetectorBase):
 		txt =   f"Running Apriltag Detector with settings:\n"
 		txt += f"Camera params fx: {self.camera_params[0]}, fy: {self.camera_params[1]}, cx: {self.camera_params[2]}, cy: {self.camera_params[3]}\n"
 		txt += f"Distorsion: {self.dist}\n"
-		txt += f"primary denoise: {self.denoise},\n"
 		txt += f"print_stats: {self.print_stats},\n"
 		txt += f"marker_length: {self.marker_length},\n"
 		txt += f"control frequency: {self.f_ctrl},\n"
@@ -270,18 +243,29 @@ class AprilDetector(MarkerDetectorBase):
 		corners = detection.corners.astype(int)
 		marker_width = np.linalg.norm(corners[0] - corners[1])
 		marker_height = np.linalg.norm(corners[1] - corners[2])
-		return detection.decision_margin > 50 and detection.hamming < 5 and marker_width > 50 and marker_height > 50
+		return detection.decision_margin > self.params.decision_margin \
+						and detection.hamming < self.params.max_hamming \
+							and marker_width > self.params.min_marker_width \
+								and marker_height > self.params.min_marker_height
 
 	def drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
 		corners = detection.corners.astype(int)
 		cv2.putText(img, str(detection.tag_id), tuple(corners[0]), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.RED, self.FONT_THCKNS)
 		for i in range(4):
 			cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), self.GREEN, self.AXIS_THICKNESS)
-		# axes
-		# cv2.drawFrameAxes(img, self.cmx, self.dist, detection.pose_R, detection.pose_t, 0.5, 1)
+
+	def _adaptParams(self):
+		self.det.tag_detector_ptr.contents.nthreads = int(self.params.nthreads)
+		self.det.tag_detector_ptr.contents.quad_decimate = float(self.params.quad_decimate)
+		self.det.tag_detector_ptr.contents.quad_sigma = float(self.params.quad_sigma)
+		self.det.tag_detector_ptr.contents.refine_edges = int(self.params.refine_edges)
+		self.det.tag_detector_ptr.contents.decode_sharpening = int(self.params.decode_sharpening)
+		self.params_change = False
 		
 	def _detectionRoutine(self, img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		marker_poses = {}
+		if self.params_change:
+			self._adaptParams()
 		detections = self.det.detect(gray, estimate_tag_pose=True, camera_params=self.camera_params, tag_size=self.marker_length)
 		if len(detections) > 0:
 			for detection in detections:
@@ -364,13 +348,10 @@ class ArucoDetector(MarkerDetectorBase):
 							marker_length: float,
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
-							denoise: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
-							solve_pnp_method: Optional[int]=cv2.SOLVEPNP_IPPE_SQUARE,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							dict_yaml: Optional[str]="",
 							dict_type: Optional[str]="DICT_4X4_50",
-							estimate_pattern: Optional[int]=aru.ARUCO_CCW_CENTER,
 							) -> None:
 		
 		super().__init__(K=K, 
@@ -378,30 +359,29 @@ class ArucoDetector(MarkerDetectorBase):
 										marker_length=marker_length, 
 										f_ctrl=f_ctrl, 
 										bbox=bbox, 
-										denoise=denoise, 
 										print_stats=print_stats, 
-										solve_pnp_method=solve_pnp_method, 
 										filter_type=filter_type,
 										)
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
-		assert(estimate_pattern >= aru.ARUCO_CCW_CENTER and estimate_pattern <= aru.ARUCO_CW_TOP_LEFT_CORNER)
-		self.estimate_params = aru.EstimateParameters()
-		self.estimate_params.pattern = estimate_pattern
-		self.estimate_params.solvePnPMethod = self.solve_pnp_method
 		self._printSettings()
 
 	def _printSettings(self) -> None:
 		txt =   f"Running Aruco Detector with settings:\n"
 		txt += f"Camera matrix: {self.cmx}\n"
 		txt += f"Camera distorsion: {self.dist}\n"
-		txt += f"primary denoise: {self.denoise},\n"
 		txt += f"print_stats: {self.print_stats},\n"
 		txt += f"marker_length: {self.marker_length},\n"
-		txt += f"estimate_pattern: {self.estimate_params.pattern},\n"
-		txt += f"solvePnPMethod: {self.estimate_params.solvePnPMethod},\n"
-		for attr in dir(self.params):
+		txt += f"hist_equalization: {self.params.hist_equalization}\n"
+		txt += f"denoise: {self.params.denoise}\n"
+		txt += f"h: {self.params.h}\n"
+		txt += f"templateWindowSize: {self.params.templateWindowSize}\n"
+		txt += f"searchWindowSize: {self.params.searchWindowSize}\n"
+		for attr in dir(self.params.aruco_params):
 			if not attr.startswith('__'):
-				txt += f"{attr}: {self.params.__getattribute__(attr)},\n"
+				txt += f"{attr}: {self.params.aruco_params.__getattribute__(attr)},\n"
+		for attr in dir(self.params.estimate_params):
+			if not attr.startswith('__'):
+				txt += f"{attr}: {self.params.estimate_params.__getattribute__(attr)},\n"
 		print(txt)
 		print()
 
@@ -436,13 +416,13 @@ class ArucoDetector(MarkerDetectorBase):
 	def _detectionRoutine(self,  img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		# detection
 		marker_poses = {}
-		(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params)
+		(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params.aruco_params)
 		if len(corners) > 0:
 			ids = ids.flatten()
 			zipped = zip(ids, corners)
 			for id, corner in sorted(zipped):
 				# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
-				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.estimate_params)
+				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.params.estimate_params)
 				tvec = tvec.flatten()
 				rvec = rvec.flatten()
 				# filtering
