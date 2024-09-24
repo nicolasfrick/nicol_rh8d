@@ -202,6 +202,7 @@ class AprilDetector(MarkerDetectorBase):
 							print_stats: Optional[bool]=True,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							marker_family: Optional[str]='tag16h5',
+							debug: Optional[bool]=False,
 							) -> None:
 		
 		super().__init__(K=K, 
@@ -220,6 +221,7 @@ class AprilDetector(MarkerDetectorBase):
 													decode_sharpening=self.params.decode_sharpening,
 													debug=False,
 													)
+		self.debug = debug
 		self.params_change = False
 		self.camera_params = (K[0], K[4], K[2], K[5])
 		self._genSquarePoints(marker_length)
@@ -243,10 +245,13 @@ class AprilDetector(MarkerDetectorBase):
 		corners = detection.corners.astype(int)
 		marker_width = np.linalg.norm(corners[0] - corners[1])
 		marker_height = np.linalg.norm(corners[1] - corners[2])
-		return detection.decision_margin > self.params.decision_margin \
-						and detection.hamming < self.params.max_hamming \
-							and marker_width > self.params.min_marker_width \
-								and marker_height > self.params.min_marker_height
+		if self.debug:
+			print(detection)
+			print(marker_height, marker_width)
+		return detection.decision_margin >= self.params.decision_margin \
+						and detection.hamming <= self.params.max_hamming \
+							and marker_width >= self.params.min_marker_width \
+								and marker_height >= self.params.min_marker_height
 
 	def drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
 		corners = detection.corners.astype(int)
