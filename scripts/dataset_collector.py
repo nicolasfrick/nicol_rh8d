@@ -8,7 +8,7 @@ import tf2_ros
 import cv_bridge
 import numpy as np
 import sensor_msgs.msg
-from typing import Optional, Any
+from typing import Optional, Any, Tuple
 import dynamic_reconfigure.server
 from scipy.spatial.transform import Rotation as R
 from geometry_msgs.msg import PoseStamped
@@ -47,7 +47,7 @@ class CameraPose():
 	FONT_THCKNS = 2
 	FONT_SCALE = 0.5
 	FONT_CLR =  (255,0,0)
-	TXT_OFFSET = 50
+	TXT_OFFSET = 25
 	
 	def __init__(self,
 			  				marker_length: float=0.010,
@@ -89,11 +89,12 @@ class CameraPose():
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 		
-	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray, axis_angle: bool=True) -> tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
+	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray, axis_angle: bool=True) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
 		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
 		mat, _ = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
 		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
@@ -113,6 +114,12 @@ class CameraPose():
 			y_offset2 = y_offset1 + int(self.FONT_SCALE*50) if y_offset1 > 0 else y_offset1 - int(self.FONT_SCALE*50)
 			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+
+	def labelDetection(self, img: cv2.typing.MatLike, id: int, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
+			pos_txt = "{} X: {:.4f} Y: {:.4f} Z: {:.4f} R: {:.4f} P: {:.4f} Y: {:.4f}".format(id, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2])
+			xpos = self.TXT_OFFSET
+			ypos = (id+1)*self.TXT_OFFSET
+			cv2.putText(img, pos_txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
 	def run(self) -> None:
 		cnt = 0
@@ -122,17 +129,19 @@ class CameraPose():
 					cnt+=1
 					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-					
-					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
+					res_img = raw_img.copy()
+
+					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
 					if self.vis:
 						# frame counter
 						cv2.putText(det_img, str(cnt), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-						for _, vec in marker_poses.items():
+						for id, vec in marker_poses.items():
 							# vec['frot'] = np.array([np.pi, 0, np.pi*0.5])
 							(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
-							self.labelDetection(det_img, trans, rot, vec['corners'])
+							self.labelDetection(res_img, id, trans, rot, vec['corners'])
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
+						cv2.imshow('Result', res_img)
 						if cv2.waitKey(1) == ord("q"):
 							break
 					

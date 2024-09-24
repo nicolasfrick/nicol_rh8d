@@ -36,6 +36,13 @@ $ pip uninstall xtcocotools  # <-- Otherwise import mmpose.apis fails...
 $ pip install --no-binary xtcocotools xtcocotools
 $ pip check
 
+## PyKDL
+$ sudo apt install libeigen3-dev libcppunit-dev
+$ conda install future pybind11
+$ ENV=nicol_rh8d; PYTHON=3.9
+$ conda activate $ENV; OLDDIR="$(pwd)"; cd /tmp; rm -rf /tmp/orocos_kinematics_dynamics; git clone --recursive https://github.com/orocos/orocos_kinematics_dynamics.git; cd /tmp/orocos_kinematics_dynamics; git checkout 8dbdda7; git checkout --recurse-submodules 8dbdda7; git submodule sync; git submodule update --init --recursive; git submodule status; cd /tmp/orocos_kinematics_dynamics/orocos_kdl; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" ..; make -j8; make install; cd /tmp/orocos_kinematics_dynamics/python_orocos_kdl; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" -DROS_PYTHON_VERSION=3 ..; make -j8; make install; ln -s "$CONDA_PREFIX/lib/python3/dist-packages/PyKDL.so" "$CONDA_PREFIX/lib/python$PYTHON/lib-dynload/PyKDL.so"; cd "$OLDDIR"; rm -rf /tmp/orocos_kinematics_dynamics
+
+
 ## Config
 $ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim/data
 $ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmpose/.mim/data

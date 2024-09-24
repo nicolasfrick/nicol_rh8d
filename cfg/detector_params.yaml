@@ -47,12 +47,12 @@ aruco_detection:
   minMarkerLengthRatioOriginalImg: 0.0
 # apriltag detector
 apriltag_detection:
-  nthreads: 4
+  nthreads: 6
   quad_decimate: 0.0
-  quad_sigma: 0.0
+  quad_sigma: 0.5
   refine_edges: true
-  decode_sharpening: 0.5
-  decision_margin: 20 
-  max_hamming: 10
-  min_marker_width : 0 
-  min_marker_height: 0
+  decode_sharpening: 0.25
+  decision_margin: 30.0
+  max_hamming: 1
+  min_marker_width : 20.0
+  min_marker_height: 20.0
