@@ -28,12 +28,12 @@
     <arg name="z_dist"      default="0.25" doc="Distance along z axis"/>
     <arg name="attached"      default="false"/>
 
-	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+	<!-- <include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
 		<arg name="theta"      value="$(arg theta)"/>
 		<arg name="x_dist"      value="$(arg x_dist)" />
 		<arg name="z_dist"      value="$(arg z_dist)" />
 		<arg name="attached" value="$(arg attached)"/>
-	</include>
+	</include> -->
 
 	<!-- common manager -->
 	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="rs_manager" args="manager" output="screen" required="true" />

@@ -22,7 +22,7 @@ cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
 NUM_MARKERS = 33
 MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
 MARKER_SCALING = 5 # factor to scale marker matrix img
-MARKER_LENGTH = 10 # dimension of markers in mm
+MARKER_LENGTH = 0.0105 # dimension of markers in mm
 ARUCO_DICT = aru.DICT_4X4_50 # 4 cols, 4 rows, 50 pcs
 
 def focalMM_to_focalPixel( focalMM, pixelPitch ):
@@ -75,6 +75,7 @@ def saveArucoImgMatrix(aruco_dict: dict, show: bool=False):
 aruco_dict = aru.getPredefinedDictionary(ARUCO_DICT)
 # saveArucoImgMatrix(aruco_dict)
 det_params = aru.DetectorParameters()
+print(det_params)
 aruco_det = aru.ArucoDetector(aruco_dict, det_params)
 
 # https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
