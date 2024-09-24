@@ -1,254 +1,162 @@
 #!/usr/bin/env python3
 
 import os, sys
-import numpy as np
+import yaml
 import cv2
-import cv2.aruco as aru
-import cv_bridge
 import rospy
 import tf2_ros
+import cv_bridge
+import numpy as np
 import sensor_msgs.msg
-import geometry_msgs.msg
+from typing import Optional, Any
+import dynamic_reconfigure.server
+from scipy.spatial.transform import Rotation as R
+from geometry_msgs.msg import PoseStamped
+from tf2_geometry_msgs import PointStamped
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
-import dynamic_reconfigure.server
-from nicol_rh8d.cfg import RH8DDatasetCollectorConfig
-from scipy.spatial.transform import Rotation
+from nicol_rh8d.cfg import ArucoDetectorConfig
+from aruco_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-camera_cv_bridge = cv_bridge.CvBridge()
-cv2.namedWindow("im_out", cv2.WINDOW_NORMAL)
+		# buf = tf2_ros.Buffer()
+		# listener = tf2_ros.TransformListener(buf)
+					# stamp = rgb.header.stamp
+					# frame_id = rgb.header.frame_id
+					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 
-NUM_MARKERS = 33
-MARKER_SIZE = 6 # >= number of marker cols/rows + 2x BORDER_BITS
-MARKER_SCALING = 5 # factor to scale marker matrix img
-MARKER_LENGTH = 0.0105 # dimension of markers in mm
-ARUCO_DICT = aru.DICT_4X4_50 # 4 cols, 4 rows, 50 pcs
+class CameraPose():
+	"""
+		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
+		@type str
+		@param invert_pose Invert detected marker pose 
+		@type bool
+		@param vis Show detection images
+		@type bool
+		@param filter_type
+		@type str
+		@param filter_steps
+		@type int
+		@param f_ctrl
+		@type
+		@param use_aruco
+		@type bool
 
-def focalMM_to_focalPixel( focalMM, pixelPitch ):
-    f = focalMM / pixelPitch
-    return f
+	"""
 
-def saveArucoImgMatrix(aruco_dict: dict, show: bool=False):
-	"""Aligns the markers in a mxn matrix where m >= n ."""
+	FONT_THCKNS = 2
+	FONT_SCALE = 0.5
+	FONT_CLR =  (255,0,0)
+	TXT_OFFSET = 50
+	
+	def __init__(self,
+			  				marker_length: float=0.010,
+							camera_ns: Optional[str]='',
+							invert_pose: Optional[bool]=False,
+							vis :Optional[bool]=True,
+							use_reconfigure: Optional[bool]=False,
+							filter_type: Optional[str]='none',
+							f_ctrl: Optional[int]=30,
+							invert_perspective: Optional[bool]=False,
+							use_aruco: Optional[bool]=False,
+							) -> None:
+		
+		self.vis = vis
+		self.f_loop = f_ctrl
+		self.invert_pose = invert_pose
+		self.invert_perspective = invert_perspective
+		self.img_topic = camera_ns + '/image_raw'
+		self.bridge = cv_bridge.CvBridge()
+		# load marker poses
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/marker_poses.yml")
+		with open(fl, 'r') as fr:
+			self.marker_table_poses = yaml.safe_load(fr)
+		# init detector
+		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
+		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
+		if use_aruco:
+			self.det = ArucoDetector(marker_length=marker_length, 
+															K=rgb_info.K, 
+															D=rgb_info.D,
+															f_ctrl=f_ctrl,
+															filter_type=filter_type)
+		else:
+			self.det = AprilDetector(marker_length=marker_length, 
+															K=rgb_info.K, 
+															D=rgb_info.D,
+															f_ctrl=f_ctrl,
+															filter_type=filter_type)
+		if vis:
+			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
+		if use_reconfigure:
+			print("Using reconfigure server")
+			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+		
+	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray, axis_angle: bool=True) -> tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
+		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
+		mat, _ = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
+		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
+		inv_rvec = R.from_matrix(mat)
+		inv_rvec = inv_rvec.as_euler('xyz')
+		inv_tvec = -mat @ tvec # -R^-1*d
+		return np.array(inv_tvec.flat), inv_rvec.flatten()
+	
+	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
+			pos_txt = "X: {:.4f} Y:  {:.4f} Z:  {:.4f}".format(trans[0], trans[1], trans[2])
+			ori_txt = "R: {:.4f} P:  {:.4f} Y:  {:.4f}".format(rot[0], rot[1], rot[2])
+			x_max = int(np.max(corners[:, 0]))
+			y_max = int(np.max(corners[:, 1]))
+			y_min = int(np.min(corners[:, 1]))
+			x_offset = 0 if x_max <= img.shape[1]/2 else -int(len(pos_txt)*20*self.FONT_SCALE)
+			y_offset1 = self.TXT_OFFSET if y_max <= img.shape[0]/2 else -self.TXT_OFFSET-(y_max-y_min)
+			y_offset2 = y_offset1 + int(self.FONT_SCALE*50) if y_offset1 > 0 else y_offset1 - int(self.FONT_SCALE*50)
+			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+		
+	def run(self) -> None:
+		cnt = 0
+		rate = rospy.Rate(self.f_loop)
+		try:
+			while not rospy.is_shutdown():
+					cnt+=1
+					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+					
+					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img)
+					if self.vis:
+						# frame counter
+						cv2.putText(det_img, str(cnt), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+						for _, vec in marker_poses.items():
+							# vec['frot'] = np.array([np.pi, 0, np.pi*0.5])
+							(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
+							self.labelDetection(det_img, trans, rot, vec['corners'])
+						cv2.imshow('Processed', proc_img)
+						cv2.imshow('Detection', det_img)
+						if cv2.waitKey(1) == ord("q"):
+							break
+					
+					try:
+						rate.sleep()
+					except:
+						pass
 
-	# matrix
-	n = int(np.sqrt(NUM_MARKERS))  # cols
-	residual = NUM_MARKERS - np.square(n)
-	m = n + residual//n + (1 if residual%n > 0 else 0) # rows
-
-	# entries
-	v_border = np.ones((MARKER_SIZE, MARKER_SIZE))*255 # white vertical spacing = 1 *marker size
-	v_border[:, 1] = v_border[:, -2] = [MARKER_SIZE*30] # add grey border lines
-	h_border = np.ones((MARKER_SIZE, (2*n*MARKER_SIZE) + MARKER_SIZE))*255 # white horizontal spacing = n * (marker size + v_border size) + v_border size
-	h_border[1, :] = h_border[-2, :] = [MARKER_SIZE*30] # add horizontal grey border lines
-	h_border[:, 1::2*MARKER_SIZE] = h_border[:, MARKER_SIZE-2::2*MARKER_SIZE] = [MARKER_SIZE*30]  # add vertical grey border lines
-	rows = v_border.copy()
-	matrix = h_border.copy()
-
-	# draw
-	idx = 0
-	print("Order of ", NUM_MARKERS, " Aruco markers:")
-	print("-"*NUM_MARKERS)
-	# cols
-	for _ in range(m):
-			# rows
-			for _ in range(n):
-				print(idx, " ", end="") if idx < NUM_MARKERS else print("pad ", end="")
-				aruco_img = aru.generateImageMarker(aruco_dict, idx, MARKER_SIZE) if idx < NUM_MARKERS else v_border
-				rows = np.hstack((rows, aruco_img, v_border))
-				idx += 1
-			matrix = np.vstack((matrix, rows, h_border))
-			rows = v_border.copy()
-			print()
-	print("-"*NUM_MARKERS)
-	print("Scaling by factor ", MARKER_SCALING)
-
-	# resize and save
-	matrix = cv2.resize(matrix, None, fx=MARKER_SCALING, fy=MARKER_SCALING, interpolation= cv2.INTER_AREA)
-	cv2.imwrite(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/aruco_matrix_scale_" + str(MARKER_SCALING) + ".png"),  matrix)
-	if show:
-		cv2.imshow("matrix", matrix)
-		if cv2.waitKey(0) == ord("q"):
+		except Exception as e:
+			rospy.logerr(e)
+		finally:
 			cv2.destroyAllWindows()
 
-aruco_dict = aru.getPredefinedDictionary(ARUCO_DICT)
-# saveArucoImgMatrix(aruco_dict)
-det_params = aru.DetectorParameters()
-print(det_params)
-aruco_det = aru.ArucoDetector(aruco_dict, det_params)
-
-# https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
-# cv::SOLVEPNP_IPPE_SQUARE Special case suitable for marker pose estimation. 
-# Number of input points must be 4. Object points must be defined in the following order:
-#     point 0: [-squareLength / 2, squareLength / 2, 0]
-#     point 1: [ squareLength / 2, squareLength / 2, 0]
-#     point 2: [ squareLength / 2, -squareLength / 2, 0]
-#     point 3: [-squareLength / 2, -squareLength / 2, 0]
-obj_points = np.zeros((4, 3), dtype=np.float32)
-obj_points[0,:] = np.array([-MARKER_LENGTH/2, MARKER_LENGTH/2, 0])
-obj_points[1,:] = np.array([MARKER_LENGTH/2, MARKER_LENGTH/2, 0])
-obj_points[2,:] = np.array([MARKER_LENGTH/2, -MARKER_LENGTH/2, 0])
-obj_points[3,:] = np.array([-MARKER_LENGTH/2, -MARKER_LENGTH/2, 0])
-
-def main():
-	rospy.init_node('RH8D_dataset_collector')
-	t_total = 0
-	it_total = 0
-	rate = rospy.Rate(30)
-	try:
-		while not rospy.is_shutdown():
-				rgb_info = rospy.wait_for_message('marker_realsense/color/camera_info', sensor_msgs.msg.CameraInfo, 10)
-				rgb = rospy.wait_for_message('marker_realsense/color/image_raw', sensor_msgs.msg.Image)
-				raw_img = camera_cv_bridge.imgmsg_to_cv2(rgb, 'bgr8')
-				img_cpy = np.copy(raw_img)
-				stamp = rgb.header.stamp
-				frame_id = rgb.header.frame_id
-				raw_img_size = (raw_img.shape[1], raw_img.shape[0])
-				
-				marker_poses = {}
-				tick = cv2.getTickCount()
-				(corners, ids, rejected) = aruco_det.detectMarkers(raw_img)
-				if len(corners) > 0:
-					ids = ids.flatten()
-					for id, corner in zip(ids, corners):
-						corner_reshaped = corner.reshape(4,2)
-						cmx = np.asanyarray(rgb_info.K).reshape(3,3)
-						dist =  np.asanyarray(rgb_info.D)
-						# estimate camera pose relative to the marker using the unit provided by obj_points
-						(res, rvec, tvec) = cv2.solvePnP(obj_points, corner_reshaped, cmx, dist, flags=cv2.SOLVEPNP_IPPE_SQUARE)
-						if res:
-							np_rodrigues = np.asarray(rvec[:,:], np.float64)
-							rmat = cv2.Rodrigues(np_rodrigues)[0]
-							camera_position = -np.matrix(rmat).T @ np.matrix(tvec)
-							r = Rotation.from_rotvec([rvec[0][0],rvec[1][0],rvec[2][0]])
-							rot = r.as_euler('xyz', degrees=True)
-							rx = round(180-rot[0],5) 
-							ry = round(rot[1],5) 
-							rz = round(rot[2],5) 
-							tx = camera_position[0][0]
-							ty = camera_position[1][0]
-							tz = camera_position[2][0]
-							marker_poses.update({id: {'rvec': rvec, 'tvec': tvec, 'rpy': [rx, ry, rz], 'xyz': [tx, ty, tz]}})
-
-					t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
-					t_total += t_current
-					it_total += 1
-					if it_total % 30 == 0:
-						print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * t_total / it_total))
-
-				else:
-					rospy.logwarn_throttle(10, "No marker found")
-				# print(marker_poses)
-				
-				out_img = aru.drawDetectedMarkers(img_cpy, corners, ids)
-				if marker_poses:
-					for id, pose in marker_poses.items():
-						out_img = cv2.drawFrameAxes(out_img, cmx, dist, pose['rvec'], pose['tvec'], MARKER_LENGTH*1.5, 2)
-
-# #Test the solvePnP by projecting the 3D Points to camera
-# projPoints = cv2.projectPoints(points_3D, rvecs, tvecs, K, distCoeffs)[0]
-# for p in points_2D:
-#  cv2.circle(im, (int(p[0]), int(p[1])), 3, (0,255,0), -1)
-# for p in projPoints:
-#  cv2.circle(im, (int(p[0][0]), int(p[0][1])), 3, (255,0,0), -1)
-# cv2.imshow("image", im)
-# cv2.waitKey(0)
-
-				cv2.imshow('im_out', out_img)
-				if cv2.waitKey(1) == ord("q"):
-					break				
-
-				try:
-					rate.sleep()
-				except:
-					pass
-	finally:
-	    cv2.destroyAllWindows()
-
+def main() -> None:
+	rospy.init_node('dataset_collector')
+	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', ''),
+							 marker_length=rospy.get_param('~marker_length', 0.010),
+							 invert_pose=rospy.get_param('~invert_pose', False),
+							 use_reconfigure=rospy.get_param('~use_reconfigure', False),
+							 vis=rospy.get_param('~vis', True),
+							 filter_type=rospy.get_param('~filter', 'none'),
+							 f_ctrl=rospy.get_param('~f_ctrl', 30),
+							 use_aruco=rospy.get_param('~use_aruco', False),
+			).run()
+	
 if __name__ == "__main__":
 	main()
-
-# /camera_info
-# header:
-#   seq: 45
-#   stamp:
-#     secs: 1724064207
-#     nsecs: 449997425
-#   frame_id: "marker_realsense_color_optical_frame"
-# height: 1080
-# width: 1920
-# distortion_model: "plumb_bob"
-
-# The distortion parameters, size depending on the distortion model.
-# For "plumb_bob", the 5 parameters are: (k1, k2, t1, t2, k3).
-# D: [0.0, 0.0, 0.0, 0.0, 0.0]
-
-# Intrinsic camera matrix for the raw (distorted) images.
-#        [fx  0 cx]
-# K = [ 0 fy cy]
-#        [ 0  0  1]
-# Projects 3D points in the camera coordinate frame to 2D pixel
-# coordinates using the focal lengths (fx, fy) and principal point (cx, cy).
-# K: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0]
-
-# Rectification matrix (stereo cameras only)
-# R: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
-
-# Projection/camera matrix
-#        [fx'  0  cx' Tx]
-# P = [ 0  fy' cy' Ty]
-#        [ 0   0   1   0]
-# By convention, this matrix specifies the intrinsic (camera) matrix
-#  of the processed (rectified) image. That is, the left 3x3 portion
-#  is the normal camera intrinsic matrix for the rectified image.
-# It projects 3D points in the camera coordinate frame to 2D pixel
-#  coordinates using the focal lengths (fx', fy') and principal point
-#  (cx', cy') - these may differ from the values in K.
-# For monocular cameras, Tx = Ty = 0. Normally, monocular cameras will
-#  also have R = the identity and P[1:3,1:3] = K.
-# Given a 3D point [X Y Z]', the projection (x, y) of the point onto
-#  the rectified image is given by:
-#  [u v w]' = P * [X Y Z 1]'
-#         x = u / w
-#         y = v / w
-#  This holds for both images of a stereo pair.
-# P: [1396.5938720703125, 0.0, 944.5514526367188, 0.0, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 0.0, 1.0, 0.0]
-
-# Binning refers here to any camera setting which combines rectangular
-#  neighborhoods of pixels into larger "super-pixels." It reduces the
-#  resolution of the output image to
-#  (width / binning_x) x (height / binning_y).
-# The default values binning_x = binning_y = 0 is considered the same
-#  as binning_x = binning_y = 1 (no subsampling).
-# binning_x: 0
-# binning_y: 0
-
-# Region of interest (subwindow of full camera resolution), given in
-#  full resolution (unbinned) image coordinates. A particular ROI
-#  always denotes the same window of pixels on the camera sensor,
-#  regardless of binning settings.
-# The default setting of roi (all values 0) is considered the same as
-#  full resolution (roi.width = width, roi.height = height).
-# roi:
-#   x_offset: 0
-#   y_offset: 0
-#   height: 0
-#   width: 0
-#   do_rectify: False
-# ---
-
-# rs-enumerate-devices -c
-# Device info:
-# Name                          :     Intel RealSense D415
-# Serial Number                 :     822512060411
-# ...
-#   Width:        1920
-#   Height:       1080
-#   PPX:          944.551452636719
-#   PPY:          547.094909667969
-#   Fx:           1396.59387207031
-#   Fy:           1395.52648925781
-#   Distortion:   Inverse Brown Conrady
-#   Coeffs:       0       0       0       0       0
-#   FOV (deg):    69 x 42.31

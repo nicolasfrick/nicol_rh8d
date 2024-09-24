@@ -23,6 +23,11 @@ $ conda create -n $ENV python=$PYTHON
 $ conda activate $ENV
 $ conda install -c pytorch numpy=1.22 cudatoolkit=10.2 pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 torchtext==0.13.1 'libtiff<4.5'
 
+## OpenCV
+as described in https://pypi.org/project/opencv-python/: To use the new manylinux2014 pre-built wheels (or to build from source), your pip version must be >= 19.3 (otherwise imports of cv static libraries coming with opencv-python may fail)
+$ pip install --upgrade pip
+$ pip install opencv-contrib-python==4.10.0.84
+
 ## OpenMM
 $ pip install --upgrade openmim
 $ mim install 'mmtrack<1' 'mmpose<1' 'mmdet<3' mmcls 'mmcv-full<1.7'
