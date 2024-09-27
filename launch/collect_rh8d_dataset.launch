@@ -19,6 +19,7 @@
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
+	<arg name="plot_id" default="-1" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
@@ -100,6 +101,7 @@
 		<param name="filter" value="$(arg filter)" />
 		<param name="f_ctrl" value="$(arg fps)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
+		<param name="plot_id" value="$(arg plot_id)" />
 	</node>
 
 </launch>

@@ -10,11 +10,13 @@ import numpy as np
 import sensor_msgs.msg
 from typing import Optional, Any, Tuple
 import dynamic_reconfigure.server
+from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation as R
 from geometry_msgs.msg import PoseStamped
 from tf2_geometry_msgs import PointStamped
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
+from plot_record import *
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from aruco_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
@@ -38,9 +40,11 @@ class CameraPose():
 		@param filter_steps
 		@type int
 		@param f_ctrl
-		@type
+		@type float
 		@param use_aruco
 		@type bool
+		@param plt_id
+		@type int
 
 	"""
 
@@ -59,18 +63,22 @@ class CameraPose():
 							f_ctrl: Optional[int]=30,
 							invert_perspective: Optional[bool]=False,
 							use_aruco: Optional[bool]=False,
+							plt_id: Optional[int]=-1,
 							) -> None:
 		
 		self.vis = vis
+		self.plt_id = plt_id
 		self.f_loop = f_ctrl
 		self.invert_pose = invert_pose
 		self.invert_perspective = invert_perspective
 		self.img_topic = camera_ns + '/image_raw'
 		self.bridge = cv_bridge.CvBridge()
+
 		# load marker poses
-		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/aruco/marker_poses.yml")
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
 		with open(fl, 'r') as fr:
 			self.marker_table_poses = yaml.safe_load(fr)
+
 		# init detector
 		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
 		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
@@ -86,10 +94,16 @@ class CameraPose():
 															D=rgb_info.D,
 															f_ctrl=f_ctrl,
 															filter_type=filter_type)
+			
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
+			if plt_id > -1:
+				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
+				setPosePlot()
+
+		# dynamic reconfigure
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
@@ -102,6 +116,32 @@ class CameraPose():
 		inv_rvec = inv_rvec.as_euler('xyz')
 		inv_tvec = -mat @ tvec # -R^-1*d
 		return np.array(inv_tvec.flat), inv_rvec.flatten()
+
+	def pose2Matrix(self, translation, euler):
+		transformation_matrix = np.eye(4)
+		transformation_matrix[:3, :3] = R.from_euler('xyz', euler).as_matrix()
+		transformation_matrix[:3, 3] = translation
+		return transformation_matrix
+
+	def residuals(self, camera_pose, tag_poses, detected_poses):
+		"""Compute the residual (error) between world and detected poses."""
+		camera_mat = self.pose2Matrix(camera_pose[:3], camera_pose[3:])
+		error = []
+		root = tag_poses.get('root')
+		root_mat = self.pose2Matrix(root['xyz'], root['rpy']) if root is not None else np.eye(4)
+		for id, tag_pose in tag_poses.items():
+			det = detected_poses.get(id)
+			if det is not None:
+				tag_mat = self.pose2Matrix(tag_pose['xyz'], tag_pose['rpy'])
+				T_world_tag = root_mat @ tag_mat
+				det_mat = self.pose2Matrix(det['xyz'], det['rpy'])
+				T_world_estimated_tag = camera_mat @ det_mat
+				
+				# Compare with the actual world pose
+				error.append(np.linalg.norm(T_world_estimated_tag[:3, 3] - T_world_tag[:3, 3]))  # Position error
+				error.append(np.linalg.norm(T_world_estimated_tag[:3, :3] - T_world_tag[:3, :3]))  # Orientation error
+		
+		return np.hstack(error)
 	
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
 			pos_txt = "X: {:.4f} Y:  {:.4f} Z:  {:.4f}".format(trans[0], trans[1], trans[2])
@@ -123,6 +163,7 @@ class CameraPose():
 		
 	def run(self) -> None:
 		cnt = 0
+		initial_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
 		try:
 			while not rospy.is_shutdown():
@@ -131,14 +172,31 @@ class CameraPose():
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
 					res_img = raw_img.copy()
 
+					# detect markers
+					detected_poses = {}
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
+
+					for id, vec in marker_poses.items():
+						# get filtered translation and orientation 
+						(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
+						detected_poses.update({id: {'xyz': trans, 'rpy': rot}})
+
+						if self.vis:
+							# label pose
+							self.labelDetection(res_img, id, trans, rot, vec['corners'])
+							# plot pose by id
+							if id == self.plt_id and cnt > 10:
+								cv2.imshow('Plot', cv2.cvtColor(visPose(trans, R.from_euler('xyz', rot).as_matrix(), rot, cnt, cla=True), cv2.COLOR_RGBA2BGR))
+					
+					res = least_squares(self.residuals, initial_camera_pose, args=(self.marker_table_poses, detected_poses))
+					if res.success:
+						opt_cam_pose = res.x
+						status = res.status 
+						print(f"Result: {status}, pose: {opt_cam_pose}")
+
 					if self.vis:
 						# frame counter
 						cv2.putText(det_img, str(cnt), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-						for id, vec in marker_poses.items():
-							# vec['frot'] = np.array([np.pi, 0, np.pi*0.5])
-							(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
-							self.labelDetection(res_img, id, trans, rot, vec['corners'])
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						cv2.imshow('Result', res_img)
@@ -165,6 +223,7 @@ def main() -> None:
 							 filter_type=rospy.get_param('~filter', 'none'),
 							 f_ctrl=rospy.get_param('~f_ctrl', 30),
 							 use_aruco=rospy.get_param('~use_aruco', False),
+							 plt_id=rospy.get_param('~plot_id', -1),
 			).run()
 	
 if __name__ == "__main__":
