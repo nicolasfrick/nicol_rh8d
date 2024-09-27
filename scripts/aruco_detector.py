@@ -77,6 +77,7 @@ class MarkerDetectorBase():
 		self.dist =  np.asanyarray(D)
 		self.t_total = 0
 		self.it_total = 0
+		self._genSquarePoints(marker_length)
 
 	def setDetectorParams(self, config: Any, level: int) -> Any:
 		with self.params_lock:
@@ -104,6 +105,10 @@ class MarkerDetectorBase():
 		if f is not None:
 			return f.est_rotation_as_euler
 		return None
+	
+	@property
+	def square_points(self) -> np.ndarray:
+		return self.obj_points
 	
 	def _genSquarePoints(self, length: float) -> np.ndarray:
 		"""
@@ -224,7 +229,6 @@ class AprilDetector(MarkerDetectorBase):
 		self.debug = debug
 		self.params_change = False
 		self.camera_params = (K[0], K[4], K[2], K[5])
-		self._genSquarePoints(marker_length)
 		self._printSettings()
 
 	def _printSettings(self) -> None:

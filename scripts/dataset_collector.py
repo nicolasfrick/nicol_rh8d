@@ -117,13 +117,13 @@ class CameraPose():
 		inv_tvec = -mat @ tvec # -R^-1*d
 		return np.array(inv_tvec.flat), inv_rvec.flatten()
 
-	def pose2Matrix(self, translation, euler):
+	def pose2Matrix(self, translation: np.ndarray, euler: np.ndarray) -> np.ndarray:
 		transformation_matrix = np.eye(4)
 		transformation_matrix[:3, :3] = R.from_euler('xyz', euler).as_matrix()
 		transformation_matrix[:3, 3] = translation
 		return transformation_matrix
 
-	def residuals(self, camera_pose, tag_poses, detected_poses):
+	def residuals(self, camera_pose:  np.ndarray, tag_poses: dict, detected_poses: dict) -> np.ndarray:
 		"""Compute the residual (error) between world and detected poses."""
 		camera_mat = self.pose2Matrix(camera_pose[:3], camera_pose[3:])
 		error = []
@@ -136,12 +136,28 @@ class CameraPose():
 				T_world_tag = root_mat @ tag_mat
 				det_mat = self.pose2Matrix(det['xyz'], det['rpy'])
 				T_world_estimated_tag = camera_mat @ det_mat
-				
-				# Compare with the actual world pose
 				error.append(np.linalg.norm(T_world_estimated_tag[:3, 3] - T_world_tag[:3, 3]))  # Position error
 				error.append(np.linalg.norm(T_world_estimated_tag[:3, :3] - T_world_tag[:3, :3]))  # Orientation error
-		
+
 		return np.hstack(error)
+	
+	def reprojectionError(self, det_corners: np.ndarray, proj_corners: np.ndarray) -> float:
+		error = np.linalg.norm(det_corners - proj_corners, axis=1)
+		return np.mean(error)
+	
+	def projectMarker(self, img: cv2.typing.MatLike, square_points: np.ndarray, cam_trans: np.ndarray, cam_rot: np.ndarray, cmx: np.ndarray, dist: np.ndarray) -> np.ndarray:
+		projected_corners, _ = cv2.projectPoints(square_points, cam_rot, cam_trans, cmx, dist)
+		projected_corners = np.int32(projected_corners).reshape(-1, 2)
+		cv2.polylines(img, [projected_corners], isClosed=True, color=self.det.GREEN, thickness=2)
+		return projected_corners
+	
+	def markerWorldCorners(self, marker_corners: np.ndarray, marker_pose: np.ndarray) -> np.ndarray:
+		""" Transform local marker corners into world frame using known marker pose"""
+		mat = self.pose2Matrix(marker_pose['xyz'], marker_pose['rpy'])
+		homog_corners = np.hstack((marker_corners, np.ones((marker_corners.shape[0], 1))))
+		world_corners = mat @ homog_corners.T
+		world_corners = world_corners.T 
+		return world_corners[:, :3]
 	
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
 			pos_txt = "X: {:.4f} Y:  {:.4f} Z:  {:.4f}".format(trans[0], trans[1], trans[2])
@@ -155,7 +171,7 @@ class CameraPose():
 			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 
-	def labelDetection(self, img: cv2.typing.MatLike, id: int, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
+	def labelDetection(self, img: cv2.typing.MatLike, id: int, trans: np.ndarray, rot: np.ndarray) -> None:
 			pos_txt = "{} X: {:.4f} Y: {:.4f} Z: {:.4f} R: {:.4f} P: {:.4f} Y: {:.4f}".format(id, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2])
 			xpos = self.TXT_OFFSET
 			ypos = (id+1)*self.TXT_OFFSET
@@ -175,24 +191,29 @@ class CameraPose():
 					# detect markers
 					detected_poses = {}
 					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-
 					for id, vec in marker_poses.items():
 						# get filtered translation and orientation 
 						(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
 						detected_poses.update({id: {'xyz': trans, 'rpy': rot}})
 
 						if self.vis:
-							# label pose
-							self.labelDetection(res_img, id, trans, rot, vec['corners'])
+							# label marker pose
+							self.labelDetection(res_img, id, trans, rot)
 							# plot pose by id
 							if id == self.plt_id and cnt > 10:
 								cv2.imshow('Plot', cv2.cvtColor(visPose(trans, R.from_euler('xyz', rot).as_matrix(), rot, cnt, cla=True), cv2.COLOR_RGBA2BGR))
 					
+					# estimate cam pose
 					res = least_squares(self.residuals, initial_camera_pose, args=(self.marker_table_poses, detected_poses))
 					if res.success:
 						opt_cam_pose = res.x
 						status = res.status 
-						print(f"Result: {status}, pose: {opt_cam_pose}")
+						self.labelDetection(res_img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
+						world_corners = self.markerWorldCorners(self.det.square_points, self.marker_table_poses[0])
+						proj_corners = self.projectMarker(res_img, world_corners,opt_cam_pose[:3], opt_cam_pose[3:], self.det.cmx, self.det.dist)
+						err = self.reprojectionError(marker_poses[0]['corners'], proj_corners)
+						print(f"Result: {status}, pose: {opt_cam_pose}, reprojection error: {err}")
+						initial_camera_pose = opt_cam_pose
 
 					if self.vis:
 						# frame counter
