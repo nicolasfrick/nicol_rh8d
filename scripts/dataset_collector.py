@@ -136,11 +136,8 @@ class CameraPose():
 				T_world_tag = root_mat @ tag_mat
 				det_mat = self.pose2Matrix(det['xyz'], det['rpy'])
 				T_world_estimated_tag = camera_mat @ det_mat
-				
-				# Compare with the actual world pose
-				error.append(np.linalg.norm(T_world_estimated_tag[:3, 3] - T_world_tag[:3, 3]))  # Position error
-				error.append(np.linalg.norm(T_world_estimated_tag[:3, :3] - T_world_tag[:3, :3]))  # Orientation error
-		
+				error.append(np.linalg.norm(T_world_estimated_tag[:3, 3] - T_world_tag[:3, 3]))  # position error
+				error.append(np.linalg.norm(T_world_estimated_tag[:3, :3] - T_world_tag[:3, :3]))  # orientation error
 		return np.hstack(error)
 	
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
@@ -188,11 +185,12 @@ class CameraPose():
 							if id == self.plt_id and cnt > 10:
 								cv2.imshow('Plot', cv2.cvtColor(visPose(trans, R.from_euler('xyz', rot).as_matrix(), rot, cnt, cla=True), cv2.COLOR_RGBA2BGR))
 					
-					res = least_squares(self.residuals, initial_camera_pose, args=(self.marker_table_poses, detected_poses))
-					if res.success:
-						opt_cam_pose = res.x
-						status = res.status 
-						print(f"Result: {status}, pose: {opt_cam_pose}")
+					if marker_poses:
+						res = least_squares(self.residuals, initial_camera_pose, args=(self.marker_table_poses, detected_poses))
+						if res.success:
+							opt_cam_pose = res.x
+							status = res.status 
+							print(f"Result: {status}, pose: {opt_cam_pose}")
 
 					if self.vis:
 						# frame counter
