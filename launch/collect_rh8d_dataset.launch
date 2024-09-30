@@ -33,7 +33,7 @@
 	<arg name="color_fps"           default="$(arg fps)"/>
 	<arg name="filters"                   default="colorizer"/>
 	<arg name="clip_distance"             default="-2"/>
-	<arg name="align_depth"               default="true"/>
+	<arg name="align_depth"               default="false"/>
 
 	<!-- webcam args -->
     <arg name="always_capture"                            default="true"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
@@ -50,13 +50,15 @@
     <arg name="attached"      default="false"/>
 	<arg name="launch_rviz"      default="false"/>
 
-	<!-- <include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
 		<arg name="theta"      value="$(arg theta)"/>
 		<arg name="x_dist"      value="$(arg x_dist)" />
 		<arg name="y_dist"      value="$(arg y_dist)" />
 		<arg name="z_dist"      value="$(arg z_dist)" />
-		<arg name="attached" value="$(arg attached)"/>
-	</include> -->
+		<arg name="attached" 	value="$(arg attached)"/>
+		<arg name="launch_rviz" value="$(arg launch_rviz)"/>
+		<arg name="tf_name" 	value="$(arg markers_camera_name)"/>
+	</include>
 
 	<!-- common manager -->
 	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="manager" args="manager" output="screen" required="true" />
