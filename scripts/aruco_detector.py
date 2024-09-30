@@ -189,6 +189,8 @@ class AprilDetector(MarkerDetectorBase):
 		
 		@param marker_family Type of Apriltag marker
 		@type str
+
+		The tag's coordinate frame is centered at the center of the tag, with x-axis to the right, y-axis down, and z-axis INTO the tag.
 													
 		Max detection distance in meters = t /(2 * tan( (b* f * p) / (2 * r ) ) )
 		t = size of your tag in meters
@@ -288,7 +290,7 @@ class AprilDetector(MarkerDetectorBase):
 					else:
 						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=detection.pose_R), self.f_ctrl)} )
 					# result
-					marker_poses.update({id: {'rvec': cv2.Rodrigues(detection.pose_R)[0], 
+					marker_poses.update({id: {'rvec': cv2.Rodrigues(detection.pose_R)[0].flatten(), 
 							   											'rot_mat': detection.pose_R,
 							   											'tvec': tvec, 
 																		'points': self.obj_points, 
@@ -314,6 +316,8 @@ class AprilDetector(MarkerDetectorBase):
 
 class ArucoDetector(MarkerDetectorBase):
 	"""Detect Aruco marker from an image.
+
+		The tag's coordinate frame is centered at the center of the tag, with x-axis to the right, y-axis up, and z-axis OUT OF the tag.
 
 		@param dict_type:  type of the aruco dictionary out of ARUCO_DICT, loaded if no yaml path provided
 		@type  str

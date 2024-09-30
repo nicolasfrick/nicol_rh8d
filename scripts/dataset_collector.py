@@ -45,6 +45,8 @@ class CameraPose():
 		@type bool
 		@param plt_id
 		@type int
+		@param err_term
+		@type float
 
 	"""
 
@@ -64,19 +66,21 @@ class CameraPose():
 							invert_perspective: Optional[bool]=False,
 							use_aruco: Optional[bool]=False,
 							plt_id: Optional[int]=-1,
+							err_term: Optional[float]=1e-8,
 							) -> None:
 		
 		self.vis = vis
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
+		self.err_term = err_term
 		self.invert_pose = invert_pose
 		self.invert_perspective = invert_perspective
 		self.img_topic = camera_ns + '/image_raw'
 		self.bridge = cv_bridge.CvBridge()
 
 		# load marker poses
-		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
-		with open(fl, 'r') as fr:
+		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
+		with open(self.fl, 'r') as fr:
 			self.marker_table_poses = yaml.safe_load(fr)
 
 		# init detector
@@ -122,6 +126,13 @@ class CameraPose():
 		transformation_matrix[:3, :3] = R.from_euler('xyz', euler).as_matrix()
 		transformation_matrix[:3, 3] = translation
 		return transformation_matrix
+	
+	def tagWorldCorners(self, world_tag_tf: np.ndarray, tag_corners: np.ndarray) -> np.ndarray:
+		"""Transform marker corners to world frame""" 
+		homog_corners = np.hstack((tag_corners, np.ones((tag_corners.shape[0], 1))))
+		world_corners = world_tag_tf @ homog_corners.T
+		world_corners = world_corners.T 
+		return world_corners[:, :3]
 
 	def residuals(self, camera_pose:  np.ndarray, tag_poses: dict, detected_poses: dict) -> np.ndarray:
 		"""Compute the residual (error) between world and detected poses."""
@@ -149,14 +160,11 @@ class CameraPose():
 		root = tag_poses.get('root')
 		root_mat = self.pose2Matrix(root['xyz'], root['rpy']) if root is not None else np.eye(4)
 		for id, tag_pose in tag_poses.items():
+			# tf marker corners to world
 			tag_mat = self.pose2Matrix(tag_pose['xyz'], tag_pose['rpy'])
 			T_world_tag = root_mat @ tag_mat
-			# transform marker corners to world 
-			homog_corners = np.hstack((square_points, np.ones((square_points.shape[0], 1))))
-			world_corners = T_world_tag @ homog_corners.T
-			world_corners = world_corners.T 
-			world_corners = world_corners[:, :3]
-			# project corners
+			world_corners = self.tagWorldCorners(T_world_tag, square_points)
+			# project corners to image plane
 			projected_corners, _ = cv2.projectPoints(world_corners, cam_rot, cam_trans, cmx, dist)
 			projected_corners = np.int32(projected_corners).reshape(-1, 2)
 			cv2.polylines(img, [projected_corners], isClosed=True, color=self.det.GREEN, thickness=2)
@@ -185,8 +193,9 @@ class CameraPose():
 			cv2.putText(img, pos_txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
 	def run(self) -> None:
+		err = np.inf
 		cnt = 0
-		initial_camera_pose = np.zeros(6)
+		est_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
 		try:
 			while not rospy.is_shutdown():
@@ -205,16 +214,16 @@ class CameraPose():
 					
 					# estimate cam pose
 					if detected_poses:
-						res = least_squares(self.residuals, initial_camera_pose, args=(self.marker_table_poses, detected_poses))
+						res = least_squares(self.residuals, est_camera_pose, args=(self.marker_table_poses, detected_poses))
 						if res.success:
 							opt_cam_pose = res.x
 							status = res.status 
-							# label pose
+							# put pose label
 							self.labelDetection(res_img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
 							# reproject markers
 							err = self.projectMarkers(res_img, self.det.square_points, marker_poses, self.marker_table_poses, opt_cam_pose[:3], opt_cam_pose[3:], self.det.cmx, self.det.dist)
 							print(f"Result: {status}\ncamera world pose: {opt_cam_pose}\nreprojection error: {err}\n")
-							initial_camera_pose = opt_cam_pose
+							est_camera_pose = opt_cam_pose
 
 					if self.vis:
 						# frame counter
@@ -235,6 +244,13 @@ class CameraPose():
 						rate.sleep()
 					except:
 						pass
+					
+					# exit
+					if err <= self.err_term:
+						print("Final pose est:", est_camera_pose)
+						with open(self.fl, 'w') as fw:
+							yaml.dump(self.marker_table_poses, fw)
+						break
 
 		except Exception as e:
 			rospy.logerr(e)
