@@ -18,7 +18,7 @@ import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
 from plot_record import *
 from nicol_rh8d.cfg import ArucoDetectorConfig
-from aruco_detector import ArucoDetector, AprilDetector
+from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 		# buf = tf2_ros.Buffer()
