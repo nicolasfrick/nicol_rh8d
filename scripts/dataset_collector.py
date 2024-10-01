@@ -26,13 +26,17 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 					# stamp = rgb.header.stamp
 					# frame_id = rgb.header.frame_id
 					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
+					
+class CameraPoseBase():
+	
+	def __init__(self) -> None:
+		pass
+
 
 class CameraPose():
 	"""
 		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
 		@type str
-		@param invert_pose Invert detected marker pose 
-		@type bool
 		@param vis Show detection images
 		@type bool
 		@param filter_type
@@ -58,12 +62,10 @@ class CameraPose():
 	def __init__(self,
 			  				marker_length: float=0.010,
 							camera_ns: Optional[str]='',
-							invert_pose: Optional[bool]=False,
 							vis :Optional[bool]=True,
 							use_reconfigure: Optional[bool]=False,
 							filter_type: Optional[str]='none',
 							f_ctrl: Optional[int]=30,
-							invert_perspective: Optional[bool]=False,
 							use_aruco: Optional[bool]=False,
 							plt_id: Optional[int]=-1,
 							err_term: Optional[float]=1e-8,
@@ -73,8 +75,6 @@ class CameraPose():
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
 		self.err_term = err_term
-		self.invert_pose = invert_pose
-		self.invert_perspective = invert_perspective
 		self.img_topic = camera_ns + '/image_raw'
 		self.bridge = cv_bridge.CvBridge()
 
@@ -91,18 +91,19 @@ class CameraPose():
 															K=rgb_info.K, 
 															D=rgb_info.D,
 															f_ctrl=f_ctrl,
+															invert_pose=False,
 															filter_type=filter_type)
 		else:
 			self.det = AprilDetector(marker_length=marker_length, 
 															K=rgb_info.K, 
 															D=rgb_info.D,
 															f_ctrl=f_ctrl,
+															invert_pose=False,
 															filter_type=filter_type)
 			
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
-			cv2.namedWindow("Result", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
 				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 				setPosePlot()
@@ -111,19 +112,13 @@ class CameraPose():
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
-		
-	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray, axis_angle: bool=True) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
-		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
-		mat, _ = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
-		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
-		inv_rvec = R.from_matrix(mat)
-		inv_rvec = inv_rvec.as_euler('xyz')
-		inv_tvec = -mat @ tvec # -R^-1*d
-		return np.array(inv_tvec.flat), inv_rvec.flatten()
+	
+	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
+		return R.from_euler('xyz', euler).as_matrix()
 
 	def pose2Matrix(self, translation: np.ndarray, euler: np.ndarray) -> np.ndarray:
 		transformation_matrix = np.eye(4)
-		transformation_matrix[:3, :3] = R.from_euler('xyz', euler).as_matrix()
+		transformation_matrix[:3, :3] = self.euler2Matrix(euler)
 		transformation_matrix[:3, 3] = translation
 		return transformation_matrix
 	
@@ -134,18 +129,22 @@ class CameraPose():
 		world_corners = world_corners.T 
 		return world_corners[:, :3]
 
-	def residuals(self, camera_pose:  np.ndarray, tag_poses: dict, detected_poses: dict) -> np.ndarray:
-		"""Compute the residual (error) between world and detected poses."""
+	def residuals(self, camera_pose:  np.ndarray, tag_poses: dict, marker_poses: dict) -> np.ndarray:
+		"""Compute the residual (error) between world and detected poses.
+		Rotations are extr. xyz euler angles."""
 		camera_mat = self.pose2Matrix(camera_pose[:3], camera_pose[3:])
 		error = []
+		# tag root tf
 		root = tag_poses.get('root')
 		root_mat = self.pose2Matrix(root['xyz'], root['rpy']) if root is not None else np.eye(4)
 		for id, tag_pose in tag_poses.items():
-			det = detected_poses.get(id)
+			det = marker_poses.get(id)
 			if det is not None:
+				# given tag pose wrt world 
 				tag_mat = self.pose2Matrix(tag_pose['xyz'], tag_pose['rpy'])
 				T_world_tag = root_mat @ tag_mat
-				det_mat = self.pose2Matrix(det['xyz'], det['rpy'])
+				# estimated tag pose wrt camera frame12
+				det_mat = self.pose2Matrix(det['ftrans'], det['frot'])
 				T_world_estimated_tag = camera_mat @ det_mat
 				error.append(np.linalg.norm(T_world_estimated_tag[:3, 3] - T_world_tag[:3, 3]))  # position error
 				error.append(np.linalg.norm(T_world_estimated_tag[:3, :3] - T_world_tag[:3, :3]))  # orientation error
@@ -155,25 +154,20 @@ class CameraPose():
 		error = np.linalg.norm(det_corners - proj_corners, axis=1)
 		return np.mean(error)
 	
-	def projectMarkers(self, img: cv2.typing.MatLike, square_points: np.ndarray, det_poses:dict, tag_poses:dict, cam_trans: np.ndarray, cam_rot: np.ndarray, cmx: np.ndarray, dist: np.ndarray) -> float:
+	def projectMarkers(self, img: cv2.typing.MatLike, square_points: np.ndarray, marker_poses:dict, cam_trans: np.ndarray, cam_rot: np.ndarray, cmx: np.ndarray, dist: np.ndarray) -> float:
 		err = 0
-		root = tag_poses.get('root')
-		root_mat = self.pose2Matrix(root['xyz'], root['rpy']) if root is not None else np.eye(4)
-		for id, tag_pose in tag_poses.items():
-			# tf marker corners to world
-			tag_mat = self.pose2Matrix(tag_pose['xyz'], tag_pose['rpy'])
-			T_world_tag = root_mat @ tag_mat
-			world_corners = self.tagWorldCorners(T_world_tag, square_points)
+		for id, det in marker_poses.items():
+			# tf marker corners to camera frame
+			T_cam_tag = self.pose2Matrix(det['ftrans'], det['frot'])
+			world_corners = self.tagWorldCorners(T_cam_tag, square_points)
 			# project corners to image plane
-			projected_corners, _ = cv2.projectPoints(world_corners, cam_rot, cam_trans, cmx, dist)
+			projected_corners, _ = cv2.projectPoints(world_corners, self.euler2Matrix(cam_rot), cam_trans, cmx, dist)
 			projected_corners = np.int32(projected_corners).reshape(-1, 2)
 			cv2.polylines(img, [projected_corners], isClosed=True, color=self.det.GREEN, thickness=2)
 			# reprojection error
-			det = det_poses.get(id)
-			if det is not None:
-				err += self.reprojectionError(det['corners'], projected_corners)
+			err += self.reprojectionError(marker_poses[id]['corners'], projected_corners)
 		return err
-	
+
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
 			pos_txt = "X: {:.4f} Y:  {:.4f} Z:  {:.4f}".format(trans[0], trans[1], trans[2])
 			ori_txt = "R: {:.4f} P:  {:.4f} Y:  {:.4f}".format(rot[0], rot[1], rot[2])
@@ -191,10 +185,24 @@ class CameraPose():
 			xpos = self.TXT_OFFSET
 			ypos = (id+1)*self.TXT_OFFSET
 			cv2.putText(img, pos_txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+
+	def estimatePose(self, img, err, est_camera_pose, marker_poses):
+		res = least_squares(self.residuals, est_camera_pose, args=(self.marker_table_poses, marker_poses))
+		if res.success:
+			opt_cam_pose = res.x
+			status = res.status 
+			# put pose label
+			self.labelDetection(img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
+			# reproject markers
+			reserr = self.projectMarkers(img, self.det.square_points, marker_poses, opt_cam_pose[:3], opt_cam_pose[3:], self.det.cmx, self.det.dist)
+			print(f"Result: {status}\ncamera world pose trans: {opt_cam_pose[:3]}, rot (extr. xyz euler): {opt_cam_pose[3:]}\nreprojection error: {reserr}\n")
+			return reserr, opt_cam_pose
+		print(f"Least squares failed: {res.status}")
+		return err, est_camera_pose
 		
 	def run(self) -> None:
-		err = np.inf
 		cnt = 0
+		err = np.inf
 		est_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
 		try:
@@ -202,41 +210,24 @@ class CameraPose():
 					cnt+=1
 					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-					res_img = raw_img.copy()
 
-					# detect markers
-					detected_poses = {}
-					(marker_poses, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-					for id, vec in marker_poses.items():
-						# invert filtered translation and orientation 
-						(trans, rot) = self.invPersp(vec['ftrans'], vec['frot'], axis_angle=False) if self.invert_perspective else (vec['ftrans'], vec['frot'])
-						detected_poses.update({id: {'xyz': trans, 'rpy': rot}})
-					
+					# detected markers 
+					(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
 					# estimate cam pose
-					if detected_poses:
-						res = least_squares(self.residuals, est_camera_pose, args=(self.marker_table_poses, detected_poses))
-						if res.success:
-							opt_cam_pose = res.x
-							status = res.status 
-							# put pose label
-							self.labelDetection(res_img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
-							# reproject markers
-							err = self.projectMarkers(res_img, self.det.square_points, marker_poses, self.marker_table_poses, opt_cam_pose[:3], opt_cam_pose[3:], self.det.cmx, self.det.dist)
-							print(f"Result: {status}\ncamera world pose: {opt_cam_pose}\nreprojection error: {err}\n")
-							est_camera_pose = opt_cam_pose
+					if marker_det:
+						(err, est_camera_pose) = self.estimatePose(det_img, err, est_camera_pose, marker_det)
 
 					if self.vis:
 						# frame counter
-						cv2.putText(det_img, str(cnt), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-						for id, pose in detected_poses.items():
+						cv2.putText(det_img, str(cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+						for id, det in marker_det.items():
 							# label marker pose
-							self.labelDetection(res_img, id, pose['xyz'], pose['rpy'])
+							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
 							if id == self.plt_id and cnt > 10:
-								cv2.imshow('Plot', cv2.cvtColor(visPose(pose['xyz'], R.from_euler('xyz', pose['rpy']).as_matrix(), pose['rpy'], cnt, cla=True), cv2.COLOR_RGBA2BGR))
+								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], self.euler2Matrix(det['frot']), det['frot'], cnt, cla=True), cv2.COLOR_RGBA2BGR))
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
-						cv2.imshow('Result', res_img)
 						if cv2.waitKey(1) == ord("q"):
 							break
 					
@@ -252,7 +243,7 @@ class CameraPose():
 							yaml.dump(self.marker_table_poses, fw)
 						break
 
-		except Exception as e:
+		except ValueError as e:
 			rospy.logerr(e)
 		finally:
 			cv2.destroyAllWindows()
@@ -261,7 +252,6 @@ def main() -> None:
 	rospy.init_node('dataset_collector')
 	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', ''),
 							 marker_length=rospy.get_param('~marker_length', 0.010),
-							 invert_pose=rospy.get_param('~invert_pose', False),
 							 use_reconfigure=rospy.get_param('~use_reconfigure', False),
 							 vis=rospy.get_param('~vis', True),
 							 filter_type=rospy.get_param('~filter', 'none'),
