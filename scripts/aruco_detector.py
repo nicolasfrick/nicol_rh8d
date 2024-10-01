@@ -35,6 +35,8 @@ class MarkerDetectorBase():
 		@type bool
 		@param filter_type Determine whether the detections are filtered and the type of filter
 		@type FilterTypes
+		@param invert_pose Invert detected marker pose 
+		@type bool
 	"""
 
 	RED = (0,0,255)
@@ -54,6 +56,7 @@ class MarkerDetectorBase():
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
+							invert_pose: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							) -> None:
 		
@@ -70,6 +73,7 @@ class MarkerDetectorBase():
 		self.print_stats = print_stats
 		self.marker_length = marker_length
 		self.filter_type = filter_type 
+		self.invert_perspective = invert_pose		
 		self.f_ctrl = f_ctrl
 		self.bbox = bbox
 		self.filters = {}
@@ -109,6 +113,19 @@ class MarkerDetectorBase():
 	@property
 	def square_points(self) -> np.ndarray:
 		return self.obj_points
+	
+	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray=None, axis_angle: bool=True, rot_mat: np.ndarray=None) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
+		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
+		mat = rot_mat
+		if rot_mat is None:
+			(mat, _) = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
+		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
+		inv_tvec = -mat @ tvec # -R^-1*d
+		inv_rvec = mat
+		if rot_mat is None:
+			(inv_rvec, _) = cv2.Rodrigues(inv_rvec) if axis_angle else (R.from_matrix(inv_rvec).as_euler('xyz'), None)
+			inv_rvec = inv_rvec.flatten()
+		return np.array(inv_tvec.flat), inv_rvec
 	
 	def _genSquarePoints(self, length: float) -> np.ndarray:
 		"""
@@ -207,6 +224,7 @@ class AprilDetector(MarkerDetectorBase):
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
+							invert_pose: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							marker_family: Optional[str]='tag16h5',
 							debug: Optional[bool]=False,
@@ -217,6 +235,7 @@ class AprilDetector(MarkerDetectorBase):
 										marker_length=marker_length, 
 										f_ctrl=f_ctrl, 
 										bbox=bbox, 
+										invert_pose=invert_pose,
 										print_stats=print_stats, 
 										filter_type=filter_type,
 										)
@@ -284,14 +303,18 @@ class AprilDetector(MarkerDetectorBase):
 				if self.validateDetection(detection):
 					id = detection.tag_id
 					tvec = detection.pose_t.flatten()
+					rot_mat = detection.pose_R
+					# invert pose
+					if self.invert_perspective:
+						(tvec, rot_mat) = self.invPersp(tvec, rot_mat=rot_mat)
 					# filtering
 					if id in self.filters.keys():
-						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=detection.pose_R))
+						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=rot_mat))
 					else:
-						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=detection.pose_R), self.f_ctrl)} )
+						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=rot_mat), self.f_ctrl)} )
 					# result
-					marker_poses.update({id: {'rvec': cv2.Rodrigues(detection.pose_R)[0].flatten(), 
-							   											'rot_mat': detection.pose_R,
+					marker_poses.update({id: {'rvec': cv2.Rodrigues(rot_mat)[0].flatten(), 
+							   											'rot_mat': rot_mat,
 							   											'tvec': tvec, 
 																		'points': self.obj_points, 
 																		'corners': detection.corners, 
@@ -362,6 +385,7 @@ class ArucoDetector(MarkerDetectorBase):
 							f_ctrl: Optional[int]=30,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
+							invert_pose: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							dict_yaml: Optional[str]="",
 							dict_type: Optional[str]="DICT_4X4_50",
@@ -372,6 +396,7 @@ class ArucoDetector(MarkerDetectorBase):
 										marker_length=marker_length, 
 										f_ctrl=f_ctrl, 
 										bbox=bbox, 
+										invert_pose=invert_pose,
 										print_stats=print_stats, 
 										filter_type=filter_type,
 										)
@@ -436,8 +461,10 @@ class ArucoDetector(MarkerDetectorBase):
 			for id, corner in sorted(zipped):
 				# estimate camera pose relative to the marker (image center T marker center) using the unit provided by obj_points
 				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.params.estimate_params)
-				tvec = tvec.flatten()
 				rvec = rvec.flatten()
+				tvec = tvec.flatten()
+				if self.invert_perspective:
+					(tvec, rvec) = self.invPersp(tvec, rvec)
 				# filtering
 				if id in self.filters.keys():
 					self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rvec=rvec))

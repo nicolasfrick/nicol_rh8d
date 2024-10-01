@@ -14,7 +14,6 @@
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
-	<arg name="invert_pose" default="false" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
 	<arg name="vis" default="true" />
@@ -97,7 +96,6 @@
 	<node pkg="nicol_rh8d" name="dataset_collector" type="dataset_collector.py" output="screen" required="true">
 		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
 		<param name="marker_length" value="$(arg marker_length)" />
-		<param name="invert_pose" value="$(arg invert_pose)" />
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
