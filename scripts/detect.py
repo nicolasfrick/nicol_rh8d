@@ -27,13 +27,13 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 					# frame_id = rgb.header.frame_id
 					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
-class CameraPoseBase():
+class DetectBase():
 	
 	def __init__(self) -> None:
 		pass
 
 
-class CameraPose():
+class CameraPoseDetect():
 	"""
 		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
 		@type str
@@ -250,15 +250,15 @@ class CameraPose():
 
 def main() -> None:
 	rospy.init_node('dataset_collector')
-	CameraPose(camera_ns=rospy.get_param('~markers_camera_name', ''),
-							 marker_length=rospy.get_param('~marker_length', 0.010),
-							 use_reconfigure=rospy.get_param('~use_reconfigure', False),
-							 vis=rospy.get_param('~vis', True),
-							 filter_type=rospy.get_param('~filter', 'none'),
-							 f_ctrl=rospy.get_param('~f_ctrl', 30),
-							 use_aruco=rospy.get_param('~use_aruco', False),
-							 plt_id=rospy.get_param('~plot_id', -1),
-			).run()
+	CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
+                                            marker_length=rospy.get_param('~marker_length', 0.010),
+                                            use_reconfigure=rospy.get_param('~use_reconfigure', False),
+                                            vis=rospy.get_param('~vis', True),
+                                            filter_type=rospy.get_param('~filter', 'none'),
+                                            f_ctrl=rospy.get_param('~f_ctrl', 30),
+                                            use_aruco=rospy.get_param('~use_aruco', False),
+                                            plt_id=rospy.get_param('~plot_id', -1),
+			                                ).run()
 	
 if __name__ == "__main__":
 	main()
