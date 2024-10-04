@@ -78,6 +78,7 @@
 		<param name="f_ctrl" value="$(arg fps)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
+		<param name="camera_pose" value="true" />
 	</node>
 
 </launch>

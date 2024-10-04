@@ -93,7 +93,7 @@
 	</include>
 
 	<!-- dataset collector script -->
-	<!-- <node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
+	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
 		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
 		<param name="marker_length" value="$(arg marker_length)" />
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
@@ -102,6 +102,6 @@
 		<param name="f_ctrl" value="$(arg fps)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
-	</node> -->
+	</node>
 
 </launch>

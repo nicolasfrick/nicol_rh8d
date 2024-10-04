@@ -1,0 +1,4 @@
+forearm: [0]
+wrist: [1]
+tcp: [2, 3, 4]
+index: [4, 0, 1, 2]

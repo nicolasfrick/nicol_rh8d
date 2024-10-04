@@ -16,25 +16,14 @@ from geometry_msgs.msg import PoseStamped
 from tf2_geometry_msgs import PointStamped
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
+from util import *
 from plot_record import *
 from pose_filter import *
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
-
-		# buf = tf2_ros.Buffer()
-		# listener = tf2_ros.TransformListener(buf)
-					# stamp = rgb.header.stamp
-					# frame_id = rgb.header.frame_id
-					# raw_img_size = (raw_img.shape[1], raw_img.shape[0])
 					
 class DetectBase():
-	
-	def __init__(self) -> None:
-		pass
-
-
-class CameraPoseDetect():
 	"""
 		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
 		@type str
@@ -50,12 +39,6 @@ class CameraPoseDetect():
 		@type bool
 		@param plt_id
 		@type int
-		@param err_term
-		@type float
-		@param cart_bound_low
-		@type float
-		@param cart_bound_high
-		@type float
 
 	"""
 
@@ -65,34 +48,25 @@ class CameraPoseDetect():
 	TXT_OFFSET = 25
 	
 	def __init__(self,
-			  				marker_length: float=0.010,
-							camera_ns: Optional[str]='',
-							vis :Optional[bool]=True,
-							use_reconfigure: Optional[bool]=False,
-							filter_type: Optional[str]='none',
-							f_ctrl: Optional[int]=30,
-							use_aruco: Optional[bool]=False,
-							plt_id: Optional[int]=-1,
-							err_term: Optional[float]=1e-8,
-							cart_bound_low: Optional[float]=-3.0,
-							cart_bound_high: Optional[float]=3.0,
-							) -> None:
+			  	marker_length: float=0.010,
+				camera_ns: Optional[str]='',
+				vis :Optional[bool]=True,
+				use_reconfigure: Optional[bool]=False,
+				filter_type: Optional[str]='none',
+				f_ctrl: Optional[int]=30,
+				use_aruco: Optional[bool]=False,
+				plt_id: Optional[int]=-1,
+				) -> None:
 		
 		self.vis = vis
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
-		self.err_term = err_term
 		self.use_aruco = use_aruco
 		self.filter_type = filter_type
+
+		# init ros
 		self.img_topic = camera_ns + '/image_raw'
 		self.bridge = cv_bridge.CvBridge()
-		self.lower_bounds = [cart_bound_low, cart_bound_low, cart_bound_low, -np.pi, -np.pi, -np.pi]
-		self.upper_bounds = [cart_bound_high, cart_bound_high, cart_bound_high, np.pi, np.pi, np.pi]
-
-		# load marker poses
-		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
-		with open(self.fl, 'r') as fr:
-			self.marker_table_poses = yaml.safe_load(fr)
 
 		# init detector
 		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
@@ -112,6 +86,7 @@ class CameraPoseDetect():
 															invert_pose=False,
 															filter_type=filter_type)
 			
+		# init vis	
 		if vis:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
@@ -119,10 +94,284 @@ class CameraPoseDetect():
 				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 				setPosePlot()
 
-		# dynamic reconfigure
+		# init dynamic reconfigure
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+
+	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
+		return R.from_euler('xyz', euler).as_matrix()
+	
+	def pose2Matrix(self, translation: np.ndarray, euler: np.ndarray=None, rot_mat: np.ndarray=None) -> np.ndarray:
+		transformation_matrix = np.eye(4)
+		transformation_matrix[:3, :3] = self.euler2Matrix(euler) if rot_mat is None else rot_mat
+		transformation_matrix[:3, 3] = translation
+		return transformation_matrix
+
+class KeypointDetect(DetectBase):
+	"""
+		Detect keypoints from marker poses.
+
+		@param err_term
+		@type float
+		@param cart_bound_low
+		@type float
+		@param cart_bound_high
+		@type float
+
+	"""
+
+	POINT_FACTOR = 0.85 # arc points interpolation
+	ARC_SHIFT = 10 # ellipse param
+	SAGITTA = 50 # arc size
+	AXES_LEN = 0.03 # meter
+	X_AXIS = np.array([[-AXES_LEN,0,0], [AXES_LEN, 0, 0]], dtype=np.float32)
+
+	def __init__(self,
+			  	marker_length: float=0.010,
+				camera_ns: Optional[str]='',
+				vis :Optional[bool]=True,
+				use_reconfigure: Optional[bool]=False,
+				filter_type: Optional[str]='none',
+				f_ctrl: Optional[int]=30,
+				use_aruco: Optional[bool]=False,
+				plt_id: Optional[int]=-1,
+				) -> None:
+		
+		super().__init__(marker_length=marker_length,
+						camera_ns=camera_ns,
+						vis=vis,
+						use_reconfigure=use_reconfigure,
+						filter_type=filter_type,
+						f_ctrl=f_ctrl,
+						use_aruco=use_aruco,
+						plt_id=plt_id,
+						)
+		
+		# init ros
+		self.buf = tf2_ros.Buffer()
+		self.listener = tf2_ros.TransformListener(self.buf)
+
+		# load hand marker ids
+		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
+		with open(self.fl, 'r') as fr:
+			self.hand_ids = yaml.safe_load(fr)
+
+		# init vis
+		if vis:
+			cv2.namedWindow("Angles", cv2.WINDOW_NORMAL)
+
+	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
+		""" Get the normal to the XZ plane in the markee frame.
+		"""
+		mat = getRotation(rot, rot_t, RotTypes.MAT)
+		y_axis = np.array([0, 1, 0])
+		normal_xz = mat @ y_axis
+		return normal_xz
+
+	def normalXZAngularDispl(self, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER) -> float:
+		""" Calculate the angle between normal vectors.
+		"""
+		# get normal vectors for the XZ planes
+		base_normal = self.normalXZ(base_rot, rot_t)
+		target_normal = self.normalXZ(target_rot, rot_t)
+		# normalize vectors to make sure they are unit vectors
+		base_normal = base_normal / np.linalg.norm(base_normal)
+		target_normal = target_normal / np.linalg.norm(target_normal)
+		# get angle
+		dot_product = base_normal @ target_normal
+		# ensure the dot product is within the valid range for arccos due to numerical precision
+		dot_product = np.clip(dot_product, -1.0, 1.0)
+		# angle in radians
+		return np.arccos(dot_product)
+	
+	def tfPoints(self, tf: np.ndarray, points: np.ndarray) -> np.ndarray:
+		"""Transform marker corners to some frame.
+		""" 
+		homog_points = np.hstack((points, np.ones((points.shape[0], 1))))
+		tf_points = tf @ homog_points.T
+		tf_points = tf_points.T 
+		return tf_points[:, :3]
+	
+	def drawAngle(self, img: cv2.typing.MatLike, pt1: np.ndarray, pt2: np.ndarray, angle_deg: float) -> None:
+		# extract point coordinates
+		x1, y1 = pt1
+		x2, y2 = pt2
+		# find normal from midpoint, follow by length sagitta
+		n = np.array([y2 - y1, x1 - x2])
+		n_dist = np.sqrt(np.sum(n**2))
+		# catch error here, d(pt1, pt2) ~ 0
+		if np.isclose(n_dist, 0):
+			print('Error: The distance between pt1 and pt2 is too small.')
+			return
+		
+		n = n/n_dist
+		x3, y3 = (np.array(pt1) + np.array(pt2))/2 + self.SAGITTA * n
+		# calculate the circle from three points
+		# see https://math.stackexchange.com/a/1460096/246399
+		A = np.array([
+			[x1**2 + y1**2, x1, y1, 1],
+			[x2**2 + y2**2, x2, y2, 1],
+			[x3**2 + y3**2, x3, y3, 1]])
+		M11 = np.linalg.det(A[:, (1, 2, 3)])
+		M12 = np.linalg.det(A[:, (0, 2, 3)])
+		M13 = np.linalg.det(A[:, (0, 1, 3)])
+		M14 = np.linalg.det(A[:, (0, 1, 2)])
+		# catch error here, the points are collinear (sagitta ~ 0)
+		if np.isclose(M11, 0):
+			print('Error: The third point is collinear.')
+			return
+
+		cx = 0.5 * M12/M11
+		cy = -0.5 * M13/M11
+		radius = np.sqrt(cx**2 + cy**2 + M14/M11)
+		# calculate angles of pt1 and pt2 from center of circle
+		pt1_angle = 180*np.arctan2(y1 - cy, x1 - cx)/np.pi
+		pt2_angle = 180*np.arctan2(y2 - cy, x2 - cx)/np.pi
+
+		# draw ellipse
+		center = (cx, cy)
+		axes = (radius, radius)
+		arc_center = (int(round(center[0] * 2**self.ARC_SHIFT)),
+				  int(round(center[1] * 2**self.ARC_SHIFT)))
+		axes = (int(round(axes[0] * 2**self.ARC_SHIFT)),
+				int(round(axes[1] * 2**self.ARC_SHIFT)))
+		center = tuple(map(int, center))
+		cv2.ellipse(img, arc_center, axes, 0, pt1_angle, pt2_angle, self.det.BLUE, 1, cv2.LINE_AA, self.ARC_SHIFT)
+		# cv2.circle(img, pt1, 5, self.det.BLUE, -1)
+		# cv2.circle(img, pt2, 5, self.det.BLUE, -1)
+		# cv2.circle(img, center, 5, self.det.BLUE, -1)
+		# draw angle text
+		cv2.putText(img, f'{angle_deg:.2f} deg', center, cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.BLUE, self.FONT_THCKNS)
+
+	def labelDetection(self, img: cv2.typing.MatLike, id: int, detection: dict) -> None:
+		angle = detection[id].get('angle')
+		base_id = detection[id].get('base_id')
+		if angle is None: return
+
+		# get detected transforms
+		base_rot = getRotation(detection[base_id].get('frot'), RotTypes.EULER, RotTypes.MAT)
+		target_rot = getRotation(detection[id].get('frot'), RotTypes.EULER, RotTypes.MAT)
+		base_trans = detection[base_id].get('ftrans')
+		target_trans = detection[id].get('ftrans')
+
+		# project the x-axes of both markers
+		x_axis_base_marker, _ = cv2.projectPoints(self.X_AXIS, base_rot, base_trans, self.det.cmx, self.det.dist)
+		x_axis_target_marker, _ = cv2.projectPoints(self.X_AXIS, target_rot, target_trans, self.det.cmx, self.det.dist)
+		x_axis_base_marker = np.int32(x_axis_base_marker).reshape(-1, 2)
+		x_axis_target_marker = np.int32(x_axis_target_marker).reshape(-1, 2)
+		cv2.line(img, x_axis_base_marker[0], x_axis_base_marker[1], self.det.RED, 2)
+		cv2.line(img, x_axis_target_marker[0], x_axis_target_marker[1], self.det.RED, 2)
+
+		# draw angle between the x-axes
+		if np.abs(angle) > 0:
+			# interpolate points on the axes
+			interpolated_point_base_ax = (1 - self.POINT_FACTOR) * x_axis_base_marker[0] + self.POINT_FACTOR * x_axis_base_marker[1]
+			interpolated_point_target_ax = (1 - self.POINT_FACTOR) * x_axis_target_marker[1] + self.POINT_FACTOR * x_axis_target_marker[0]
+			# draw ellipse
+			p1 = tuple(map(int, interpolated_point_base_ax))
+			p2 = tuple(map(int, interpolated_point_target_ax))
+			self.drawAngle(img, p1, p2, np.rad2deg(angle))
+
+	def detectionRoutine(self, cnt: int) -> dict:
+		# detected markers 
+		rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+		raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+		(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
+		out_img = raw_img.copy()
+
+		if marker_det:
+			ids = self.hand_ids['index']
+			# check all ids detected
+			if not all([id in marker_det.keys() for id in ids]):
+				print("Cannot detect all required ids: ", ids)
+				return False
+			# compute angle
+			for idx in range(1, len(ids)):
+				base_id = ids[idx-1]
+				target_id = ids[idx]
+				base_marker = marker_det[base_id]
+				target_marker = marker_det[target_id]
+				angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+				marker_det[target_id].update({'angle': angle, 'base_id': base_id})
+
+		if self.vis:
+			# frame counter
+			cv2.putText(out_img, str(cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			for id in marker_det.keys():
+				# label marker angle
+				self.labelDetection(out_img, id, marker_det)
+			cv2.imshow('Processed', proc_img)
+			cv2.imshow('Detection', det_img)
+			cv2.imshow('Angles', out_img)
+
+		return marker_det
+		
+	def run(self) -> None:
+		cnt = 0
+		rate = rospy.Rate(self.f_loop)
+		try:
+			while not rospy.is_shutdown():
+
+				self.detectionRoutine(cnt)
+				cnt += 1
+					
+				if cv2.waitKey(1) == ord("q"):
+					break
+					
+				try:
+					rate.sleep()
+				except:
+					pass
+
+		except ValueError as e:
+			rospy.logerr(e)
+		finally:
+			cv2.destroyAllWindows()
+		
+class CameraPoseDetect(DetectBase):
+	"""
+		Detect camera world pose from marker poses.
+
+		@param err_term
+		@type float
+		@param cart_bound_low
+		@type float
+		@param cart_bound_high
+		@type float
+
+	"""
+
+	def __init__(self,
+			  	marker_length: float=0.010,
+				camera_ns: Optional[str]='',
+				vis :Optional[bool]=True,
+				use_reconfigure: Optional[bool]=False,
+				filter_type: Optional[str]='none',
+				f_ctrl: Optional[int]=30,
+				use_aruco: Optional[bool]=False,
+				plt_id: Optional[int]=-1,
+				err_term: Optional[float]=1e-8,
+				cart_bound_low: Optional[float]=-3.0,
+				cart_bound_high: Optional[float]=3.0,
+				) -> None:
+		
+		super().__init__(marker_length=marker_length,
+						camera_ns=camera_ns,
+						vis=vis,
+						use_reconfigure=use_reconfigure,
+						filter_type=filter_type,
+						f_ctrl=f_ctrl,
+						use_aruco=use_aruco,
+						plt_id=plt_id,
+						)
+		self.err_term = err_term
+		self.lower_bounds = [cart_bound_low, cart_bound_low, cart_bound_low, -np.pi, -np.pi, -np.pi]
+		self.upper_bounds = [cart_bound_high, cart_bound_high, cart_bound_high, np.pi, np.pi, np.pi]
+		# load marker poses
+		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
+		with open(self.fl, 'r') as fr:
+			self.marker_table_poses = yaml.safe_load(fr)
 
 	def labelDetection(self, img: cv2.typing.MatLike, trans: np.ndarray, rot: np.ndarray, corners: np.ndarray) -> None:
 			pos_txt = "X: {:.4f} Y:  {:.4f} Z:  {:.4f}".format(trans[0], trans[1], trans[2])
@@ -171,15 +420,6 @@ class CameraPoseDetect():
 			# reprojection error
 			err += self.projectSingleMarker(det, id, T_cam_world, img)
 		return err
-	
-	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
-		return R.from_euler('xyz', euler).as_matrix()
-	
-	def pose2Matrix(self, translation: np.ndarray, euler: np.ndarray=None, rot_mat: np.ndarray=None) -> np.ndarray:
-		transformation_matrix = np.eye(4)
-		transformation_matrix[:3, :3] = self.euler2Matrix(euler) if rot_mat is None else rot_mat
-		transformation_matrix[:3, 3] = translation
-		return transformation_matrix
 	
 	def tagWorldCorners(self, world_tag_tf: np.ndarray, tag_corners: np.ndarray) -> np.ndarray:
 		"""Transform marker corners to world frame""" 
@@ -351,22 +591,33 @@ class CameraPoseDetect():
 					except:
 						pass
 
-		except ValueError as e:
+		except Exception as e:
 			rospy.logerr(e)
 		finally:
 			cv2.destroyAllWindows()
 
 def main() -> None:
 	rospy.init_node('dataset_collector')
-	CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
-											marker_length=rospy.get_param('~marker_length', 0.010),
-											use_reconfigure=rospy.get_param('~use_reconfigure', False),
-											vis=rospy.get_param('~vis', True),
-											filter_type=rospy.get_param('~filter', 'none'),
-											f_ctrl=rospy.get_param('~f_ctrl', 30),
-											use_aruco=rospy.get_param('~use_aruco', False),
-											plt_id=rospy.get_param('~plot_id', -1),
-											).run()
+	if rospy.get_param('~camera_pose', False):
+		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
+						marker_length=rospy.get_param('~marker_length', 0.010),
+						use_reconfigure=rospy.get_param('~use_reconfigure', False),
+						vis=rospy.get_param('~vis', True),
+						filter_type=rospy.get_param('~filter', 'none'),
+						f_ctrl=rospy.get_param('~f_ctrl', 30),
+						use_aruco=rospy.get_param('~use_aruco', False),
+						plt_id=rospy.get_param('~plot_id', -1),
+						).run()
+	else:
+		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
+						marker_length=rospy.get_param('~marker_length', 0.010),
+						use_reconfigure=rospy.get_param('~use_reconfigure', False),
+						vis=rospy.get_param('~vis', True),
+						filter_type=rospy.get_param('~filter', 'none'),
+						f_ctrl=rospy.get_param('~f_ctrl', 30),
+						use_aruco=rospy.get_param('~use_aruco', False),
+						plt_id=rospy.get_param('~plot_id', -1),
+						).run()
 	
 if __name__ == "__main__":
 	main()
