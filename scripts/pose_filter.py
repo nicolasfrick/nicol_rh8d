@@ -41,7 +41,7 @@ class PoseFilterBase():
 		return self.translation_estimated, self.rotation_estimated
 	
 	@classmethod
-	def poseToMeasurement(self,  tvec: np.ndarray, rvec: np.ndarray=None, rot_mat:np.ndarray=None) -> np.ndarray:
+	def poseToMeasurement(self,  tvec: np.ndarray, rvec: np.ndarray=None, rot_mat:np.ndarray=None, axis_angle: bool=True) -> np.ndarray:
 		"""Convert pose vectors to filter input, either rvec or rot_mat must be provided
 			@param tvec Position vector [x,y,z]
 			@type np.ndarray
@@ -58,7 +58,7 @@ class PoseFilterBase():
 		mat = rot_mat
 		# convert rotation vector to euler angles
 		if mat is None:
-			mat, _ = cv2.Rodrigues(np.array(rvec))
+			mat, _ = cv2.Rodrigues(np.array(rvec)) if axis_angle else (R.from_euler('xyz', rvec).as_matrix(), None)
 		rot = R.from_matrix(mat)
 		measured_eulers = rot.as_euler('xyz')
 		measurement[3:] = measured_eulers[:]
