@@ -114,18 +114,15 @@ class MarkerDetectorBase():
 	def square_points(self) -> np.ndarray:
 		return self.obj_points
 	
-	def invPersp(self, tvec: np.ndarray, rvec: np.ndarray=None, axis_angle: bool=True, rot_mat: np.ndarray=None) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
+	def invPersp(self, tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
 		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
-		mat = rot_mat
-		if rot_mat is None:
-			(mat, _) = cv2.Rodrigues(rvec) if axis_angle else (R.from_euler('xyz', np.array(rvec)).as_matrix(), None) # axis-angle or euler to mat
+		mat = getRotation(rot, rot_t, RotTypes.MAT)
 		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
 		inv_tvec = -mat @ tvec # -R^-1*d
-		inv_rvec = mat
-		if rot_mat is None:
-			(inv_rvec, _) = cv2.Rodrigues(inv_rvec) if axis_angle else (R.from_matrix(inv_rvec).as_euler('xyz'), None)
-			inv_rvec = inv_rvec.flatten()
-		return np.array(inv_tvec.flat), inv_rvec
+		inv_rot = getRotation(mat, RotTypes.MAT, rot_t)
+		if rot_t != RotTypes.MAT:
+			inv_rot = inv_rot.flatten()
+		return np.array(inv_tvec.flat), inv_rot
 	
 	def _genSquarePoints(self, length: float) -> np.ndarray:
 		"""
@@ -306,12 +303,12 @@ class AprilDetector(MarkerDetectorBase):
 					rot_mat = detection.pose_R
 					# invert pose
 					if self.invert_perspective:
-						(tvec, rot_mat) = self.invPersp(tvec, rot_mat=rot_mat)
+						(tvec, rot_mat) = self.invPersp(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT)
 					# filtering
 					if id in self.filters.keys():
-						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=rot_mat))
+						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT))
 					else:
-						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot_mat=rot_mat), self.f_ctrl)} )
+						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT), self.f_ctrl)} )
 					# result
 					marker_poses.update({id: {'rvec': cv2.Rodrigues(rot_mat)[0].flatten(), 
 							   											'rot_mat': rot_mat,
@@ -464,12 +461,12 @@ class ArucoDetector(MarkerDetectorBase):
 				rvec = rvec.flatten()
 				tvec = tvec.flatten()
 				if self.invert_perspective:
-					(tvec, rvec) = self.invPersp(tvec, rvec)
+					(tvec, rvec) = self.invPersp(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC)
 				# filtering
 				if id in self.filters.keys():
-					self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rvec=rvec))
+					self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC))
 				else:
-					self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rvec=rvec), self.f_ctrl)} )
+					self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC), self.f_ctrl)} )
 				# results
 				marker_poses.update({id: {'rvec': rvec, 
 							   										'rot_mat': cv2.Rodrigues(rvec)[0],

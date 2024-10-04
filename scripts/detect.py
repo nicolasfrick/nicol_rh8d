@@ -102,10 +102,10 @@ class DetectBase():
 	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
 		return R.from_euler('xyz', euler).as_matrix()
 	
-	def pose2Matrix(self, translation: np.ndarray, euler: np.ndarray=None, rot_mat: np.ndarray=None) -> np.ndarray:
+	def pose2Matrix(self, tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		transformation_matrix = np.eye(4)
-		transformation_matrix[:3, :3] = self.euler2Matrix(euler) if rot_mat is None else rot_mat
-		transformation_matrix[:3, 3] = translation
+		transformation_matrix[:3, :3] = getRotation(rot, rot_t, RotTypes.MAT)
+		transformation_matrix[:3, 3] = tvec
 		return transformation_matrix
 
 class KeypointDetect(DetectBase):
@@ -413,8 +413,8 @@ class CameraPoseDetect(DetectBase):
 	def projectMarkers(self, detection:dict, camera_pose: np.ndarray, img: cv2.typing.MatLike=None) -> float:
 		err = 0
 		# invert world to camera tf for reprojection
-		tvec_inv, euler_inv = self.det.invPersp(camera_pose[:3], camera_pose[3:], axis_angle=False)
-		T_cam_world = self.pose2Matrix(tvec_inv, euler_inv)
+		tvec_inv, euler_inv = self.det.invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
+		T_cam_world = self.pose2Matrix(tvec_inv, euler_inv, RotTypes.EULER)
 		# iter measured markers
 		for id, det in detection.items():
 			# reprojection error
@@ -431,11 +431,11 @@ class CameraPoseDetect(DetectBase):
 	def getWorldMarkerTF(self, id: int) -> np.ndarray:
 		# marker root tf
 		root = self.marker_table_poses.get('root')
-		T_world_root = self.pose2Matrix(root['xyz'], root['rpy']) if root is not None else np.eye(4)
+		T_world_root = self.pose2Matrix(root['xyz'], root['rpy'], RotTypes.EULER) if root is not None else np.eye(4)
 		# marker tf
 		marker = self.marker_table_poses.get(id)
 		assert(marker) # marker id entry in yaml?
-		T_root_marker = self.pose2Matrix(marker['xyz'], marker['rpy'])
+		T_root_marker = self.pose2Matrix(marker['xyz'], marker['rpy'], RotTypes.EULER)
 		# worldTmarker
 		return T_world_root @ T_root_marker
 	
@@ -445,11 +445,9 @@ class CameraPoseDetect(DetectBase):
 		if det is None:
 			print(f"Cannot find id {id} in detection!")
 			return tf
-		tvec = det['ftrans']
-		euler = det['frot']
 		# get markerTcamera
-		inv_tvec, inv_euler = self.det.invPersp(tvec, euler, axis_angle=False)
-		T_marker_cam = self.pose2Matrix(inv_tvec, inv_euler)
+		inv_tvec, inv_euler = self.det.invPersp(tvec=det['ftrans'], rot=det['frot'], rot_t=RotTypes.EULER)
+		T_marker_cam = self.pose2Matrix(inv_tvec, inv_euler, RotTypes.EULER)
 		# get worldTcamera
 		T_world_marker = self.getWorldMarkerTF(id)
 		T_world_cam = T_world_marker @ T_marker_cam
@@ -472,15 +470,15 @@ class CameraPoseDetect(DetectBase):
 		"""
 		error = []
 		# estimate
-		T_world_camera = self.pose2Matrix(camera_pose[:3], camera_pose[3:])
+		T_world_camera = self.pose2Matrix(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
 		# invert for reprojection
-		tvec_inv, euler_inv = self.det.invPersp(camera_pose[:3], camera_pose[3:], axis_angle=False)
-		T_camera_world = self.pose2Matrix(tvec_inv, euler_inv)
+		tvec_inv, euler_inv = self.det.invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
+		T_camera_world = self.pose2Matrix(tvec=tvec_inv, rot=euler_inv, rot_t=RotTypes.EULER)
 		for id in marker_poses:
 			det = detection.get(id)
 			if det is not None:
 				# detected tag pose wrt camera frame
-				T_camera_marker = self.pose2Matrix(det['ftrans'], det['frot'])
+				T_camera_marker = self.pose2Matrix(det['ftrans'], det['frot'], RotTypes.EULER)
 				T_world_marker_est = T_world_camera @ T_camera_marker
 				# measured tag pose wrt world 
 				T_world_marker = self.getWorldMarkerTF(id)
@@ -533,9 +531,9 @@ class CameraPoseDetect(DetectBase):
 		for id in detection:
 			T_world_cam = self.camTF(detection, id)
 			if filter is None:
-				filter = createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=T_world_cam[:3], rvec=T_world_cam[3:], axis_angle=False), self.f_loop)
+				filter = createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=T_world_cam[:3], rot=T_world_cam[3:], rot_t=RotTypes.EULER), self.f_loop)
 			else:
-				filter.updateFilter(PoseFilterBase.poseToMeasurement(tvec=T_world_cam[:3], rvec=T_world_cam[3:], axis_angle=False))
+				filter.updateFilter(PoseFilterBase.poseToMeasurement(tvec=T_world_cam[:3], rot=T_world_cam[3:], rot_t=RotTypes.EULER))
 		if filter is not None:
 			filtered_pose[:3] = filter.est_translation
 			filtered_pose[3:] = filter.est_rotation_as_euler

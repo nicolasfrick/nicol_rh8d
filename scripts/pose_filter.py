@@ -28,7 +28,7 @@ class PoseFilterBase():
 		return self.rotation_estimated
 	@property
 	def est_rotation_as_matrix(self) -> np.ndarray:
-		return  R.from_euler('xyz', self.rotation_estimated) 
+		return R.from_euler('xyz', self.rotation_estimated) 
 	@property
 	def est_translation(self) -> np.ndarray:
 		return self.translation_estimated
@@ -42,28 +42,22 @@ class PoseFilterBase():
 		return self.translation_estimated, self.rotation_estimated
 	
 	@classmethod
-	def poseToMeasurement(self,  tvec: np.ndarray, rvec: np.ndarray=None, rot_mat:np.ndarray=None, axis_angle: bool=True) -> np.ndarray:
-		"""Convert pose vectors to filter input, either rvec or rot_mat must be provided
-			@param tvec Position vector [x,y,z]
+	def poseToMeasurement(self, tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
+		"""Convert pose vectors to filter input.
+
+			@param tvec Translation vector
 			@type np.ndarray
-			@param rvec Orientation vector (axis-angle)
+			@param rot Rotation vector or matrix
 			@type np.ndarray
-			@param rot_mat Rotation matrix
-			@type np.ndarray
+			@param rot_t Type of rotation information
+			@type RotTypes
 			@return Measurement vector [x,y,z,r,p,y] with orientation converted to extr. xyz Euler-angles
 			@type np.ndarray
 		"""
-		assert(rvec is not None or rot_mat is not None)
 		measurement = np.zeros(6, dtype=np.float32)
 		measurement[:3] = tvec[:] 
-		mat = rot_mat
-		# convert rotation vector to euler angles
-		if mat is None:
-			mat, _ = cv2.Rodrigues(np.array(rvec)) if axis_angle else (R.from_euler('xyz', rvec).as_matrix(), None)
-		rot = R.from_matrix(mat)
-		measured_eulers = rot.as_euler('xyz')
-		measurement[3:] = measured_eulers[:]
-
+		measured_euler = getRotation(rot, rot_t, RotTypes.EULER)
+		measurement[3:] = measured_euler[:]
 		return measurement
 	
 class PoseFilterMean(PoseFilterBase):
@@ -75,14 +69,14 @@ class PoseFilterMean(PoseFilterBase):
 		@type bool
 	"""
 
-	cols = ['x','y','z','roll','pitch','yaw']
+	COLS = ['x','y','z','roll','pitch','yaw']
 
 	def __init__(self,
 			  				state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
 							use_median: Optional[bool]=False) -> None:
 		super().__init__()
 		self.use_median = use_median
-		self.filter = pd.DataFrame(np.array([state_init]),columns=self.cols, dtype=pd.Float32Dtype)
+		self.filter = pd.DataFrame(np.array([state_init]),columns=self.COLS, dtype=pd.Float32Dtype)
 
 	def updateFilter(self, measurement: np.ndarray) -> Tuple[np.ndarray]:
 		"""Process filter
@@ -153,7 +147,7 @@ class PoseFilterKalman(PoseFilterBase):
 		return self.rotation_predicted
 	@property
 	def pred_rotation_as_matrix(self) -> np.ndarray:
-		return  R.from_euler('xyz', self.rotation_predicted) 
+		return R.from_euler('xyz', self.rotation_predicted) 
 	@property
 	def pred_translation(self) -> np.ndarray:
 		return self.translation_predicted
