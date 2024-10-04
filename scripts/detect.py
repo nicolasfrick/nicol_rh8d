@@ -146,26 +146,30 @@ class CameraPoseDetect():
 		error = np.linalg.norm(det_corners - proj_corners, axis=1)
 		return np.mean(error)
 	
-	def projectMarkers(self, img: cv2.typing.MatLike, detection:dict, camera_pose: np.ndarray) -> float:
+	def projectSingleMarker(self, detection:dict, id: int, camera_pose: np.ndarray, img: cv2.typing.MatLike=None) -> float:
+		if self.marker_table_poses.get(id) is None:
+			print(f"id {id} not present in marker poses!")
+			return np.inf
+		# tf marker corners wrt. world
+		T_world_marker = self.getWorldMarkerTF(id)
+		world_corners = self.tagWorldCorners(T_world_marker, self.det.square_points)
+		# project corners to image plane
+		projected_corners, _ = cv2.projectPoints(world_corners, camera_pose[:3, :3], camera_pose[:3, 3], self.det.cmx, self.det.dist)
+		projected_corners = np.int32(projected_corners).reshape(-1, 2)
+		if img is not None:
+			cv2.polylines(img, [projected_corners], isClosed=True, color=self.det.BLUE, thickness=2)
+			cv2.putText(img, str(id), (projected_corners[0][0]+5, projected_corners[0][1]+5), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+		return self.reprojectionError(detection['corners'], projected_corners)
+	
+	def projectMarkers(self, detection:dict, camera_pose: np.ndarray, img: cv2.typing.MatLike=None) -> float:
 		err = 0
 		# invert world to camera tf for reprojection
 		tvec_inv, euler_inv = self.det.invPersp(camera_pose[:3], camera_pose[3:], axis_angle=False)
 		T_cam_world = self.pose2Matrix(tvec_inv, euler_inv)
 		# iter measured markers
 		for id, det in detection.items():
-			if self.marker_table_poses.get(id) is None:
-				print(f"id {id} not present in marker poses!")
-				continue
-			# tf marker corners wrt. world
-			T_world_marker = self.getWorldMarkerTF(id)
-			world_corners = self.tagWorldCorners(T_world_marker, self.det.square_points)
-			# project corners to image plane
-			projected_corners, _ = cv2.projectPoints(world_corners, T_cam_world[:3, :3], T_cam_world[:3, 3], self.det.cmx, self.det.dist)
-			projected_corners = np.int32(projected_corners).reshape(-1, 2)
-			cv2.polylines(img, [projected_corners], isClosed=True, color=self.det.BLUE, thickness=2)
-			cv2.putText(img, str(id), (projected_corners[0][0]+5, projected_corners[0][1]+5), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# reprojection error
-			err += self.reprojectionError(det['corners'], projected_corners)
+			err += self.projectSingleMarker(det, id, T_cam_world, img)
 		return err
 	
 	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
@@ -229,6 +233,9 @@ class CameraPoseDetect():
 		error = []
 		# estimate
 		T_world_camera = self.pose2Matrix(camera_pose[:3], camera_pose[3:])
+		# invert for reprojection
+		tvec_inv, euler_inv = self.det.invPersp(camera_pose[:3], camera_pose[3:], axis_angle=False)
+		T_camera_world = self.pose2Matrix(tvec_inv, euler_inv)
 		for id in marker_poses:
 			det = detection.get(id)
 			if det is not None:
@@ -246,10 +253,10 @@ class CameraPoseDetect():
 				# R_error = R_world_marker_est.T @ R_world_marker  # relative rotation
 				# orientation_error = np.arccos((np.trace(R_error) - 1) / 2)
 				orientation_error = np.linalg.norm(T_world_marker_est[:3, :3] - T_world_marker[:3, :3])
-				# position and orientation error
 				error.append(position_error)  
 				error.append(orientation_error)		
-
+				# reprojection_error
+				# error.append(self.projectSingleMarker(det, id, T_camera_world))
 		return np.hstack(error) if len(error) else np.array(error)
 
 	def estimatePoseLS(self, img: cv2.typing.MatLike, err: float, est_camera_pose: np.ndarray, detection: dict) -> np.ndarray:
@@ -268,7 +275,7 @@ class CameraPoseDetect():
 			# put pose label
 			self.labelDetection(img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
 			# reproject markers
-			reserr = self.projectMarkers(img, detection, opt_cam_pose)
+			reserr = self.projectMarkers(detection, opt_cam_pose, img)
 			txt = f"Result: {res.status} {res.message}\n"
 			txt += f"camera world pose trans: {opt_cam_pose[:3]}, rot (extr. xyz euler): {opt_cam_pose[3:]}\n"
 			txt += f"reprojection error: {reserr}\n"
@@ -293,14 +300,14 @@ class CameraPoseDetect():
 			filtered_pose[:3] = filter.est_translation
 			filtered_pose[3:] = filter.est_rotation_as_euler
 			self.labelDetection(img, 30, filtered_pose[:3], filtered_pose[3:])
-			err = self.projectMarkers(img, detection, filtered_pose)
+			err = self.projectMarkers(detection, filtered_pose, img)
 		print(f"camera world pose trans: {filtered_pose[:3]}, rot (extr. xyz euler): {filtered_pose[3:]}")
 		return err, filtered_pose
 		
 	def run(self) -> None:
 		cnt = 0
 		err = np.inf
-		est_camera_pose = None
+		est_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
 		try:
 			while not rospy.is_shutdown():
