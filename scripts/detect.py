@@ -126,6 +126,7 @@ class KeypointDetect(DetectBase):
 	SAGITTA = 50 # arc size
 	AXES_LEN = 0.03 # meter
 	X_AXIS = np.array([[-AXES_LEN,0,0], [AXES_LEN, 0, 0]], dtype=np.float32)
+	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
 
 	def __init__(self,
 			  	marker_length: float=0.010,
@@ -165,8 +166,7 @@ class KeypointDetect(DetectBase):
 		""" Get the normal to the XZ plane in the markee frame.
 		"""
 		mat = getRotation(rot, rot_t, RotTypes.MAT)
-		y_axis = np.array([0, 1, 0])
-		normal_xz = mat @ y_axis
+		normal_xz = mat @ self.UNIT_AXIS_Y
 		return normal_xz
 
 	def normalXZAngularDispl(self, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER) -> float:

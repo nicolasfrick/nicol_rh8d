@@ -37,6 +37,8 @@ class MarkerDetectorBase():
 		@type FilterTypes
 		@param invert_pose Invert detected marker pose 
 		@type bool
+		@param refine_detection
+		@type bool
 	"""
 
 	RED = (0,0,255)
@@ -57,6 +59,7 @@ class MarkerDetectorBase():
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
+							refine_detection: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							) -> None:
 		
@@ -74,6 +77,7 @@ class MarkerDetectorBase():
 		self.marker_length = marker_length
 		self.filter_type = filter_type 
 		self.invert_perspective = invert_pose		
+		self.refine_detection = refine_detection
 		self.f_ctrl = f_ctrl
 		self.bbox = bbox
 		self.filters = {}
@@ -110,6 +114,9 @@ class MarkerDetectorBase():
 			return f.est_rotation_as_euler
 		return None
 	
+	def resetFilters(self) -> None:
+		self.filters.clear()
+	
 	@property
 	def square_points(self) -> np.ndarray:
 		return self.obj_points
@@ -135,10 +142,16 @@ class MarkerDetectorBase():
 				point 3: [-squareLength / 2, -squareLength / 2, 0]
 		"""
 		self.obj_points = np.zeros((4, 3), dtype=np.float32)
-		self.obj_points[0,:] = np.array([-length/2, length/2, 0])
-		self.obj_points[1,:] = np.array([length/2, length/2, 0])
-		self.obj_points[2,:] = np.array([length/2, -length/2, 0])
-		self.obj_points[3,:] = np.array([-length/2, -length/2, 0])
+		self.obj_points[0,:] = np.array([-length/2, length/2, 0])  # top-left corner
+		self.obj_points[1,:] = np.array([length/2, length/2, 0])   # top-right corner
+		self.obj_points[2,:] = np.array([length/2, -length/2, 0])  # bottom-right corner
+		self.obj_points[3,:] = np.array([-length/2, -length/2, 0]) # bottom-left corner 
+		# define the order counter-clockwise to follow the standard 
+		# right-handed coordinate system for pose estimation
+		# self.obj_points[0,:] = np.array([-length/2, -length/2, 0]) # bottom-left corner 
+		# self.obj_points[1,:] = np.array([length/2, -length/2, 0])  # bottom-right corner
+		# self.obj_points[2,:] = np.array([length/2, length/2, 0])   # top-right corner
+		# self.obj_points[3,:] = np.array([-length/2, length/2, 0])  # top-left corner
 
 	def _projPoints(self, img: cv2.typing.MatLike, obj_points: np.ndarray, rvec: np.ndarray, tvec: np.ndarray) -> cv2.typing.MatLike:
 		"""Test the solvePnP by projecting the 3D Points to camera"""
@@ -165,6 +178,24 @@ class MarkerDetectorBase():
 		cv2.arrowedLine(img, img_center, (img_center[0], img_center[1]+arw_len), self.GREEN, thckns, cv2.LINE_AA)
 		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
 		cv2.circle(img, img_center, self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
+
+	def refineDetection(self, corners: np.ndarray, tvec: np.ndarray, rvec: np.ndarray, rot_t: RotTypes):
+		"""Solve PnP RANSAC for robust pose estimation.
+		"""
+		image_points = np.array(corners, dtype=np.float32)
+		success, out_rvec, out_tvec, inliers = cv2.solvePnPRansac(objectPoints=self.obj_points,
+														  imagePoints=image_points,
+														  cameraMatrix=self.cmx,
+														  distCoeffs=self.dist,
+														  rvec=rvec,
+														  tvec=tvec,
+														  useExtrinsicGuess=True,
+														  flags=self.params.estimate_params.solvePnPMethod
+														  )
+		if success:
+			return success, out_tvec.reshape(3), getRotation(out_rvec.reshape(3), RotTypes.RVEC, rot_t), inliers
+		# return input
+		return success, tvec, getRotation(rvec.reshape(3), RotTypes.RVEC, rot_t), inliers
 
 	def _printSettings(self) -> None:
 		raise NotImplementedError
@@ -293,6 +324,7 @@ class AprilDetector(MarkerDetectorBase):
 		marker_poses = {}
 		if self.params_change:
 			self._adaptParams()
+
 		detections = self.det.detect(gray, estimate_tag_pose=True, camera_params=self.camera_params, tag_size=self.marker_length)
 		if len(detections) > 0:
 			for detection in detections:
@@ -301,6 +333,9 @@ class AprilDetector(MarkerDetectorBase):
 					id = detection.tag_id
 					tvec = detection.pose_t.flatten()
 					rot_mat = detection.pose_R
+					# improve detection
+					if self.refine_detection:
+						(success, tvec, rot_mat, inliers) = self.refineDetection(detection.corners, tvec, getRotation(rot_mat, RotTypes.MAT, RotTypes.RVEC), RotTypes.MAT)
 					# invert pose
 					if self.invert_perspective:
 						(tvec, rot_mat) = self.invPersp(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT)
@@ -460,6 +495,9 @@ class ArucoDetector(MarkerDetectorBase):
 				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.params.estimate_params)
 				rvec = rvec.flatten()
 				tvec = tvec.flatten()
+				# improve detection
+				if self.refine_detection:
+					(success, tvec, rvec, inliers) = self.refineDetection(corner.reshape((4,2)), tvec, rvec, RotTypes.RVEC)
 				if self.invert_perspective:
 					(tvec, rvec) = self.invPersp(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC)
 				# filtering

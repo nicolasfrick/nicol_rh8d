@@ -23,8 +23,10 @@ def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.n
 	res = mat
 	if out_type == RotTypes.RVEC:
 		(res, _) = Rodrigues(res)
+		res = res.flatten()
 	elif out_type == RotTypes.EULER:
 		res = R.from_matrix(res).as_euler('xyz')
+		res = res.flatten()
 	elif out_type == RotTypes.MAT:
 		pass
 	else:
