@@ -3,8 +3,8 @@
 	<!-- rs args -->
 	<arg name="external_manager"    default="false"/>
 	<arg name="manager"             default="rs_manager"/>
-	<arg name="use_realsense" default="true" />
-	<arg name="camera"            default="realsense"/>
+	<arg name="use_realsense" 		default="true" />
+	<arg name="camera"            	default="realsense"/>
 	<arg name="serial_no"           default="822512060411"/>
 	<arg name="tf_prefix"           default="$(arg camera)"/>
 	<arg name="enable_depth"        default="true"/>
@@ -15,12 +15,13 @@
 	<arg name="color_width"         default="1920"/>
 	<arg name="color_height"        default="1080"/>
 	<arg name="color_fps"           default="30"/>
-	<arg name="enable_pointcloud"         default="false"/>
-	<arg name="publish_tf"                default="true"/>
-	<arg name="tf_publish_rate"           default="0"/>
-	<arg name="filters"                   default=""/>
-	<arg name="clip_distance"             default="-2"/>
-	<arg name="align_depth"               default="true"/>
+	<arg name="enable_pointcloud"   default="false"/>
+	<arg name="publish_tf"          default="true"/>
+	<arg name="tf_publish_rate"     default="0"/>
+	<arg name="filters"             default=""/>
+	<arg name="clip_distance"       default="-2"/>
+	<arg name="align_depth"         default="true"/>
+	<arg name="output"              default="screen"/>
 
 	<include file="$(find realsense2_camera)/launch/rs_camera.launch">
 		<arg name="external_manager" value="$(arg external_manager)"/>
@@ -42,6 +43,7 @@
 		<arg name="filters"                   value="$(arg filters)"/>
 		<arg name="clip_distance"             value="$(arg clip_distance)"/>
 		<arg name="align_depth"             value="$(arg align_depth)"/>
+		<arg name="output"             value="$(arg output)"/>
 	</include>
 
 </launch>

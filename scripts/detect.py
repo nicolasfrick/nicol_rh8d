@@ -8,6 +8,7 @@ import tf2_ros
 import cv_bridge
 import numpy as np
 import sensor_msgs.msg
+from time import sleep
 from typing import Optional, Any, Tuple
 import dynamic_reconfigure.server
 from scipy.optimize import least_squares
@@ -19,6 +20,8 @@ import open_manipulator_msgs.srv
 from util import *
 from plot_record import *
 from pose_filter import *
+from qdec_serial import QdecSerial
+from rh8d_serial import RH8DSerial
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
@@ -107,6 +110,12 @@ class DetectBase():
 		transformation_matrix[:3, :3] = getRotation(rot, rot_t, RotTypes.MAT)
 		transformation_matrix[:3, 3] = tvec
 		return transformation_matrix
+	
+	def detectionRoutine(self, cnt: int) -> dict:
+		raise NotImplementedError
+	
+	def run(self) -> None:
+		raise NotImplementedError
 
 class KeypointDetect(DetectBase):
 	"""
@@ -118,6 +127,8 @@ class KeypointDetect(DetectBase):
 		@type float
 		@param cart_bound_high
 		@type float
+		@param use_tf
+		@type bool
 
 	"""
 
@@ -137,6 +148,7 @@ class KeypointDetect(DetectBase):
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
+				use_tf: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -150,8 +162,10 @@ class KeypointDetect(DetectBase):
 						)
 		
 		# init ros
-		self.buf = tf2_ros.Buffer()
-		self.listener = tf2_ros.TransformListener(self.buf)
+		if use_tf:
+			self.buf = tf2_ros.Buffer()
+			self.listener = tf2_ros.TransformListener(self.buf)
+		self.use_tf = use_tf
 
 		# load hand marker ids
 		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -327,6 +341,130 @@ class KeypointDetect(DetectBase):
 		except ValueError as e:
 			rospy.logerr(e)
 		finally:
+			cv2.destroyAllWindows()
+
+class HybridDetect(KeypointDetect):
+	"""
+		Detect keypoints from marker poses and quadrature encoders 
+		while moving the hand.
+
+		@param rh8d_port
+		@type str
+        @param rh8d_baud
+		@type int
+ 		@param qdec_port
+		@type str
+		@param qdec_baud
+		@type int
+		@param qdec_tout
+		@type int
+		@param qdec_filter_iters
+		@type int
+		@param actuator
+		@type int
+		@param step_div
+		@type int
+
+	"""
+
+	def __init__(self,
+			  	marker_length: float=0.010,
+				camera_ns: Optional[str]='',
+				vis :Optional[bool]=True,
+				use_reconfigure: Optional[bool]=False,
+				filter_type: Optional[str]='none',
+				f_ctrl: Optional[int]=30,
+				use_aruco: Optional[bool]=False,
+				plt_id: Optional[int]=-1,
+				rh8d_port: Optional[str]="/dev/ttyUSB1",
+                rh8d_baud: Optional[int]=1000000,
+ 				qdec_port: Optional[str]='/dev/ttyUSB0',
+				qdec_baud: Optional[int]=19200,
+				qdec_tout: Optional[int]=1,
+				qdec_filter_iters: Optional[int]=200,
+				actuator: Optional[int]=32,
+				step_div: Optional[int]=100,
+				) -> None:
+		
+		super().__init__(marker_length=marker_length,
+						camera_ns=camera_ns,
+						vis=vis,
+						use_reconfigure=use_reconfigure,
+						filter_type=filter_type,
+						f_ctrl=f_ctrl,
+						use_aruco=use_aruco,
+						plt_id=plt_id,
+						use_tf=False,
+						)
+		
+		self.step_div = step_div
+		self.actuator = actuator
+		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud)
+		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters)
+		
+	def detectionRoutine(self, cnt: int) -> dict:
+		rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+		raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+		(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
+		out_img = raw_img.copy()
+
+		if marker_det:
+			ids = self.hand_ids['index']
+			# check all ids detected
+			if not all([id in marker_det.keys() for id in ids]):
+				print("Cannot detect all required ids: ", ids)
+				return False
+			# compute angle
+			for idx in range(1, len(ids)):
+				base_id = ids[idx-1]
+				target_id = ids[idx]
+				base_marker = marker_det[base_id]
+				target_marker = marker_det[target_id]
+				angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+				marker_det[target_id].update({'angle': angle, 'base_id': base_id})
+			# sensor angles
+		angles = self.qdec.readAngles()
+		print(angles)
+
+		if self.vis:
+			# frame counter
+			cv2.putText(out_img, str(cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			for id in marker_det.keys():
+				# label marker angle
+				self.labelDetection(out_img, id, marker_det)
+			cv2.imshow('Processed', proc_img)
+			cv2.imshow('Detection', det_img)
+			cv2.imshow('Angles', out_img)
+
+		return marker_det
+		
+	def run(self) -> None:
+		cnt = 0
+		step = self.rh8d_ctrl.MAX_POS // self.step_div
+		rate = rospy.Rate(self.f_loop)
+		try:
+			self.rh8d_ctrl.setMinPos(self.actuator)
+			sleep(1)
+			while not rospy.is_shutdown() and cnt*step < self.rh8d_ctrl.MAX_POS:
+
+				self.detectionRoutine(cnt)
+				cnt += 1
+					
+				if cv2.waitKey(1) == ord("q"):
+					break
+				
+				print("Setting position", cnt*step)
+				self.rh8d_ctrl.setpos(self.actuator, cnt*step)
+
+				try:
+					rate.sleep()
+				except:
+					pass
+
+		except ValueError as e:
+			rospy.logerr(e)
+		finally:
+			self.rh8d_ctrl.setMinPos(self.actuator)
 			cv2.destroyAllWindows()
 		
 class CameraPoseDetect(DetectBase):
@@ -606,6 +744,23 @@ def main() -> None:
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),
 						).run()
+	elif rospy.get_param('~qdec_detect', False):
+		HybridDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
+					 marker_length=rospy.get_param('~marker_length', 0.010),
+					 use_reconfigure=rospy.get_param('~use_reconfigure', False),
+					 vis=rospy.get_param('~vis', True),
+					 filter_type=rospy.get_param('~filter', 'none'),
+					 f_ctrl=rospy.get_param('~f_ctrl', 30),
+					 use_aruco=rospy.get_param('~use_aruco', False),
+					 plt_id=rospy.get_param('~plot_id', -1),
+					 rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB1"),
+                	 rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
+ 					 qdec_port=rospy.get_param('~qdec_port', '/dev/ttyUSB0'),
+					 qdec_baud=rospy.get_param('~qdec_baud', 19200),
+					 qdec_filter_iters=rospy.get_param('~qdec_filter_iters', 200),
+					 actuator=rospy.get_param('~actuator', 32),
+					 step_div=rospy.get_param('~step_div', 100),
+					 ).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
 						marker_length=rospy.get_param('~marker_length', 0.010),
@@ -615,6 +770,7 @@ def main() -> None:
 						f_ctrl=rospy.get_param('~f_ctrl', 30),
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),
+						use_tf=rospy.get_param('~use_tf', False),
 						).run()
 	
 if __name__ == "__main__":
