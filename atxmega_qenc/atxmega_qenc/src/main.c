@@ -1,165 +1,122 @@
-/**
- * \file
- *
- * \brief Empty user application template
- *
- */
-
-/**
- * \mainpage User Application template doxygen documentation
- *
- * \par Empty user application template
- *
- * Bare minimum empty user application template
- *
- * \par Content
- *
- * -# Include the ASF header files (through asf.h)
- * -# "Insert system clock initialization code here" comment
- * -# Minimal main function that starts with a call to board_init()
- * -# "Insert application code here" comment
- *
- */
-
-/*
- * Include header files for all drivers that have been imported from
- * Atmel Software Framework (ASF).
- */
-/*
- * Support and FAQ: visit <a href="https://www.microchip.com/support/">Microchip Support</a>
- */
 #include <stdio.h>
 #include <asf.h>
 
-void initQdec(qdec_config_t* config);
+// PIN 2,3
+#define QDEC1 (1<<2)
+#define QDEC2 (1<<3)
+// resolution
+#define QUADRATURE_PPR 2048  // AMT10 max resolution
+#define QUADRATURE_COUNTS (QUADRATURE_PPR * 4)  // 8192 counts per revolution
+#define INIT_COUNTS (QUADRATURE_PPR * 2) // 4096 
+// sampling filter
+#define FILTER_SAMPLES EVSYS_DIGFILT_2SAMPLES_gc
+// binary data
+#define START_BYTE 0xAA
+#define END_BYTE   0xBB
+#define ESCAPE_BYTE 0x7D
+
 void initUart(void);
 void sendMsg(char* data);
 void initLed(void);
 uint8_t getChar(void);
 void putChar(uint8_t chr);
+void resetPosition(void);
+void initDistalQdec(void);
+void initMedialQdec(void);
+void initProximalQdec(void);
+void sendByte(uint8_t data);
+void sendEscByte(uint8_t data);
+void sendData(uint16_t num1, uint16_t num2, uint16_t num3);
 
-//typedef struct qdec_config {
-//	PORT_t *port;
-//	uint8_t pins_base;
-//	uint16_t pins_filter_us;
-//	struct {
-//		bool pins_invert;
-//	} phases;
-//	struct {
-//		bool enabled;
-//		bool pin_invert;
-//		enum QDec_index_rec_state rec_state;
-//	} index;
-//	bool rotary;
-//	uint8_t event_channel;
-//	volatile void *timer;
-//	uint16_t revolution;
-//	struct {
-//		bool enabled;
-//		uint8_t event_channel;
-//		volatile void *timer;
-//		uint32_t unit;
-//		uint32_t coef;
-//		uint16_t last_freq;
-//	} freq_opt;
-//} qdec_config_t;
-
-static qdec_config_t config_proximal = 
-{
-	.port = &PORTA,
-	.pins_base = 0,
-	.pins_filter_us = 2,
-	.phases.pins_invert = false,
-	.index.enabled = true,
-	.rotary = true,
-	.event_channel = 0,
-	.timer = &TCC0,
-	.freq_opt.timer = &TCC1,
-	.freq_opt.enabled = false,
-	.freq_opt.event_channel = 2,
-	.freq_opt.unit = 1000,
-	.revolution = 4
-};
-static qdec_config_t config_medial =
-{
-	.port = &PORTA,
-	.pins_base = 0,
-	.pins_filter_us = 2,
-	.phases.pins_invert = false,
-	.index.enabled = true,
-	.rotary = true,
-	.event_channel = 0,
-	.timer = &TCC0,
-	.freq_opt.timer = &TCC1,
-	.freq_opt.enabled = false,
-	.freq_opt.event_channel = 2,
-	.freq_opt.unit = 1000,
-	.revolution = 4
-};
-static qdec_config_t config_distal =
-{
-	.port = &PORTA,
-	.pins_base = 0,
-	.pins_filter_us = 2,
-	.phases.pins_invert = false,
-	.index.enabled = true,
-	.rotary = true,
-	.event_channel = 0,
-	.timer = &TCC0,
-	.freq_opt.timer = &TCC1,
-	.freq_opt.enabled = false,
-	.freq_opt.event_channel = 2,
-	.freq_opt.unit = 1000,
-	.revolution = 4
-};
-
+// handle usb request
 ISR(USARTE0_RXC_vect)
 {
+	// LED on
 	PORTA.OUT |= (1 << 7);
 	uint8_t data = USARTE0.DATA;
-	if (data == 'r')
-	{
-		uint16_t qdec_position_prox = qdec_get_position(&config_proximal) / 2;
-		bool dir_prox = qdec_get_direction(&config_proximal);
-		uint16_t qdec_position_med = qdec_get_position(&config_medial) / 2;
-		bool dir_med = qdec_get_direction(&config_medial);
-		uint16_t qdec_position_dist = qdec_get_position(&config_distal) / 2;
-		bool dir_dist = qdec_get_direction(&config_distal);
-		char msg[200];
-		sprintf(msg, "%d, %d, %d, %d, %d, %d\n", qdec_position_prox, dir_prox, qdec_position_med, dir_med, qdec_position_dist, dir_dist);
-		sendMsg(msg);
-	}
+	if (data == START_BYTE) 
+		// prox_pos, med_pos, dist_pos
+		sendData(TCC1.CNT, TCD0.CNT, TCD1.CNT);
+	else if (data == END_BYTE)
+		resetPosition();
 	else
-	{
-		sendMsg("online\n");
-	}
-	//printf(" %5umHz\r\n", qdec_get_frequency(&config_proximal));
-	delay_ms(250);
+		sendMsg("Send 0xBB for counter reset, 0xAA for position query\n");
+	// LED off
 	PORTA.OUT &= (0 << 7);
 }
 
 int main (void)
 {
+	sei();
+	
 	initLed();
 	initUart();
-	initQdec(&config_proximal);
-	initQdec(&config_medial);
-	initQdec(&config_distal);
-	
+	initProximalQdec();
+	initMedialQdec();
+	initDistalQdec();
+
 	while (1)
 	{
+		// char msg[200];
+		// uint16_t prox_pos = TCC1.CNT;
+		// uint16_t med_pos = TCD0.CNT;
+		// uint16_t dist_pos = TCD1.CNT;
+		// sprintf(msg, "%d %d %d\n", prox_pos, med_pos, dist_pos);
+		// sendMsg(msg);
+		// delay_ms(250);
 	}
 }
 
-void initQdec(qdec_config_t* config)
+void resetPosition(void)
 {
-	qdec_config_phase_pins(config, &PORTA, 6, false, 500);
-	/* Note: XMEGA E5 Xplained includes a quadrature encoder
-	 * with 40 positions for 20 hard ("clic") positions */
-	qdec_config_revolution(config, 40);
-	qdec_config_enable_freq(config, 1);
-	/* QDec enable */
-	qdec_enabled(config);
+	TCD1.CNT = INIT_COUNTS;
+	TCC1.CNT = INIT_COUNTS;
+	TCD0.CNT = INIT_COUNTS;
+}
+
+void initProximalQdec(void)
+{
+	// PORTC, CHANNEL0, PIN2,3, TCC1
+	PORTC.DIRCLR = QDEC1 | QDEC2;
+	PORTC.PIN1CTRL = PORT_INVEN_bm;
+	PORTC.PIN2CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc;
+	PORTC.PIN3CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc;
+	EVSYS.CH0MUX = EVSYS_CHMUX_PORTC_PIN2_gc;
+	EVSYS.CH0CTRL = EVSYS_QDEN_bm | FILTER_SAMPLES;
+	TCC1.CTRLD = TC_EVACT_QDEC_gc | TC_EVSEL_CH0_gc;
+	TCC1.PER = QUADRATURE_COUNTS;
+	TCC1_CTRLA = TC_CLKSEL_DIV1_gc;
+	TCC1.CNT = INIT_COUNTS;
+}
+
+void initMedialQdec(void)
+{ 
+	// PORTD, CHANNEL2, PIN2,3, TCD0
+	PORTD.DIRCLR = QDEC1 | QDEC2; // 2,3 input 
+	PORTD.PIN1CTRL = PORT_INVEN_bm; // logic invert
+	PORTD.PIN2CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc; //  level sensitive, pullup ena
+	PORTD.PIN3CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc; //  level sensitive, pullup ena
+	EVSYS.CH2MUX = EVSYS_CHMUX_PORTD_PIN2_gc; // set up channel 2 to use the signal from PORTD pin 2 as input
+	EVSYS.CH2CTRL = EVSYS_QDEN_bm | FILTER_SAMPLES; // ena qdec and set filtering for channel 2
+	TCD0.CTRLD = TC_EVACT_QDEC_gc | TC_EVSEL_CH2_gc; // conf timer for qdec event from channel 2
+	TCD0.PER = QUADRATURE_COUNTS; // set encoder PPR
+	TCD0_CTRLA = TC_CLKSEL_DIV1_gc; // high speed count
+	TCD0.CNT = INIT_COUNTS; // zero counter
+}
+
+void initDistalQdec(void)
+{
+	// PORTA, CHANNEL4, PIN2,3, TCD1
+	PORTA.DIRCLR = QDEC1 | QDEC2;
+	PORTA.PIN1CTRL = PORT_INVEN_bm;
+	PORTA.PIN2CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc;
+	PORTA.PIN3CTRL = PORT_ISC_LEVEL_gc | PORT_OPC_PULLUP_gc;
+	EVSYS.CH4MUX = EVSYS_CHMUX_PORTA_PIN2_gc;
+	EVSYS.CH4CTRL = EVSYS_QDEN_bm | FILTER_SAMPLES;
+	TCD1.CTRLD = TC_EVACT_QDEC_gc | TC_EVSEL_CH4_gc;
+	TCD1.PER = QUADRATURE_COUNTS;
+	TCD1_CTRLA = TC_CLKSEL_DIV1_gc;
+	TCD1.CNT = INIT_COUNTS;
 }
 
 void initLed(void)
@@ -215,4 +172,37 @@ void putChar(uint8_t chr)
 	USARTE0.DATA = chr;
 	while(!(USARTE0.STATUS & USART_DREIF_bm));
 	USARTE0.DATA = '\n';
+}
+
+void sendByte(uint8_t data) 
+{
+	while(!(USARTE0.STATUS & USART_DREIF_bm));
+	USARTE0.DATA = data;
+}
+
+void sendEscByte(uint8_t data) 
+{
+	if (data == START_BYTE || data == END_BYTE || data == ESCAPE_BYTE) 
+	{
+		// send escape byte
+		sendByte(ESCAPE_BYTE);
+		// send xored data
+		sendByte(data ^ 0x20);
+	} 
+	else 
+	{
+		sendByte(data);
+	}
+}
+
+void sendData(uint16_t num1, uint16_t num2, uint16_t num3) 
+{
+	sendByte(START_BYTE);
+	sendEscByte((uint8_t)(num1 >> 8));   // high byte
+	sendEscByte((uint8_t)(num1 & 0xFF)); // low byte 
+	sendEscByte((uint8_t)(num2 >> 8));   // high byte
+	sendEscByte((uint8_t)(num2 & 0xFF)); // low byte 
+	sendEscByte((uint8_t)(num3 >> 8));   // high byte
+	sendEscByte((uint8_t)(num3 & 0xFF)); // low byte 
+	sendByte(END_BYTE);
 }

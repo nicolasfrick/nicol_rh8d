@@ -410,3 +410,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ```
 
 python demo.py --ckpt_path checkpoints_dir--use_big_decoder --dec_layers 6
+
+# Embedded
+The AMT103 quadrature encoders are attached to each shaft of the index finger. The  XMEGA-A4-USB MCU from RODENHAUSEN ELECTRONIC (dev-tools.de purchase) can handle 3 encoders.
+The code is compiled with AtmelStudio 7 (WIN10). Open project \atxmega_qenc\atxmega_qenc.cproj and compile the project. The memory is flashed with Nano Development Manager (www.dev-tools.de).
+
+To flash the memory start application and select Targetsystem: Mikrocontrollermodule, Module: XMEGA-A4-USB, Flash Memory: click open and select \atxmega_qenc\atxmega_qenc\Debug\\atxmega_qenc\atxmega_qenc.hex,
+Programming: click Write Flash Memory (select the proper COM port on top right).
+
+UART setting: 
+		-> 19200 Baud @ 2 MHz with CLK2X = 0, BSCALE = -5
+		-> Rx InterruptW
+		-> Use Rx and Tx
+		-> 8N1
