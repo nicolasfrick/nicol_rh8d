@@ -1,11 +1,11 @@
 # denoise
 image_denoising:
-  hist_equalization: true
-  denoise: false
+  hist_equalization: false 
+  denoise: true
   h: 10.0 
   templateWindowSize: 7
   searchWindowSize: 21
-# estimator
+# aruco pose estimation
 pose_estimation:
   pattern: 0
   solvePnPMethod: 7 

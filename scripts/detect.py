@@ -116,6 +116,36 @@ class DetectBase():
 	
 	def run(self) -> None:
 		raise NotImplementedError
+	
+	def runDebug(self) -> None:
+		cnt = 0
+		rate = rospy.Rate(self.f_loop)
+		try:
+			while not rospy.is_shutdown():
+				rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+				raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
+
+				if self.vis:
+					# frame counter
+					cv2.putText(det_img, str(cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+					cv2.imshow('Processed', proc_img)
+					cv2.imshow('Detection', det_img)
+
+					if cv2.waitKey(1) == ord("q"):
+						break
+					
+				try:
+					rate.sleep()
+				except:
+					pass
+
+				cnt += 1
+
+		except Exception as e:
+			rospy.logerr(e)
+		finally:
+			cv2.destroyAllWindows()
 
 class KeypointDetect(DetectBase):
 	"""
@@ -413,7 +443,7 @@ class HybridDetect(KeypointDetect):
 			# check all ids detected
 			if not all([id in marker_det.keys() for id in ids]):
 				print("Cannot detect all required ids: ", ids)
-				return False
+				return {}
 			# compute angle
 			for idx in range(1, len(ids)):
 				base_id = ids[idx-1]
@@ -440,7 +470,7 @@ class HybridDetect(KeypointDetect):
 		
 	def run(self) -> None:
 		cnt = 0
-		step = self.rh8d_ctrl.MAX_POS // self.step_div
+		step = (self.rh8d_ctrl.MAX_POS-300) // self.step_div
 		rate = rospy.Rate(self.f_loop)
 		try:
 			self.rh8d_ctrl.setMinPos(self.actuator)
@@ -734,7 +764,17 @@ class CameraPoseDetect(DetectBase):
 
 def main() -> None:
 	rospy.init_node('dataset_collector')
-	if rospy.get_param('~camera_pose', False):
+	if rospy.get_param('~debug', False):
+		DetectBase(camera_ns=rospy.get_param('~markers_camera_name', ''),
+				   marker_length=rospy.get_param('~marker_length', 0.010),
+				   use_reconfigure=rospy.get_param('~use_reconfigure', False),
+				   vis=rospy.get_param('~vis', True),
+				   filter_type=rospy.get_param('~filter', 'none'),
+				   f_ctrl=rospy.get_param('~f_ctrl', 30),
+				   use_aruco=rospy.get_param('~use_aruco', False),
+				   plt_id=rospy.get_param('~plot_id', -1),
+				   ).runDebug()
+	elif rospy.get_param('~camera_pose', False):
 		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
 						marker_length=rospy.get_param('~marker_length', 0.010),
 						use_reconfigure=rospy.get_param('~use_reconfigure', False),

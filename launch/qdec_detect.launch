@@ -8,6 +8,7 @@
 	<arg name="actuator" default="36" />
 	<arg name="step_div" default="100" />
 	<arg name="f_ctrl" default="0.5" /> 
+	<arg name="debug" default="false" /> 
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
@@ -95,6 +96,7 @@
 		<param name="qdec_filter_iters" value="$(arg qdec_filter_iters)" />
 		<param name="actuator" value="$(arg actuator)" />
 		<param name="step_div" value="$(arg step_div)" /> 
+		<param name="debug" value="$(arg debug)" /> 
 		<param name="qdec_detect" value="true" />
 	</node>
 
