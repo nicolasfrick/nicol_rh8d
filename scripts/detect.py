@@ -429,8 +429,16 @@ class HybridDetect(KeypointDetect):
 		
 		self.step_div = step_div
 		self.actuator = actuator
+		self.target_ids = self.hand_ids['index']
 		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud)
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters)
+
+	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
+		txt = "{} cv: {:.2f}° qdec: {:.2f}° err: {:.2f}°".format(id, marker_det[id]['det_angle'], marker_det[id]['qdec_angle'], marker_det[id]['error'])
+		xpos = self.TXT_OFFSET
+		ypos = (id+1)*self.TXT_OFFSET
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+
 		
 	def detectionRoutine(self, cnt: int) -> dict:
 		rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
@@ -439,22 +447,22 @@ class HybridDetect(KeypointDetect):
 		out_img = raw_img.copy()
 
 		if marker_det:
-			ids = self.hand_ids['index']
 			# check all ids detected
-			if not all([id in marker_det.keys() for id in ids]):
-				print("Cannot detect all required ids: ", ids)
-				return {}
-			# compute angle
-			for idx in range(1, len(ids)):
-				base_id = ids[idx-1]
-				target_id = ids[idx]
-				base_marker = marker_det[base_id]
-				target_marker = marker_det[target_id]
-				angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
-				marker_det[target_id].update({'angle': angle, 'base_id': base_id})
-			# sensor angles
-		angles = self.qdec.readAngles()
-		print(angles)
+			if all([id in marker_det.keys() for id in self.target_ids]):
+				# encoder angles
+				qdec_angles = self.qdec.readMedianAnglesRad()
+				# compute cv angle
+				for idx in range(1, len(self.target_ids)):
+					base_id = self.target_ids[idx-1]
+					target_id = self.target_ids[idx]
+					base_marker = marker_det[base_id]
+					target_marker = marker_det[target_id]
+					det_angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					qdec_angle = qdec_angles[idx-1]
+					error = np.abs(qdec_angle - det_angle)
+					marker_det[target_id].update({'det_angle': det_angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
+				else:
+					print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
 
 		if self.vis:
 			# frame counter
@@ -462,6 +470,7 @@ class HybridDetect(KeypointDetect):
 			for id in marker_det.keys():
 				# label marker angle
 				self.labelDetection(out_img, id, marker_det)
+				self.labelQdecAngles(out_img, id, marker_det)
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
 			cv2.imshow('Angles', out_img)
@@ -484,7 +493,7 @@ class HybridDetect(KeypointDetect):
 					break
 				
 				print("Setting position", cnt*step)
-				self.rh8d_ctrl.setpos(self.actuator, cnt*step)
+				self.rh8d_ctrl.setPos(self.actuator, cnt*step)
 
 				try:
 					rate.sleep()

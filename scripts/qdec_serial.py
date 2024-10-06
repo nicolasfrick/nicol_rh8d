@@ -1,4 +1,5 @@
 import serial
+import numpy as np
 import pandas as pd
 from typing import Tuple, Union, Optional
 
@@ -34,28 +35,34 @@ class QdecSerial():
 		except Exception as e:
 			print(e)
 
-	def readAngles(self) -> Tuple[int, int, int]:
+	def readMedianAnglesRad(self) -> Tuple[int, int, int]:
+		filter = self.readAngles() 
+		median = filter.median()
+		return self._toAngle(median.prox, False), self._toAngle(median.med, False), self._toAngle(median.dist, False)
+	
+	def readMedianAnglesDeg(self) -> Tuple[int, int, int]:
+		filter = self.readAngles() 
+		median = filter.median()
+		return self._toAngle(median.prox), self._toAngle(median.med), self._toAngle(median.dist)
+
+	def readAngles(self) -> pd.DataFrame:
 		""" Read num filter_iters counter values and
 			return the angle computed from their medians.
 		"""
 		filter = pd.DataFrame(columns=self.COLS)
-
-		# fill filter
 		for idx in range(self.filter_iters):
 			tpl = self._txRxData()
-			if tpl:
+			if tpl: 
 				filter.loc[idx] = tpl
-
-		# median filter
-		median = filter.median()
-		return self._toAngle(median.prox), self._toAngle(median.med), self._toAngle(median.dist)
+		return filter
 	
-	def _toAngle(self, cnt_val: int) -> float:
+	def _toAngle(self, cnt_val: int, deg: bool=True) -> float:
+		base = 360.0 if deg else 2*np.pi
 		angle_cnt = cnt_val - self.INIT_COUNTS
 		# restrict to positive angles
 		if angle_cnt <= 0:
 			return 0.0
-		return (360.0 / self.QUADRATURE_COUNTS) * angle_cnt
+		return (base / self.QUADRATURE_COUNTS) * angle_cnt
 
 	def _txRxData(self, max_iters: int=100) -> Union[Tuple[int, int, int], bool]:
 		""" Read bytes for 3 uint16 values.
@@ -122,6 +129,6 @@ if __name__ == '__main__':
 	s = QdecSerial()
 	s.qdecReset()
 	for _ in range(10):
-		deg = s.readAngles()
+		deg = s.readMedianAnglesDeg()
 		print(deg)
 		time.sleep(2)

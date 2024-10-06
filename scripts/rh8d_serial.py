@@ -37,10 +37,10 @@ class RH8DSerial():
         self.pres_ids = self.scan()
 
     def setMinPos(self, id: int) -> None:
-        self.setpos(id, self.MIN_POS)
+        self.setPos(id, self.MIN_POS)
 
     def setMaxPos(self, id: int) -> None:
-        self.setpos(id, self.MAX_POS)
+        self.setPos(id, self.MAX_POS)
 
     def getpos(self, id: int) -> Union[int, None]:
         if not id in self.pres_ids:
@@ -50,7 +50,7 @@ class RH8DSerial():
             position = self.pckt_handler.read2ByteTxRx(self.port_handler, id, self.PRES_POS_REG)
             return position[0]
 
-    def setpos(self, id: int, val: int) -> None:
+    def setPos(self, id: int, val: int) -> None:
         if not id in self.pres_ids:
             print("Writing id not present")
             return
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
         time.sleep(1)
         for pos in range(100, s.MAX_POS, 100):
-            s.setpos(id, pos)
+            s.setPos(id, pos)
             time.sleep(0.1)
 
         time.sleep(2)
