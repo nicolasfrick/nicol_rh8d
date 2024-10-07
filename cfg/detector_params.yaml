@@ -1,7 +1,7 @@
 # denoise
 image_denoising:
   hist_equalization: false 
-  denoise: true
+  denoise: false
   h: 10.0 
   templateWindowSize: 7
   searchWindowSize: 21
@@ -47,7 +47,7 @@ aruco_detection:
   minMarkerLengthRatioOriginalImg: 0.0
 # apriltag detector
 apriltag_detection:
-  nthreads: 6
+  nthreads: 7
   quad_decimate: 0.0
   quad_sigma: 0.5
   refine_edges: true
@@ -56,3 +56,8 @@ apriltag_detection:
   max_hamming: 1
   min_marker_width : 20.0
   min_marker_height: 20.0
+# kalman
+kalman_filter:
+  error_post: 0.0
+  process_noise: 0.000000008
+  measurement_noise: 0.000000008

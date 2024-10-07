@@ -67,7 +67,7 @@ class DetectBase():
 		self.f_loop = f_ctrl
 		self.use_aruco = use_aruco
 		self.filter_type = filter_type
-		self.filter_iters = filter_iters
+		self.filter_iters = filter_iters if filter_type != 'none' else 1
 		self.frame_cnt = 0
 
 		# init ros
@@ -94,7 +94,7 @@ class DetectBase():
 			
 		# init vis	
 		if vis:
-			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
+			# cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
 				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
@@ -104,15 +104,6 @@ class DetectBase():
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
-
-	def euler2Matrix(self, euler: np.ndarray) -> np.ndarray:
-		return R.from_euler('xyz', euler).as_matrix()
-	
-	def pose2Matrix(self, tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
-		transformation_matrix = np.eye(4)
-		transformation_matrix[:3, :3] = getRotation(rot, rot_t, RotTypes.MAT)
-		transformation_matrix[:3, 3] = tvec
-		return transformation_matrix
 	
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
 		""" Put num filter_iters images into
@@ -120,12 +111,12 @@ class DetectBase():
 			detection.
 		"""
 		self.det.resetFilters()
-		iters = self.filter_iters if self.filter_iters > 0 else 1
+		iters = self.filter_iters if self.filter_iters > 0 else 1 # iters >= 1
 		for i in range(iters):
 			self.frame_cnt += 1
 			rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 			raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if i >= iters-1 else False)
+			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if (i >= iters-1 and self.vis) else False)
 		return marker_det, det_img, proc_img, raw_img
 	
 	def runDebug(self) -> None:
@@ -149,7 +140,7 @@ class DetectBase():
 		finally:
 			cv2.destroyAllWindows()
 
-	def detectionRoutine(self, cnt: int) -> Union[Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, int], dict]:
+	def detectionRoutine(self, arg: Any) -> Union[Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, int], dict]:
 		raise NotImplementedError
 	
 	def run(self) -> None:
@@ -213,8 +204,8 @@ class KeypointDetect(DetectBase):
 			self.hand_ids = yaml.safe_load(fr)
 
 		# init vis
-		if vis:
-			cv2.namedWindow("Angles", cv2.WINDOW_NORMAL)
+		# if vis:
+		# 	cv2.namedWindow("Angles", cv2.WINDOW_NORMAL)
 
 	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XZ plane in the markee frame.
@@ -440,26 +431,31 @@ class HybridDetect(KeypointDetect):
 		self.epochs = epochs
 		self.step_div = step_div
 		self.actuator = actuator
+		self.start_angles = {}
 		self.target_ids = self.hand_ids['index']
 		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud)
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters)
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
-		ang = marker_det[id].get('det_angle') 
-		if ang is None: 
+		angle = marker_det[id].get('angle') 
+		if angle is None: 
 			return
-		txt = "{} cv: {:.2f}° qdec: {:.2f}° err: {:.2f}°".format(id, ang, marker_det[id]['qdec_angle'], marker_det[id]['error'])
+		txt = "{} -> {} cv: {:.2f} deg, qdec: {:.2f} deg, err: {:.2f} deg".format(marker_det[id]['base_id'], id, np.rad2deg(angle), np.rad2deg(marker_det[id]['qdec_angle']), np.rad2deg(marker_det[id]['error']))
 		xpos = self.TXT_OFFSET
 		ypos = (id+1)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
-	def detectionRoutine(self) -> dict:
+	def detectionRoutine(self, new_epoch: bool) -> Tuple[dict, bool]:
+		res = False
 		# get filtered detection
 		(marker_det, det_img, proc_img, _) = self.preProcImage()
 		if marker_det:
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
-				# encoder angles
+				# zero qdec angles
+				if new_epoch:
+					self.qdec.qdecReset()
+				# encoder angles in rad
 				qdec_angles = self.qdec.readMedianAnglesRad()
 				# compute cv angle
 				for idx in range(1, len(self.target_ids)):
@@ -467,10 +463,18 @@ class HybridDetect(KeypointDetect):
 					target_id = self.target_ids[idx]
 					base_marker = marker_det[base_id]
 					target_marker = marker_det[target_id]
-					det_angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					# detected angle in rad
+					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					# save initially detected angle
+					if new_epoch:
+						self.start_angles.update({idx-1: angle})
+					# substract initial angle
+					angle = angle - self.start_angles[idx-1]
 					qdec_angle = qdec_angles[idx-1]
-					error = np.abs(qdec_angle - det_angle)
-					marker_det[target_id].update({'det_angle': det_angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
+					error = np.abs(qdec_angle - angle)
+					marker_det[target_id].update({'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
+					print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+				res = True
 			else:
 				print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
 
@@ -481,10 +485,10 @@ class HybridDetect(KeypointDetect):
 				# label marker angle
 				self.labelDetection(det_img, id, marker_det)
 				self.labelQdecAngles(det_img, id, marker_det)
-			cv2.imshow('Processed', proc_img)
+			# cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
 
-		return marker_det
+		return marker_det, res
 		
 	def run(self) -> None:
 		lim = 300
@@ -496,29 +500,37 @@ class HybridDetect(KeypointDetect):
 		try:
 			for e in range(self.epochs):
 				print("Epoch", e+1)
+				new_epoch = True
 				# move to zero
 				self.rh8d_ctrl.setMinPos(self.actuator, 1)
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
-
-					self.detectionRoutine()
+					
+					# detect angles
+					(det, success) = self.detectionRoutine(new_epoch)
 
 					if cv2.waitKey(1) == ord("q"):
-						break
+						return
 					
+					# move finger
 					print("Setting position", pos_cmd)
 					self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
-					pos_cmd += step
+					
+					# increment position if detection was successful
+					if success:
+						pos_cmd += step
+						new_epoch = False
 
 					try:
 						rate.sleep()
 					except:
 						pass
 
-		except ValueError as e:
+		except Exception as e:
 			rospy.logerr(e)
 		finally:
 			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
+			rospy.signal_shutdown(0)
 		
 class CameraPoseDetect(DetectBase):
 	"""
@@ -606,8 +618,8 @@ class CameraPoseDetect(DetectBase):
 	def projectMarkers(self, detection:dict, camera_pose: np.ndarray, img: cv2.typing.MatLike=None) -> float:
 		err = 0
 		# invert world to camera tf for reprojection
-		tvec_inv, euler_inv = self.det.invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
-		T_cam_world = self.pose2Matrix(tvec_inv, euler_inv, RotTypes.EULER)
+		tvec_inv, euler_inv = invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
+		T_cam_world = pose2Matrix(tvec_inv, euler_inv, RotTypes.EULER)
 		# iter measured markers
 		for id, det in detection.items():
 			# reprojection error
@@ -624,11 +636,11 @@ class CameraPoseDetect(DetectBase):
 	def getWorldMarkerTF(self, id: int) -> np.ndarray:
 		# marker root tf
 		root = self.marker_table_poses.get('root')
-		T_world_root = self.pose2Matrix(root['xyz'], root['rpy'], RotTypes.EULER) if root is not None else np.eye(4)
+		T_world_root = pose2Matrix(root['xyz'], root['rpy'], RotTypes.EULER) if root is not None else np.eye(4)
 		# marker tf
 		marker = self.marker_table_poses.get(id)
 		assert(marker) # marker id entry in yaml?
-		T_root_marker = self.pose2Matrix(marker['xyz'], marker['rpy'], RotTypes.EULER)
+		T_root_marker = pose2Matrix(marker['xyz'], marker['rpy'], RotTypes.EULER)
 		# worldTmarker
 		return T_world_root @ T_root_marker
 	
@@ -639,8 +651,8 @@ class CameraPoseDetect(DetectBase):
 			print(f"Cannot find id {id} in detection!")
 			return tf
 		# get markerTcamera
-		inv_tvec, inv_euler = self.det.invPersp(tvec=det['ftrans'], rot=det['frot'], rot_t=RotTypes.EULER)
-		T_marker_cam = self.pose2Matrix(inv_tvec, inv_euler, RotTypes.EULER)
+		inv_tvec, inv_euler = invPersp(tvec=det['ftrans'], rot=det['frot'], rot_t=RotTypes.EULER)
+		T_marker_cam = pose2Matrix(inv_tvec, inv_euler, RotTypes.EULER)
 		# get worldTcamera
 		T_world_marker = self.getWorldMarkerTF(id)
 		T_world_cam = T_world_marker @ T_marker_cam
@@ -663,15 +675,15 @@ class CameraPoseDetect(DetectBase):
 		"""
 		error = []
 		# estimate
-		T_world_camera = self.pose2Matrix(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
+		T_world_camera = pose2Matrix(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
 		# invert for reprojection
-		tvec_inv, euler_inv = self.det.invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
-		T_camera_world = self.pose2Matrix(tvec=tvec_inv, rot=euler_inv, rot_t=RotTypes.EULER)
+		tvec_inv, euler_inv = invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
+		T_camera_world = pose2Matrix(tvec=tvec_inv, rot=euler_inv, rot_t=RotTypes.EULER)
 		for id in marker_poses:
 			det = detection.get(id)
 			if det is not None:
 				# detected tag pose wrt camera frame
-				T_camera_marker = self.pose2Matrix(det['ftrans'], det['frot'], RotTypes.EULER)
+				T_camera_marker = pose2Matrix(det['ftrans'], det['frot'], RotTypes.EULER)
 				T_world_marker_est = T_world_camera @ T_camera_marker
 				# measured tag pose wrt world 
 				T_world_marker = self.getWorldMarkerTF(id)
@@ -769,7 +781,7 @@ class CameraPoseDetect(DetectBase):
 							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
 							if id == self.plt_id and self.frame_cnt > 10:
-								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], self.euler2Matrix(det['frot']), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
+								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], euler2Matrix(det['frot']), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):

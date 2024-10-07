@@ -36,6 +36,9 @@ class RH8DSerial():
             print("Failed to change the baudrate", baud)
 
         self.pres_ids = self.scan()
+        if len(self.pres_ids) == 0:
+            print("No actuators found!")
+            quit(1)
         print("Active ids:", self.pres_ids)
 
     def setMinPos(self, id: int, t_sleep: float=0.0) -> None:

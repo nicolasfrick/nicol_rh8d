@@ -10,13 +10,22 @@ import dt_apriltags as apl
 from threading import Lock
 from typing import Optional, Tuple, Any, Callable
 from pose_filter import *
+from util import *
 
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
+
+@dataclasses.dataclass(eq=False)
+class KfParams():
+  error_post = 0.0
+  process_noise = 1e-8
+  measurement_noise = 1e-8
+  param_change = False
 
 @dataclasses.dataclass(eq=False)
 class ReconfParams():
 	aruco_params = aru.DetectorParameters()
 	estimate_params = aru.EstimateParameters()
+	kf_params = KfParams()
 
 class MarkerDetectorBase():
 	"""Base clas for fiducial marker detection.
@@ -94,6 +103,11 @@ class MarkerDetectorBase():
 					self.params.estimate_params.__setattr__(k, v)
 				elif k in self.params_config['aruco_detection']:
 					self.params.aruco_params.__setattr__(k, v)
+				elif k in self.params_config['kalman_filter']:
+					# set only when value has changed (up to 10 digits)
+					if np.round(v, 10) != np.round(self.params_config['kalman_filter'][k], 10):
+						self.params.kf_params.__setattr__(k, v)
+						self.params.kf_params.param_change = True
 				else:
 					self.params.__setattr__(k, v)
 			self.params_change = True
@@ -120,16 +134,6 @@ class MarkerDetectorBase():
 	@property
 	def square_points(self) -> np.ndarray:
 		return self.obj_points
-	
-	def invPersp(self, tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> Tuple[cv2.typing.MatLike, cv2.typing.MatLike]:
-		"""Apply the inversion to the given vectors [[R^-1 -R^-1*d][0 0 0 1]]"""
-		mat = getRotation(rot, rot_t, RotTypes.MAT)
-		mat = np.matrix(mat).T # orth. matrix: A.T = A^-1
-		inv_tvec = -mat @ tvec # -R^-1*d
-		inv_rot = getRotation(mat, RotTypes.MAT, rot_t)
-		if rot_t != RotTypes.MAT:
-			inv_rot = inv_rot.flatten()
-		return np.array(inv_tvec.flat), inv_rot
 	
 	def _genSquarePoints(self, length: float) -> np.ndarray:
 		"""
@@ -339,12 +343,19 @@ class AprilDetector(MarkerDetectorBase):
 						(success, tvec, rot_mat, inliers) = self.refineDetection(detection.corners, tvec, getRotation(rot_mat, RotTypes.MAT, RotTypes.RVEC), RotTypes.MAT)
 					# invert pose
 					if self.invert_perspective:
-						(tvec, rot_mat) = self.invPersp(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT)
+						(tvec, rot_mat) = invPersp(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT)
 					# filtering
-					if id in self.filters.keys():
+					if id in self.filters.keys() and not self.params.kf_params.param_change:
 						self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT))
 					else:
-						self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT), self.f_ctrl)} )
+						# new filter
+						self.filters.update( {id: createFilter(self.filter_type, 
+											 				   PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT),
+															   f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+															   process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
+															   measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
+															   error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
+						self.params.kf_params.param_change = False # reset flag for next update
 					# result
 					marker_poses.update({id: {'rvec': cv2.Rodrigues(rot_mat)[0].flatten(), 
 							   											'rot_mat': rot_mat,
@@ -501,23 +512,30 @@ class ArucoDetector(MarkerDetectorBase):
 				if self.refine_detection:
 					(success, tvec, rvec, inliers) = self.refineDetection(corner.reshape((4,2)), tvec, rvec, RotTypes.RVEC)
 				if self.invert_perspective:
-					(tvec, rvec) = self.invPersp(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC)
+					(tvec, rvec) = invPersp(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC)
 				# filtering
-				if id in self.filters.keys():
+				if id in self.filters.keys()and not self.params.kf_params.param_change:
 					self.filters[id].updateFilter(PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC))
 				else:
-					self.filters.update( {id: createFilter(self.filter_type, PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC), self.f_ctrl)} )
+					# new filter
+					self.filters.update( {id: createFilter(self.filter_type, 
+										 				   PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC),
+														   f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+														   process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
+														   measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
+														   error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
+					self.params.kf_params.param_change = False # reset flag for next update
 				# results
 				marker_poses.update({id: {'rvec': rvec, 
-							   										'rot_mat': cv2.Rodrigues(rvec)[0],
-							   										'tvec': tvec, 
-																	'points': obj_points, 
-																	'corners': corner.reshape((4,2)), 
-																	'ftrans': self.getFilteredTranslationById(id), 
-																	'frot': self.getFilteredRotationEulerById(id),
-																	'homography': None,
-																	'center': None,
-																	'pose_err': None}})
+							   				'rot_mat': cv2.Rodrigues(rvec)[0],
+							   				'tvec': tvec, 
+											'points': obj_points, 
+											'corners': corner.reshape((4,2)), 
+											'ftrans': self.getFilteredTranslationById(id), 
+											'frot': self.getFilteredRotationEulerById(id),
+											'homography': None,
+											'center': None,
+											'pose_err': None}})
 
 		# draw detection
 		if vis:

@@ -13,15 +13,24 @@ class FilterTypes(Enum):
 	NONE='none'
 	MEAN='mean'
 	MEDIAN='median'
-	KALMAN_LIN_MOTION='kalman_lin_motion'
-	KALMAN_DEFAULT='kalman_default'
-FILTER_TYPES_MAP={ 'none':FilterTypes.NONE, 'mean':FilterTypes.MEAN, 'median':FilterTypes.MEDIAN, 'kalman_lin_motion':FilterTypes.KALMAN_LIN_MOTION, 'kalman_default':FilterTypes.KALMAN_DEFAULT }
+	KALMAN_SIMPLE='kalman_simple'
+	KALMAN='kalman'
+FILTER_TYPES_MAP={ 'none':FilterTypes.NONE, 'mean':FilterTypes.MEAN, 'median':FilterTypes.MEDIAN, 'kalman_simple':FilterTypes.KALMAN_SIMPLE, 'kalman':FilterTypes.KALMAN }
 
 class PoseFilterBase():
+	""" Filter base class.
 
-	def __init__(self) -> None:
-		self.translation_estimated = np.zeros(3, dtype=np.float32)
-		self.rotation_estimated = np.zeros(3, dtype=np.float32) 
+		@param state_init Initialize the states of the filter (x,y,z,r,p,y), 
+						  repr. initial return value.
+		@type Tuple[float,float,float,float,float,float]
+	"""
+
+	def __init__(self,
+			  	 state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
+				 ) -> None:
+		# init return values
+		self.translation_estimated = np.array(state_init[:3], dtype=np.float32)
+		self.rotation_estimated = np.array(state_init[3:], dtype=np.float32)
 
 	@property
 	def est_rotation_as_euler(self) -> np.ndarray:
@@ -63,8 +72,6 @@ class PoseFilterBase():
 class PoseFilterMean(PoseFilterBase):
 	""" Compute the mean for each value
 
-		@param state_init Initialize the states of the filter (x,y,z,r,p,y)
-		@type Tuple[float,float,float,float,float,float]
 		@param use_median Use the median instead of mean as filter
 		@type bool
 	"""
@@ -72,9 +79,9 @@ class PoseFilterMean(PoseFilterBase):
 	COLS = ['x','y','z','roll','pitch','yaw']
 
 	def __init__(self,
-			  				state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
-							use_median: Optional[bool]=False) -> None:
-		super().__init__()
+			  	state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
+				use_median: Optional[bool]=False) -> None:
+		super().__init__(state_init)
 		self.use_median = use_median
 		self.filter = pd.DataFrame(np.array([state_init]),columns=self.COLS, dtype=pd.Float32Dtype)
 
@@ -117,14 +124,14 @@ class PoseFilterKalman(PoseFilterBase):
 	num_measurements_per_model = [6, 3]
 
 	def __init__(self,
-			  				f_ctrl: float,
-							state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
-							process_noise: Optional[float]=1e-10,
-							measurement_noise: Optional[float]=1e-10,
-							error_post: Optional[float]=0.0,
-							lin_motion: Optional[bool]=True) -> None:
+			  	f_ctrl: float,
+				state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
+				process_noise: Optional[float]=1e-10,
+				measurement_noise: Optional[float]=1e-10,
+				error_post: Optional[float]=0.0,
+				lin_motion: Optional[bool]=True) -> None:
 		
-		super().__init__()
+		super().__init__(state_init)
 		self.dt = 1/f_ctrl
 		self.state_init = state_init
 		self.process_noise = process_noise
@@ -279,24 +286,25 @@ class PoseFilterKalman(PoseFilterBase):
 		return self.translation_estimated, self.rotation_estimated
 	
 def createFilter(filter_type: Union[FilterTypes, str], 
-				 				init_state: Optional[Tuple[float, float, float, float, float, float]]=6*[0],
-								f_ctrl_kalman: Optional[int]=100,
-								process_noise_kalman: Optional[float]=1e-10, 
-								measurement_noise_kalman: Optional[float]=1e-10, 
-								error_post_kalman: Optional[float]=0.0
-								) -> Union[PoseFilterMean, PoseFilterKalman, PoseFilterBase]:
+				init_state: Optional[Tuple[float, float, float, float, float, float]]=6*[0],
+				f_ctrl_kalman: Optional[int]=100,
+				process_noise_kalman: Optional[float]=1e-10, 
+				measurement_noise_kalman: Optional[float]=1e-10, 
+				error_post_kalman: Optional[float]=0.0
+				) -> Union[PoseFilterMean, PoseFilterKalman, PoseFilterBase]:
 	ft = filter_type if isinstance(filter_type, FilterTypes) else FILTER_TYPES_MAP[filter_type]
 	if ft in [FilterTypes.MEAN, FilterTypes.MEDIAN]:
 		return PoseFilterMean(state_init=init_state, 
-													 use_median=ft==FilterTypes.MEDIAN)  
-	elif ft in [FilterTypes.KALMAN_DEFAULT, FilterTypes.KALMAN_LIN_MOTION]:
+							use_median=ft==FilterTypes.MEDIAN)  
+	elif ft in [FilterTypes.KALMAN, FilterTypes.KALMAN_SIMPLE]:
 		return PoseFilterKalman(f_ctrl=f_ctrl_kalman, 
-						  								state_init=init_state, 
-														measurement_noise=measurement_noise_kalman, 
-														process_noise=process_noise_kalman, 
-														error_post=error_post_kalman,
-														lin_motion=ft==FilterTypes.KALMAN_LIN_MOTION)
+						  		state_init=init_state, 
+								measurement_noise=measurement_noise_kalman, 
+								process_noise=process_noise_kalman, 
+								error_post=error_post_kalman,
+								lin_motion=ft==FilterTypes.KALMAN_SIMPLE)
 	else:
+		# no filtering
 		return PoseFilterBase()
 	
 def testKalmanFilter(lin):
