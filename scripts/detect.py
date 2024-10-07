@@ -24,6 +24,7 @@ from qdec_serial import QdecSerial
 from rh8d_serial import RH8DSerial
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
+from time import process_time
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 					
 class DetectBase():
@@ -94,7 +95,7 @@ class DetectBase():
 			
 		# init vis	
 		if vis:
-			# cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
 				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
@@ -458,22 +459,22 @@ class HybridDetect(KeypointDetect):
 				# encoder angles in rad
 				qdec_angles = self.qdec.readMedianAnglesRad()
 				# compute cv angle
-				for idx in range(1, len(self.target_ids)):
-					base_id = self.target_ids[idx-1]
-					target_id = self.target_ids[idx]
-					base_marker = marker_det[base_id]
-					target_marker = marker_det[target_id]
-					# detected angle in rad
-					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
-					# save initially detected angle
-					if new_epoch:
-						self.start_angles.update({idx-1: angle})
-					# substract initial angle
-					angle = angle - self.start_angles[idx-1]
-					qdec_angle = qdec_angles[idx-1]
-					error = np.abs(qdec_angle - angle)
-					marker_det[target_id].update({'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
-					print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+				# for idx in range(1, len(self.target_ids)):
+				# 	base_id = self.target_ids[idx-1]
+				# 	target_id = self.target_ids[idx]
+				# 	base_marker = marker_det[base_id]
+				# 	target_marker = marker_det[target_id]
+				# 	# detected angle in rad
+				# 	angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+				# 	# save initially detected angle
+				# 	if new_epoch:
+				# 		self.start_angles.update({idx-1: angle})
+				# 	# substract initial angle
+				# 	angle = angle - self.start_angles[idx-1]
+				# 	qdec_angle = qdec_angles[idx-1]
+				# 	error = np.abs(qdec_angle - angle)
+				# 	marker_det[target_id].update({'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
+				# 	print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
 				res = True
 			else:
 				print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
@@ -485,7 +486,7 @@ class HybridDetect(KeypointDetect):
 				# label marker angle
 				self.labelDetection(det_img, id, marker_det)
 				self.labelQdecAngles(det_img, id, marker_det)
-			# cv2.imshow('Processed', proc_img)
+			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
 
 		return marker_det, res
@@ -494,8 +495,6 @@ class HybridDetect(KeypointDetect):
 		lim = 300
 		max_pos = self.rh8d_ctrl.MAX_POS - lim
 		step = self.rh8d_ctrl.MAX_POS // self.step_div
-		pos_cmd = step
-
 		rate = rospy.Rate(self.f_loop)
 		try:
 			for e in range(self.epochs):
@@ -503,11 +502,14 @@ class HybridDetect(KeypointDetect):
 				new_epoch = True
 				# move to zero
 				self.rh8d_ctrl.setMinPos(self.actuator, 1)
+				pos_cmd = step
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
 					
+					t_start = process_time()
 					# detect angles
 					(det, success) = self.detectionRoutine(new_epoch)
-
+					# success = True
+					print(process_time()-t_start)
 					if cv2.waitKey(1) == ord("q"):
 						return
 					

@@ -7,7 +7,7 @@
     <arg name="fps"              default="30" />
 	<arg name="actuator" default="36" />
 	<arg name="step_div" default="100" />
-	<arg name="f_ctrl" default="0.5" /> 
+	<arg name="f_ctrl" default="1" /> 
 	<arg name="debug" default="false" /> 
 	<arg name="epochs" default="5" /> 
 
@@ -21,7 +21,7 @@
 	<arg name="plot_id" default="-1" />
 	<arg name="rh8d_port" default="/dev/ttyUSB0" />
 	<arg name="rh8d_baud" default="1000000" />
-	<arg name="qdec_port" default="/dev/ttyUSB2" />
+	<arg name="qdec_port" default="/dev/ttyUSB1" />
 	<arg name="qdec_baud" default="19200" />
 	<arg name="qdec_filter_iters" default="200" />
 

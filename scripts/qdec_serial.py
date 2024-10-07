@@ -16,13 +16,15 @@ class QdecSerial():
 	def __init__(self,
 				 port: Optional[str]='/dev/ttyUSB0',
 				 baud: Optional[int]=19200,
-				 tout: Optional[int]=1,
+				 tout: Optional[int]=0.25,
 				 filter_iters: Optional[int]=200,
 				 ) -> None:
 		
 		self.tout = tout
 		self.filter_iters = filter_iters
 		self.ser = serial.Serial(port, baud, timeout=tout)
+		self.qdecReset()
+		self.ser.flush()
 
 	def close(self) -> None:
 		self.ser.close()
@@ -31,7 +33,7 @@ class QdecSerial():
 		"""Reset counter values to INIT_COUNTS.
 		"""
 		try:
-			self.ser.write(bytes([self.END_BYTE]))
+			return self.ser.write(bytes([self.END_BYTE]))
 		except Exception as e:
 			print(e)
 
@@ -64,17 +66,17 @@ class QdecSerial():
 			return 0.0
 		return (base / self.QUADRATURE_COUNTS) * angle_cnt
 
-	def _txRxData(self, max_iters: int=100) -> Union[Tuple[int, int, int], bool]:
+	def _txRxData(self, max_iters: int=10) -> Union[Tuple[int, int, int], bool]:
 		""" Read bytes for 3 uint16 values.
 			Return the [proximal, medial, distal] counter values.
 		"""
 		data_buffer = []
 		escape = False
 		cnt = max_iters
+		self.ser.flush()
 
 		try:
 			while cnt > 0:
-
 				# trigger data tx
 				self.ser.write(bytes([self.START_BYTE]))
 				data = self.ser.read(self.tout)
@@ -121,7 +123,7 @@ class QdecSerial():
 		except Exception as e:
 			print(e)
 
-		print("Max number of rx iters exceeded")
+		print("Max number of qdec rx iters exceeded")
 		return False
 	
 if __name__ == '__main__':

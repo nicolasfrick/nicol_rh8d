@@ -37,8 +37,7 @@ class RH8DSerial():
 
         self.pres_ids = self.scan()
         if len(self.pres_ids) == 0:
-            print("No actuators found!")
-            quit(1)
+            raise Exception("RH8D com error")
         print("Active ids:", self.pres_ids)
 
     def setMinPos(self, id: int, t_sleep: float=0.0) -> None:
