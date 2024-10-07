@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from time import sleep
 from typing import Optional, Union
 from dynamixel_sdk import PortHandler, PacketHandler
 
@@ -35,38 +36,40 @@ class RH8DSerial():
             print("Failed to change the baudrate", baud)
 
         self.pres_ids = self.scan()
+        print("Active ids:", self.pres_ids)
 
-    def setMinPos(self, id: int) -> None:
-        self.setPos(id, self.MIN_POS)
+    def setMinPos(self, id: int, t_sleep: float=0.0) -> None:
+        self.setPos(id, self.MIN_POS, t_sleep)
 
-    def setMaxPos(self, id: int) -> None:
-        self.setPos(id, self.MAX_POS)
+    def setMaxPos(self, id: int, t_sleep: float=0.0) -> None:
+        self.setPos(id, self.MAX_POS, t_sleep)
 
-    def getpos(self, id: int) -> Union[int, None]:
+    def getpos(self, id: int) -> Union[int, bool]:
         if not id in self.pres_ids:
-            print("Reading id not present")
-            return None
+            print(f"Reading id {id} not present")
+            return False
         if id in self.pres_ids:
             position = self.pckt_handler.read2ByteTxRx(self.port_handler, id, self.PRES_POS_REG)
             return position[0]
 
-    def setPos(self, id: int, val: int) -> None:
+    def setPos(self, id: int, val: int, t_sleep: float=0.0) -> bool:
         if not id in self.pres_ids:
-            print("Writing id not present")
-            return
+            print(f"Writing id {id} not present")
+            return False
         cmd = max(min(self.MAX_POS, val), self.MIN_POS)
         if cmd != val:
             print("Restricted position", val, "to", cmd)
         self.pckt_handler.write2ByteTxRx(self.port_handler, id, self.POS_GOAL_REG, cmd)
+        if t_sleep > 0.0:
+            sleep(t_sleep)
+        return True
 
     def scan(self) -> list:
         ids = []
         for id in self.IDS.values():
             dxl_model_number, dxl_comm_result, dxl_error = self.pckt_handler.read2ByteTxRx(self.port_handler, id, self.MODEL)
-            if dxl_comm_result==0:
-                print(f"Found {id}")
-            else:
-                print(f"id: {id}, model: {dxl_model_number}, result: {dxl_comm_result}, err: {dxl_error}")
+            if dxl_comm_result!=0:
+                print(f"Error for id: {id}, model: {dxl_model_number}, result: {dxl_comm_result}, err: {dxl_error}")
             if dxl_model_number >= self.SERVO_MODEL_MIN:
                 ids.append(id)
         return ids

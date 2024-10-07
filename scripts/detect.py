@@ -34,7 +34,7 @@ class DetectBase():
 		@type bool
 		@param filter_type
 		@type str
-		@param filter_steps
+		@param filter_iters
 		@type int
 		@param f_ctrl
 		@type float
@@ -56,6 +56,7 @@ class DetectBase():
 				vis :Optional[bool]=True,
 				use_reconfigure: Optional[bool]=False,
 				filter_type: Optional[str]='none',
+				filter_iters: Optional[int]=10,
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
@@ -66,6 +67,8 @@ class DetectBase():
 		self.f_loop = f_ctrl
 		self.use_aruco = use_aruco
 		self.filter_type = filter_type
+		self.filter_iters = filter_iters
+		self.frame_cnt = 0
 
 		# init ros
 		self.img_topic = camera_ns + '/image_raw'
@@ -111,41 +114,46 @@ class DetectBase():
 		transformation_matrix[:3, 3] = tvec
 		return transformation_matrix
 	
-	def detectionRoutine(self, cnt: int) -> dict:
-		raise NotImplementedError
-	
-	def run(self) -> None:
-		raise NotImplementedError
+	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
+		""" Put num filter_iters images into
+			fresh detection filter and get last
+			detection.
+		"""
+		self.det.resetFilters()
+		iters = self.filter_iters if self.filter_iters > 0 else 1
+		for i in range(iters):
+			self.frame_cnt += 1
+			rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+			raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if i >= iters-1 else False)
+		return marker_det, det_img, proc_img, raw_img
 	
 	def runDebug(self) -> None:
-		cnt = 0
 		rate = rospy.Rate(self.f_loop)
 		try:
 			while not rospy.is_shutdown():
-				rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
-				raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-
+				(marker_det, det_img, proc_img, img) = self.preProcImage()
 				if self.vis:
 					# frame counter
-					cv2.putText(det_img, str(cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+					cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 					cv2.imshow('Processed', proc_img)
 					cv2.imshow('Detection', det_img)
-
 					if cv2.waitKey(1) == ord("q"):
 						break
-					
 				try:
 					rate.sleep()
 				except:
 					pass
-
-				cnt += 1
-
 		except Exception as e:
 			rospy.logerr(e)
 		finally:
 			cv2.destroyAllWindows()
+
+	def detectionRoutine(self, cnt: int) -> Union[Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, int], dict]:
+		raise NotImplementedError
+	
+	def run(self) -> None:
+		raise NotImplementedError
 
 class KeypointDetect(DetectBase):
 	"""
@@ -175,6 +183,7 @@ class KeypointDetect(DetectBase):
 				vis :Optional[bool]=True,
 				use_reconfigure: Optional[bool]=False,
 				filter_type: Optional[str]='none',
+				filter_iters: Optional[int]=10,
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
@@ -186,6 +195,7 @@ class KeypointDetect(DetectBase):
 						vis=vis,
 						use_reconfigure=use_reconfigure,
 						filter_type=filter_type,
+						filter_iters=filter_iters,
 						f_ctrl=f_ctrl,
 						use_aruco=use_aruco,
 						plt_id=plt_id,
@@ -317,12 +327,9 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			self.drawAngle(img, p1, p2, np.rad2deg(angle))
 
-	def detectionRoutine(self, cnt: int) -> dict:
-		# detected markers 
-		rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
-		raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-		(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-		out_img = raw_img.copy()
+	def detectionRoutine(self) -> dict:
+		(marker_det, det_img, proc_img, img) = self.preProcImage()
+		out_img = img.copy()
 
 		if marker_det:
 			ids = self.hand_ids['index']
@@ -341,7 +348,7 @@ class KeypointDetect(DetectBase):
 
 		if self.vis:
 			# frame counter
-			cv2.putText(out_img, str(cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(out_img, str(self.frame_cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			for id in marker_det.keys():
 				# label marker angle
 				self.labelDetection(out_img, id, marker_det)
@@ -352,13 +359,11 @@ class KeypointDetect(DetectBase):
 		return marker_det
 		
 	def run(self) -> None:
-		cnt = 0
 		rate = rospy.Rate(self.f_loop)
 		try:
 			while not rospy.is_shutdown():
 
-				self.detectionRoutine(cnt)
-				cnt += 1
+				self.detectionRoutine()
 					
 				if cv2.waitKey(1) == ord("q"):
 					break
@@ -394,6 +399,8 @@ class HybridDetect(KeypointDetect):
 		@type int
 		@param step_div
 		@type int
+		@param epochs
+		@type
 
 	"""
 
@@ -403,6 +410,7 @@ class HybridDetect(KeypointDetect):
 				vis :Optional[bool]=True,
 				use_reconfigure: Optional[bool]=False,
 				filter_type: Optional[str]='none',
+				filter_iters: Optional[int]=10,
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
@@ -414,6 +422,7 @@ class HybridDetect(KeypointDetect):
 				qdec_filter_iters: Optional[int]=200,
 				actuator: Optional[int]=32,
 				step_div: Optional[int]=100,
+				epochs: Optional[int]=10,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -421,12 +430,14 @@ class HybridDetect(KeypointDetect):
 						vis=vis,
 						use_reconfigure=use_reconfigure,
 						filter_type=filter_type,
+						filter_iters=filter_iters,
 						f_ctrl=f_ctrl,
 						use_aruco=use_aruco,
 						plt_id=plt_id,
 						use_tf=False,
 						)
 		
+		self.epochs = epochs
 		self.step_div = step_div
 		self.actuator = actuator
 		self.target_ids = self.hand_ids['index']
@@ -434,18 +445,17 @@ class HybridDetect(KeypointDetect):
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters)
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
-		txt = "{} cv: {:.2f}° qdec: {:.2f}° err: {:.2f}°".format(id, marker_det[id]['det_angle'], marker_det[id]['qdec_angle'], marker_det[id]['error'])
+		ang = marker_det[id].get('det_angle') 
+		if ang is None: 
+			return
+		txt = "{} cv: {:.2f}° qdec: {:.2f}° err: {:.2f}°".format(id, ang, marker_det[id]['qdec_angle'], marker_det[id]['error'])
 		xpos = self.TXT_OFFSET
 		ypos = (id+1)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-
 		
-	def detectionRoutine(self, cnt: int) -> dict:
-		rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
-		raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-		(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-		out_img = raw_img.copy()
-
+	def detectionRoutine(self) -> dict:
+		# get filtered detection
+		(marker_det, det_img, proc_img, _) = self.preProcImage()
 		if marker_det:
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
@@ -461,54 +471,59 @@ class HybridDetect(KeypointDetect):
 					qdec_angle = qdec_angles[idx-1]
 					error = np.abs(qdec_angle - det_angle)
 					marker_det[target_id].update({'det_angle': det_angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
-				else:
-					print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
+			else:
+				print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
 
 		if self.vis:
 			# frame counter
-			cv2.putText(out_img, str(cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			for id in marker_det.keys():
 				# label marker angle
-				self.labelDetection(out_img, id, marker_det)
-				self.labelQdecAngles(out_img, id, marker_det)
+				self.labelDetection(det_img, id, marker_det)
+				self.labelQdecAngles(det_img, id, marker_det)
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
-			cv2.imshow('Angles', out_img)
 
 		return marker_det
 		
 	def run(self) -> None:
-		cnt = 0
-		step = (self.rh8d_ctrl.MAX_POS-300) // self.step_div
+		lim = 300
+		max_pos = self.rh8d_ctrl.MAX_POS - lim
+		step = self.rh8d_ctrl.MAX_POS // self.step_div
+		pos_cmd = step
+
 		rate = rospy.Rate(self.f_loop)
 		try:
-			self.rh8d_ctrl.setMinPos(self.actuator)
-			sleep(1)
-			while not rospy.is_shutdown() and cnt*step < self.rh8d_ctrl.MAX_POS:
+			for e in range(self.epochs):
+				print("Epoch", e+1)
+				# move to zero
+				self.rh8d_ctrl.setMinPos(self.actuator, 1)
+				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
 
-				self.detectionRoutine(cnt)
-				cnt += 1
+					self.detectionRoutine()
+
+					if cv2.waitKey(1) == ord("q"):
+						break
 					
-				if cv2.waitKey(1) == ord("q"):
-					break
-				
-				print("Setting position", cnt*step)
-				self.rh8d_ctrl.setPos(self.actuator, cnt*step)
+					print("Setting position", pos_cmd)
+					self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
+					pos_cmd += step
 
-				try:
-					rate.sleep()
-				except:
-					pass
+					try:
+						rate.sleep()
+					except:
+						pass
 
 		except ValueError as e:
 			rospy.logerr(e)
 		finally:
-			self.rh8d_ctrl.setMinPos(self.actuator)
+			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
 		
 class CameraPoseDetect(DetectBase):
 	"""
-		Detect camera world pose from marker poses.
+		Detect camera world pose from marker 
+		poses in static environment.
 
 		@param err_term
 		@type float
@@ -538,6 +553,7 @@ class CameraPoseDetect(DetectBase):
 						vis=vis,
 						use_reconfigure=use_reconfigure,
 						filter_type=filter_type,
+						filter_iters=0, # n/a
 						f_ctrl=f_ctrl,
 						use_aruco=use_aruco,
 						plt_id=plt_id,
@@ -720,7 +736,9 @@ class CameraPoseDetect(DetectBase):
 		return err, filtered_pose
 		
 	def run(self) -> None:
-		cnt = 0
+		"""	Use only overwritten run() as 
+			we detect from quasi static image. 
+		"""
 		err = np.inf
 		est_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
@@ -728,15 +746,12 @@ class CameraPoseDetect(DetectBase):
 			while not rospy.is_shutdown():
 					
 					# detected markers 
-					rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
-					raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-					(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy())
-
+					(marker_det, det_img, proc_img, img) = self.preProcImage()
 					# estimate cam pose
 					if marker_det:
 						(err, est_camera_pose) = self.estimatePoseLS(det_img, 
 												 				   err, 
-																   self.initialGuess(marker_det) if cnt == 0 else est_camera_pose, 
+																   self.initialGuess(marker_det) if self.frame_cnt == 0 else est_camera_pose, 
 																   marker_det)
 						# (err, est_camera_pose) = self.estimatePoseFL(det_img, err, marker_det)
 						if err < self.err_term:
@@ -745,17 +760,16 @@ class CameraPoseDetect(DetectBase):
 								yaml.dump(self.marker_table_poses, fw)
 							print("Final pose est:", est_camera_pose)
 							break
-						cnt+=1
 
 					if self.vis:
 						# frame counter
-						cv2.putText(det_img, str(cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+						cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 						for id, det in marker_det.items():
 							# label marker pose
 							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
-							if id == self.plt_id and cnt > 10:
-								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], self.euler2Matrix(det['frot']), det['frot'], cnt, cla=True), cv2.COLOR_RGBA2BGR))
+							if id == self.plt_id and self.frame_cnt > 10:
+								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], self.euler2Matrix(det['frot']), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):
@@ -779,6 +793,7 @@ def main() -> None:
 				   use_reconfigure=rospy.get_param('~use_reconfigure', False),
 				   vis=rospy.get_param('~vis', True),
 				   filter_type=rospy.get_param('~filter', 'none'),
+				   filter_iters=rospy.get_param('~filter_iters', 10),
 				   f_ctrl=rospy.get_param('~f_ctrl', 30),
 				   use_aruco=rospy.get_param('~use_aruco', False),
 				   plt_id=rospy.get_param('~plot_id', -1),
@@ -799,6 +814,7 @@ def main() -> None:
 					 use_reconfigure=rospy.get_param('~use_reconfigure', False),
 					 vis=rospy.get_param('~vis', True),
 					 filter_type=rospy.get_param('~filter', 'none'),
+					 filter_iters=rospy.get_param('~filter_iters', 10),
 					 f_ctrl=rospy.get_param('~f_ctrl', 30),
 					 use_aruco=rospy.get_param('~use_aruco', False),
 					 plt_id=rospy.get_param('~plot_id', -1),
@@ -809,6 +825,7 @@ def main() -> None:
 					 qdec_filter_iters=rospy.get_param('~qdec_filter_iters', 200),
 					 actuator=rospy.get_param('~actuator', 32),
 					 step_div=rospy.get_param('~step_div', 100),
+					 epochs=rospy.get_param('~epochs', 100),
 					 ).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
@@ -816,6 +833,7 @@ def main() -> None:
 						use_reconfigure=rospy.get_param('~use_reconfigure', False),
 						vis=rospy.get_param('~vis', True),
 						filter_type=rospy.get_param('~filter', 'none'),
+						filter_iters=rospy.get_param('~filter_iters', 10),
 						f_ctrl=rospy.get_param('~f_ctrl', 30),
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),

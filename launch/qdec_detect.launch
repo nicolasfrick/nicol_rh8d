@@ -9,17 +9,19 @@
 	<arg name="step_div" default="100" />
 	<arg name="f_ctrl" default="0.5" /> 
 	<arg name="debug" default="false" /> 
+	<arg name="epochs" default="5" /> 
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
+	<arg name="filter_iters" default="10" />
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
 	<arg name="plot_id" default="-1" />
-	<arg name="rh8d_port" default="/dev/ttyUSB1" />
+	<arg name="rh8d_port" default="/dev/ttyUSB0" />
 	<arg name="rh8d_baud" default="1000000" />
-	<arg name="qdec_port" default="/dev/ttyUSB0" />
+	<arg name="qdec_port" default="/dev/ttyUSB2" />
 	<arg name="qdec_baud" default="19200" />
 	<arg name="qdec_filter_iters" default="200" />
 
@@ -86,6 +88,7 @@
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
+		<param name="filter_iters" value="$(arg filter_iters)" /> 
 		<param name="f_ctrl" value="$(arg f_ctrl)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
@@ -96,6 +99,7 @@
 		<param name="qdec_filter_iters" value="$(arg qdec_filter_iters)" />
 		<param name="actuator" value="$(arg actuator)" />
 		<param name="step_div" value="$(arg step_div)" /> 
+		<param name="epochs" value="$(arg epochs)" /> 
 		<param name="debug" value="$(arg debug)" /> 
 		<param name="qdec_detect" value="true" />
 	</node>

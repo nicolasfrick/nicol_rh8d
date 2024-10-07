@@ -203,7 +203,7 @@ class MarkerDetectorBase():
 	def _detectionRoutine(self):
 		raise NotImplementedError
 		
-	def detMarkerPoses(self, img: cv2.typing.MatLike, subroutine: Callable[[cv2.typing.MatLike, cv2.typing.MatLike], Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]]) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+	def detMarkerPoses(self, img: cv2.typing.MatLike, subroutine: Callable[[cv2.typing.MatLike, cv2.typing.MatLike], Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]], vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		"""Generic marker detection method."""
 		with self.params_lock:
 			tick = cv2.getTickCount()
@@ -216,12 +216,13 @@ class MarkerDetectorBase():
 			if self.params.denoise:
 				gray = cv2.fastNlMeansDenoising(gray, None, self.params.h, self.params.templateWindowSize, self.params.searchWindowSize)
 
-			(marker_poses, out_img, gray) = subroutine(img, gray)
+			(marker_poses, out_img, gray) = subroutine(img, gray, vis)
 
-			self._drawCamCS(out_img)
-			for _, pose in marker_poses.items():
-				out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
-				out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
+			if vis:
+				self._drawCamCS(out_img)
+				for _, pose in marker_poses.items():
+					out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
+					out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])
 
 			if self.print_stats:
 				self._printStats(tick)
@@ -320,7 +321,7 @@ class AprilDetector(MarkerDetectorBase):
 		self.det.tag_detector_ptr.contents.decode_sharpening = int(self.params.decode_sharpening)
 		self.params_change = False
 		
-	def _detectionRoutine(self, img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+	def _detectionRoutine(self, img: cv2.typing.MatLike, gray: cv2.typing.MatLike, vis: bool=True)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		marker_poses = {}
 		if self.params_change:
 			self._adaptParams()
@@ -355,19 +356,20 @@ class AprilDetector(MarkerDetectorBase):
 																		'homography': detection.homography,
 																		'center': detection.center,
 																		'pose_err': detection.pose_err}})
-					self.drawMarkers(detection, img)
-				else:
+					if vis:
+						self.drawMarkers(detection, img)
+				elif vis:
 					self.drawMarkers(detection, gray)
 
 		return marker_poses, img, gray
 
-	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray]:
+	def detMarkerPoses(self, img: np.ndarray, vis: bool=True) -> Tuple[dict, np.ndarray]:
 		"""Detect Apriltag marker in bgr image.
 			@param img Input image with 'bgr' encoding
 			@type np.ndarray
 			@return Detected marker poses, marker detection image, processed image
 		"""
-		return super().detMarkerPoses(img, self._detectionRoutine)
+		return super().detMarkerPoses(img, self._detectionRoutine, vis)
 
 class ArucoDetector(MarkerDetectorBase):
 	"""Detect Aruco marker from an image.
@@ -483,7 +485,7 @@ class ArucoDetector(MarkerDetectorBase):
 
 		return dct
 	
-	def _detectionRoutine(self,  img: cv2.typing.MatLike, gray: cv2.typing.MatLike)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
+	def _detectionRoutine(self,  img: cv2.typing.MatLike, gray: cv2.typing.MatLike, vis: bool=True)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		# detection
 		marker_poses = {}
 		(corners, ids, rejected) = aru.detectMarkers(gray, self.aruco_dict, parameters=self.params.aruco_params)
@@ -518,17 +520,18 @@ class ArucoDetector(MarkerDetectorBase):
 																	'pose_err': None}})
 
 		# draw detection
-		out_img = aru.drawDetectedMarkers(img, corners, ids)
-		gray = aru.drawDetectedMarkers(gray, rejected)
+		if vis:
+			out_img = aru.drawDetectedMarkers(img, corners, ids)
+			gray = aru.drawDetectedMarkers(gray, rejected)
 		return marker_poses, out_img, gray
 
-	def detMarkerPoses(self, img: np.ndarray) -> Tuple[dict, np.ndarray, np.ndarray]:	
+	def detMarkerPoses(self, img: np.ndarray, vis: bool=True) -> Tuple[dict, np.ndarray, np.ndarray]:	
 		"""Detect Aruco marker in bgr image.
 			@param img Input image with 'bgr' encoding
 			@type np.ndarray
 			@return Detected marker poses, marker detection image, processed image
 		"""
-		return super().detMarkerPoses(img, self._detectionRoutine)
+		return super().detMarkerPoses(img, self._detectionRoutine, vis)
 	
 def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: str="aruco_matrix.png", bbits: int=1, num: int=0, scale: float=5, save_indiv: bool=False) -> None:
 	"""Aligns the markers in a mxn matrix where m >= n .

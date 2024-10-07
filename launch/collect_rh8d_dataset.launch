@@ -16,6 +16,7 @@
 	<arg name="marker_length" default="0.01" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_lin_motion', 'kalman_default']"/>
+	<arg name="filter_iters" default="10" />
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
 	<arg name="plot_id" default="-1" />
@@ -99,6 +100,7 @@
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
+		<param name="filter_iters" value="$(arg filter_iters)" /> 
 		<param name="f_ctrl" value="$(arg fps)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
