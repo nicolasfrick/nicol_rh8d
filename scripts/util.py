@@ -1,4 +1,4 @@
-import cv2
+import os, cv2
 import numpy as np
 from enum import Enum
 from typing import Tuple
@@ -53,3 +53,24 @@ def invPersp(tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> Tuple[np.nda
 	if rot_t != RotTypes.MAT:
 		inv_rot = inv_rot.flatten()
 	return np.array(inv_tvec.flat), inv_rot
+
+def greenScreen(img: cv2.typing.MatLike):
+	repl = np.ones(img.shape, dtype=np.float32) * 255
+	u_green = np.array([104, 153, 70])
+	l_green = np.array([30, 30, 0])
+	
+	mask = cv2.inRange(img, l_green, u_green)
+	res = cv2.bitwise_and(img, img, mask = mask)
+	f = img - res
+	f = np.where(f == 0, repl, f)
+	return f
+
+if __name__ == "__main__":
+	cv2.namedWindow("gs", cv2.WINDOW_NORMAL)
+	img = cv2.imread(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/test_img.jpg'), cv2.IMREAD_COLOR)
+	img = greenScreen(img)
+	cv2.imshow("gs", img)
+	while 1:
+		if cv2.waitKey(1) == ord('q'):
+			break
+	cv2.destroyAllWindows()
