@@ -16,11 +16,12 @@ class QdecSerial():
 	def __init__(self,
 				 port: Optional[str]='/dev/ttyUSB0',
 				 baud: Optional[int]=19200,
-				 tout: Optional[int]=0.25,
-				 filter_iters: Optional[int]=200,
+				 tout: Optional[int]=1,
+				 retry: Optional[int]=100, 
+				 filter_iters: Optional[int]=100,
 				 ) -> None:
 		
-		self.tout = tout
+		self.retry = retry
 		self.filter_iters = filter_iters
 		self.ser = serial.Serial(port, baud, timeout=tout)
 		self.qdecReset()
@@ -60,26 +61,29 @@ class QdecSerial():
 	
 	def _toAngle(self, cnt_val: int, deg: bool=True) -> float:
 		base = 360.0 if deg else 2*np.pi
+		# start with zero
 		angle_cnt = cnt_val - self.INIT_COUNTS
 		# restrict to positive angles
 		if angle_cnt <= 0:
 			return 0.0
 		return (base / self.QUADRATURE_COUNTS) * angle_cnt
 
-	def _txRxData(self, max_iters: int=10) -> Union[Tuple[int, int, int], bool]:
+	def _txRxData(self) -> Union[Tuple[int, int, int], bool]:
 		""" Read bytes for 3 uint16 values.
 			Return the [proximal, medial, distal] counter values.
 		"""
 		data_buffer = []
 		escape = False
-		cnt = max_iters
+		cnt = self.retry
 		self.ser.flush()
-
+		
 		try:
+			# trigger data tx
+			self.ser.write(bytes([self.START_BYTE]))
+
 			while cnt > 0:
-				# trigger data tx
-				self.ser.write(bytes([self.START_BYTE]))
-				data = self.ser.read(self.tout)
+				# read 1 byte
+				data = self.ser.read(1)
 				# timeout
 				if len(data) == 0:
 					cnt -= 1
@@ -102,9 +106,8 @@ class QdecSerial():
 						return num1, num2, num3
 					else:
 						# invalid length
-						print("Invalid packet length")
-						cnt -= 1
-						continue
+						print("Invalid rx packet length")
+						return False
 
 				# handle escape byte
 				if byte == self.ESCAPE_BYTE:
@@ -123,14 +126,14 @@ class QdecSerial():
 		except Exception as e:
 			print(e)
 
-		print("Max number of qdec rx iters exceeded")
+		print("Max number of rx retries exceeded")
 		return False
 	
 if __name__ == '__main__':
 	import time
 	s = QdecSerial()
 	s.qdecReset()
-	for _ in range(10):
+	while 1:
 		deg = s.readMedianAnglesDeg()
 		print(deg)
-		time.sleep(2)
+		time.sleep(0.2)
