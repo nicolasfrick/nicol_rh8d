@@ -1,10 +1,19 @@
 ids:
   forearm: [0]
-  wrist: [1]
+  palm: [1]
   tcp: [2, 3, 4]
   index: [1, 2, 3, 4]
+  middle: []
+  ring: []
 names:
+  forearm: 'forearm'
+  palm: 'palm'
+  tcp: 'tcp'
   index: &names ['prox', 'med', 'dist']
   middle: *names
   ring: *names
   thumb: *names
+poses:
+  0: 
+    xyz: [0,0,0]
+    rpy: [0,0,0]

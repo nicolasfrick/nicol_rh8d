@@ -28,9 +28,22 @@ from marker_detector import ArucoDetector, AprilDetector
 from time import process_time
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
+# data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
-QDEC_PTH = os.path.join(DATA_PTH, 'qdec/detection.json')
-					
+QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection.json')
+KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection.json')
+# image records
+JPG_QUALITY = 60
+REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
+KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint')
+if not os.path.exists(REC_DIR):
+	os.mkdir(REC_DIR)
+if not os.path.exists(QDEC_REC_DIR):
+	os.mkdir(QDEC_REC_DIR)
+if not os.path.exists(KEYPT_REC_DIR):
+	os.mkdir(KEYPT_REC_DIR)
+
 class DetectBase():
 	"""
 		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
@@ -50,10 +63,10 @@ class DetectBase():
 
 	"""
 
-	FONT_THCKNS = 2
-	FONT_SCALE = 0.5
-	FONT_CLR =  (255,0,0)
-	TXT_OFFSET = 25
+	FONT_THCKNS = 3
+	FONT_SCALE = 1
+	FONT_CLR =  (0,0,0)
+	TXT_OFFSET = 30
 	
 	def __init__(self,
 			  	marker_length: float=0.010,
@@ -177,12 +190,17 @@ class KeypointDetect(DetectBase):
 
 	"""
 
-	POINT_FACTOR = 0.85 # arc points interpolation
+	FIRST_LINE_INTERPOL_FACTOR = 0.5 # arc points interpolation
+	SEC_LINE_INTERPOL_FACTOR = 0.85 # arc points interpolation
 	ARC_SHIFT = 10 # ellipse param
-	SAGITTA = 50 # arc size
-	AXES_LEN = 0.03 # meter
+	SAGITTA = 20 # radius size
+	AXES_LEN = 0.015 # meter
 	X_AXIS = np.array([[-AXES_LEN,0,0], [AXES_LEN, 0, 0]], dtype=np.float32)
 	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
+	ELIPSE_COLOR = (0,0,0)
+	ELIPSE_THKNS = 2
+	X_EL_TXT_OFFSET = 0.95
+	Y_EL_TXT_OFFSET = 1
 
 	def __init__(self,
 			  	marker_length: float=0.010,
@@ -300,12 +318,13 @@ class KeypointDetect(DetectBase):
 		axes = (int(round(axes[0] * 2**self.ARC_SHIFT)),
 				int(round(axes[1] * 2**self.ARC_SHIFT)))
 		center = tuple(map(int, center))
-		cv2.ellipse(img, arc_center, axes, 0, pt1_angle, pt2_angle, self.det.BLUE, 1, cv2.LINE_AA, self.ARC_SHIFT)
-		# cv2.circle(img, pt1, 5, self.det.BLUE, -1)
-		# cv2.circle(img, pt2, 5, self.det.BLUE, -1)
-		# cv2.circle(img, center, 5, self.det.BLUE, -1)
+		cv2.ellipse(img, arc_center, axes, 0, pt1_angle, pt2_angle, self.ELIPSE_COLOR, self.ELIPSE_THKNS, cv2.LINE_AA, self.ARC_SHIFT)
+		cv2.circle(img, pt1, 5, self.ELIPSE_COLOR, -1)
+		cv2.circle(img, pt2, 5, self.ELIPSE_COLOR, -1)
+		cv2.circle(img, center, 5, self.ELIPSE_COLOR, -1)
 		# draw angle text
-		cv2.putText(img, f'{angle_deg:.2f} deg', center, cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.BLUE, self.FONT_THCKNS)
+		ec = (int(center[0]*self.Y_EL_TXT_OFFSET), int(center[1]*self.X_EL_TXT_OFFSET))
+		cv2.putText(img, f'{angle_deg:.2f}', ec, cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.ELIPSE_COLOR, self.FONT_THCKNS)
 
 	def labelDetection(self, img: cv2.typing.MatLike, id: int, detection: dict) -> None:
 		angle = detection[id].get('angle')
@@ -329,8 +348,8 @@ class KeypointDetect(DetectBase):
 		# draw angle between the x-axes
 		if np.abs(angle) > 0:
 			# interpolate points on the axes
-			interpolated_point_base_ax = (1 - self.POINT_FACTOR) * x_axis_base_marker[0] + self.POINT_FACTOR * x_axis_base_marker[1]
-			interpolated_point_target_ax = (1 - self.POINT_FACTOR) * x_axis_target_marker[1] + self.POINT_FACTOR * x_axis_target_marker[0]
+			interpolated_point_base_ax = (1 - self.FIRST_LINE_INTERPOL_FACTOR) * x_axis_base_marker[0] + self.FIRST_LINE_INTERPOL_FACTOR * x_axis_base_marker[1]
+			interpolated_point_target_ax = (1 - self.SEC_LINE_INTERPOL_FACTOR) * x_axis_target_marker[0] + self.SEC_LINE_INTERPOL_FACTOR * x_axis_target_marker[1]
 			# draw ellipse
 			p1 = tuple(map(int, interpolated_point_base_ax))
 			p2 = tuple(map(int, interpolated_point_target_ax))
@@ -435,6 +454,7 @@ class HybridDetect(KeypointDetect):
 				step_div: Optional[int]=100,
 				epochs: Optional[int]=10,
 				test: Optional[bool]=False,
+				save_imgs: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -455,9 +475,10 @@ class HybridDetect(KeypointDetect):
 		self.step_div = step_div
 		self.actuator = actuator
 		self.start_angles = {}
+		self.save_imgs = save_imgs
 		# index finger data
 		self.group_ids = self.hand_ids['names']['index'] # joint names
-		self.df = pd.DataFrame(columns=self.group_ids)
+		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
 		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if  not self.test else RH8DSerialStub()
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if  not self.test else QdecSerialStub()
@@ -495,6 +516,7 @@ class HybridDetect(KeypointDetect):
 					target_id = self.target_ids[idx] # target marker
 					base_marker = marker_det[base_id] # predecessor detection
 					target_marker = marker_det[target_id] # target detection
+
 					# detected angle in rad
 					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
 					# save initially detected angle
@@ -504,11 +526,13 @@ class HybridDetect(KeypointDetect):
 					# angle = angle - self.start_angles[base_idx]
 					qdec_angle = qdec_angles[base_idx]
 					error = np.abs(qdec_angle - angle)
+
 					# data entry
 					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt}
 					marker_det[target_id].update(data)
 					entry.update({self.group_ids[base_idx]: data})
 					print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+
 				res = True
 				self.df = self.df.append(entry, ignore_index=True)
 			else:
@@ -525,6 +549,8 @@ class HybridDetect(KeypointDetect):
 				self.labelQdecAngles(det_img, id, marker_det)
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
+			if self.save_imgs:
+				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 
 		return res
 		
@@ -569,7 +595,7 @@ class HybridDetect(KeypointDetect):
 		except Exception as e:
 			rospy.logerr(e)
 		finally:
-			self.df.to_json(QDEC_PTH, orient="index", indent=4)
+			self.df.to_json(QDEC_DET_PTH, orient="index", indent=4)
 			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
