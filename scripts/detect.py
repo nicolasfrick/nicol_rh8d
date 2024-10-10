@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
-import os, sys
+import os
+import sys
 import yaml
 import cv2
 import rospy
@@ -100,6 +101,7 @@ class DetectBase():
 			self.img_topic = camera_ns + '/image_raw'
 			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
 			rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
+			print("Camera height:", rgb_info.height, "width:", rgb_info.width)
 
 		# init detector
 		if use_aruco:
@@ -153,7 +155,7 @@ class DetectBase():
 				(marker_det, det_img, proc_img, img) = self.preProcImage()
 				if self.vis:
 					# frame counter
-					cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+					cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 					cv2.imshow('Processed', proc_img)
 					cv2.imshow('Detection', det_img)
 					if cv2.waitKey(1) == ord("q"):
@@ -237,10 +239,6 @@ class KeypointDetect(DetectBase):
 		with open(self.fl, 'r') as fr:
 			self.hand_ids = yaml.safe_load(fr)
 
-		# init vis
-		# if vis:
-		# 	cv2.namedWindow("Angles", cv2.WINDOW_NORMAL)
-
 	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XZ plane in the markee frame.
 		"""
@@ -317,12 +315,12 @@ class KeypointDetect(DetectBase):
 				int(round(axes[1] * 2**self.ARC_SHIFT)))
 		center = tuple(map(int, center))
 		cv2.ellipse(img, arc_center, axes, 0, pt1_angle, pt2_angle, self.ELIPSE_COLOR, self.ELIPSE_THKNS, cv2.LINE_AA, self.ARC_SHIFT)
-		cv2.circle(img, pt1, 5, self.ELIPSE_COLOR, -1)
-		cv2.circle(img, pt2, 5, self.ELIPSE_COLOR, -1)
-		cv2.circle(img, center, 5, self.ELIPSE_COLOR, -1)
+		# cv2.circle(img, pt1, 5, self.ELIPSE_COLOR, -1)
+		# cv2.circle(img, pt2, 5, self.ELIPSE_COLOR, -1)
+		# cv2.circle(img, center, 5, self.ELIPSE_COLOR, -1)
 		# draw angle text
-		ec = (int(center[0]*self.Y_EL_TXT_OFFSET), int(center[1]*self.X_EL_TXT_OFFSET))
-		cv2.putText(img, f'{angle_deg:.2f}', ec, cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.ELIPSE_COLOR, self.FONT_THCKNS)
+		txt_center = (int(center[0]*self.Y_EL_TXT_OFFSET), int(center[1]*self.X_EL_TXT_OFFSET))
+		cv2.putText(img, f'{angle_deg:.2f}', txt_center, cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.ELIPSE_COLOR, self.FONT_THCKNS)
 
 	def labelDetection(self, img: cv2.typing.MatLike, id: int, detection: dict) -> None:
 		angle = detection[id].get('angle')
@@ -354,8 +352,7 @@ class KeypointDetect(DetectBase):
 			self.drawAngle(img, p1, p2, np.rad2deg(angle))
 
 	def detectionRoutine(self) -> dict:
-		(marker_det, det_img, proc_img, img) = self.preProcImage()
-		out_img = img.copy()
+		(marker_det, det_img, proc_img, _) = self.preProcImage()
 
 		if marker_det:
 			ids = self.hand_ids['ids']['index']
@@ -374,13 +371,12 @@ class KeypointDetect(DetectBase):
 
 		if self.vis:
 			# frame counter
-			cv2.putText(out_img, str(self.frame_cnt), (out_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			for id in marker_det.keys():
 				# label marker angle
-				self.labelDetection(out_img, id, marker_det)
+				self.labelDetection(det_img, id, marker_det)
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
-			cv2.imshow('Angles', out_img)
 
 		return marker_det
 		
@@ -540,7 +536,7 @@ class HybridDetect(KeypointDetect):
 			
 		if self.vis:
 			# frame counter
-			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			for id in marker_det.keys():
 				# label marker angle
 				self.labelDetection(det_img, id, marker_det)

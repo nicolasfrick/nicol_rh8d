@@ -16,7 +16,7 @@
 	<arg name="marker_length" default="0.01" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
-	<arg name="filter_iters" default="10" />
+	<arg name="filter_iters" default="5" />
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
 	<arg name="plot_id" default="-1" />
