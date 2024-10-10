@@ -395,6 +395,8 @@ class ArucoDetector(MarkerDetectorBase):
 		@type  str
 		@param 	estimate_pattern Enum to set Aruco estimate pattern. One of [ARUCO_CCW_CENTER, ARUCO_CW_TOP_LEFT_CORNER]
 		@type int
+		@param at_convention
+		@type bool
 
 		 Generate markers with opencv (custom build in opencv_build directory):
 		.opencv_build/opencv/build/bin/example_cpp_aruco_dict_utils /
@@ -425,6 +427,10 @@ class ArucoDetector(MarkerDetectorBase):
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
 
+	ROT_TO_AT_CONVENTION = np.array([[1,  0,  0], # rotate by PI around x-axis
+																				[0, -1,  0], # turn z pointing into plane
+																				[0,  0, -1]]) # and y downwards
+
 	def __init__(self,
 			  				K: Tuple,
 							D: Tuple,
@@ -436,6 +442,7 @@ class ArucoDetector(MarkerDetectorBase):
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							dict_yaml: Optional[str]="",
 							dict_type: Optional[str]="DICT_4X4_50",
+							at_convention: Optional[bool]=True,
 							) -> None:
 		
 		super().__init__(K=K, 
@@ -448,6 +455,7 @@ class ArucoDetector(MarkerDetectorBase):
 										filter_type=filter_type,
 										)
 		self.aruco_dict = aru.getPredefinedDictionary(self.ARUCO_DICT[dict_type]) if dict_yaml == "" else self.loadArucoYaml(dict_yaml)
+		self.at_convention = at_convention
 		self._printSettings()
 
 	def _printSettings(self) -> None:
@@ -498,6 +506,12 @@ class ArucoDetector(MarkerDetectorBase):
 
 		return dct
 	
+	def _rot2ApriltagConvention(self, aruco_rot: np.ndarray) -> np.ndarray:
+		mat, _ = cv2.Rodrigues(aruco_rot)
+		mat = self.ROT_TO_AT_CONVENTION @ mat
+		at_rot, _ = cv2.Rodrigues(mat)
+		return at_rot.flatten()
+	
 	def _detectionRoutine(self,  img: cv2.typing.MatLike, gray: cv2.typing.MatLike, vis: bool=True)  -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike]:	
 		# detection
 		marker_poses = {}
@@ -510,6 +524,9 @@ class ArucoDetector(MarkerDetectorBase):
 				(rvec, tvec, obj_points) = aru.estimatePoseSingleMarkers(corner, self.marker_length, self.cmx, self.dist, estimateParameters=self.params.estimate_params)
 				rvec = rvec.flatten()
 				tvec = tvec.flatten()
+				# rotate CS
+				if self.at_convention:
+					rvec = self._rot2ApriltagConvention(rvec)
 				# improve detection
 				if self.refine_detection:
 					(success, tvec, rvec, inliers) = self.refineDetection(corner.reshape((4,2)), tvec, rvec, RotTypes.RVEC)
@@ -521,12 +538,11 @@ class ArucoDetector(MarkerDetectorBase):
 				else:
 					# new filter
 					self.filters.update( {id: createFilter(self.filter_type, 
-										 				   PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC),
-														   f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
-														   process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
-														   measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
-														   error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
-					self.params.kf_params.param_change = False # reset flag for next update
+																						PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC),
+																						f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+																						process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
+																						measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
+																						error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
 				# results
 				marker_poses.update({id: {'rvec': rvec, 
 							   				'rot_mat': cv2.Rodrigues(rvec)[0],
@@ -538,12 +554,17 @@ class ArucoDetector(MarkerDetectorBase):
 											'homography': None,
 											'center': None,
 											'pose_err': None}})
-
+				
+			# reset flag for next kalman update
+			self.params.kf_params.param_change = False 
+			
 		# draw detection
 		if vis:
 			out_img = aru.drawDetectedMarkers(img, corners, ids)
 			gray = aru.drawDetectedMarkers(gray, rejected)
-		return marker_poses, out_img, gray
+			return marker_poses, out_img, gray
+		
+		return marker_poses, img, gray
 
 	def detMarkerPoses(self, img: np.ndarray, vis: bool=True) -> Tuple[dict, np.ndarray, np.ndarray]:	
 		"""Detect Aruco marker in bgr image.

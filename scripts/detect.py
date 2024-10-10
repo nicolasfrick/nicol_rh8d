@@ -821,7 +821,7 @@ class CameraPoseDetect(DetectBase):
 			while not rospy.is_shutdown():
 					
 					# detected markers 
-					(marker_det, det_img, proc_img, img) = self.preProcImage()
+					(marker_det, det_img, proc_img, _) = self.preProcImage()
 					# estimate cam pose
 					if marker_det:
 						(err, est_camera_pose) = self.estimatePoseLS(det_img, 
