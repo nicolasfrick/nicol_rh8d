@@ -2,14 +2,12 @@
 
 import os, sys
 import yaml
-import json
 import cv2
 import rospy
 import tf2_ros
 import cv_bridge
 import numpy as np
 import sensor_msgs.msg
-from time import sleep
 from typing import Optional, Any, Tuple
 import dynamic_reconfigure.server
 from scipy.optimize import least_squares
@@ -523,7 +521,7 @@ class HybridDetect(KeypointDetect):
 					if new_epoch:
 						self.start_angles.update({base_idx: angle})
 					# substract initial angle
-					# angle = angle - self.start_angles[base_idx]
+					angle = angle - self.start_angles[base_idx]
 					qdec_angle = qdec_angles[base_idx]
 					error = np.abs(qdec_angle - angle)
 
@@ -569,11 +567,8 @@ class HybridDetect(KeypointDetect):
 				pos_cmd = step
 				
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
-					t_start = process_time()
 					# detect angles
 					success = self.detectionRoutine(new_epoch)
-					# success = True
-					print(int(1000*(process_time()-t_start)))
 					
 					if cv2.waitKey(1) == ord("q"):
 						return

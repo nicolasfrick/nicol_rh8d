@@ -350,12 +350,11 @@ class AprilDetector(MarkerDetectorBase):
 					else:
 						# new filter
 						self.filters.update( {id: createFilter(self.filter_type, 
-											 				   PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT),
-															   f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
-															   process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
-															   measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
-															   error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
-						self.params.kf_params.param_change = False # reset flag for next update
+																							PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT),
+																							f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+																							process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
+																							measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
+																							error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
 					# result
 					marker_poses.update({id: {'rvec': cv2.Rodrigues(rot_mat)[0].flatten(), 
 							   											'rot_mat': rot_mat,
@@ -371,6 +370,9 @@ class AprilDetector(MarkerDetectorBase):
 						self.drawMarkers(detection, img)
 				elif vis:
 					self.drawMarkers(detection, gray)
+
+			# reset flag for next kalman update
+			self.params.kf_params.param_change = False 
 
 		return marker_poses, img, gray
 
