@@ -3,6 +3,16 @@ import numpy as np
 import pandas as pd
 from typing import Tuple, Union, Optional
 
+class QdecSerialStub():
+	def close(self) -> None:
+		pass
+	def qdecReset(self) -> None:
+		pass
+	def readMedianAnglesRad(self) -> Tuple[int, int, int]:
+		return 0,0,0
+	def readMedianAnglesDeg(self) -> Tuple[int, int, int]:
+		return 0,0,0
+
 class QdecSerial():
 
 	START_BYTE = 0xAA 
@@ -20,7 +30,7 @@ class QdecSerial():
 				 retry: Optional[int]=100, 
 				 filter_iters: Optional[int]=100,
 				 ) -> None:
-		
+
 		self.retry = retry
 		self.filter_iters = filter_iters
 		self.ser = serial.Serial(port, baud, timeout=tout)

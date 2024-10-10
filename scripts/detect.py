@@ -2,6 +2,7 @@
 
 import os, sys
 import yaml
+import json
 import cv2
 import rospy
 import tf2_ros
@@ -20,12 +21,15 @@ import open_manipulator_msgs.srv
 from util import *
 from plot_record import *
 from pose_filter import *
-from qdec_serial import QdecSerial
-from rh8d_serial import RH8DSerial
+from qdec_serial import *
+from rh8d_serial import *
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 from time import process_time
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
+
+DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
+QDEC_PTH = os.path.join(DATA_PTH, 'qdec/detection.json')
 					
 class DetectBase():
 	"""
@@ -61,9 +65,11 @@ class DetectBase():
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
+				test: Optional[bool]=False,
 				) -> None:
 		
 		self.vis = vis
+		self.test = test
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
 		self.use_aruco = use_aruco
@@ -71,13 +77,20 @@ class DetectBase():
 		self.filter_iters = filter_iters if filter_type != 'none' else 1
 		self.frame_cnt = 0
 
+		# dummies
+		rgb_info= sensor_msgs.msg.CameraInfo()
+		rgb_info.K = np.array([1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0], dtype=np.float64)
+		rgb_info.D = np.array([0,0,0,0,0], dtype=np.float64)
+		self.img = cv2.imread(os.path.join(DATA_PTH, 'test_img.jpg'), cv2.IMREAD_COLOR)
 		# init ros
-		self.img_topic = camera_ns + '/image_raw'
-		self.bridge = cv_bridge.CvBridge()
+		if not test:
+			self.img = None
+			self.bridge = cv_bridge.CvBridge()
+			self.img_topic = camera_ns + '/image_raw'
+			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
+			rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
 
 		# init detector
-		rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
-		rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
 		if use_aruco:
 			self.det = ArucoDetector(marker_length=marker_length, 
 															K=rgb_info.K, 
@@ -100,7 +113,7 @@ class DetectBase():
 			if plt_id > -1:
 				cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 				setPosePlot()
-
+	
 		# init dynamic reconfigure
 		if use_reconfigure:
 			print("Using reconfigure server")
@@ -111,12 +124,14 @@ class DetectBase():
 			fresh detection filter and get last
 			detection.
 		"""
+		raw_img = self.img # test
 		self.det.resetFilters()
 		iters = self.filter_iters if self.filter_iters > 0 else 1 # iters >= 1
 		for i in range(iters):
 			self.frame_cnt += 1
-			rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
-			raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+			if not self.test:
+				rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+				raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
 			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if (i >= iters-1 and self.vis) else False)
 		return marker_det, det_img, proc_img, raw_img
 	
@@ -180,6 +195,7 @@ class KeypointDetect(DetectBase):
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
 				use_tf: Optional[bool]=False,
+				test: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -191,6 +207,7 @@ class KeypointDetect(DetectBase):
 						f_ctrl=f_ctrl,
 						use_aruco=use_aruco,
 						plt_id=plt_id,
+						test=test
 						)
 		
 		# init ros
@@ -324,7 +341,7 @@ class KeypointDetect(DetectBase):
 		out_img = img.copy()
 
 		if marker_det:
-			ids = self.hand_ids['index']
+			ids = self.hand_ids['ids']['index']
 			# check all ids detected
 			if not all([id in marker_det.keys() for id in ids]):
 				print("Cannot detect all required ids: ", ids)
@@ -377,7 +394,7 @@ class HybridDetect(KeypointDetect):
 
 		@param rh8d_port
 		@type str
-        @param rh8d_baud
+		@param rh8d_baud
 		@type int
  		@param qdec_port
 		@type str
@@ -393,6 +410,8 @@ class HybridDetect(KeypointDetect):
 		@type int
 		@param epochs
 		@type
+		@param test
+		@type
 
 	"""
 
@@ -407,7 +426,7 @@ class HybridDetect(KeypointDetect):
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
 				rh8d_port: Optional[str]="/dev/ttyUSB1",
-                rh8d_baud: Optional[int]=1000000,
+				rh8d_baud: Optional[int]=1000000,
  				qdec_port: Optional[str]='/dev/ttyUSB0',
 				qdec_baud: Optional[int]=19200,
 				qdec_tout: Optional[int]=1,
@@ -415,6 +434,7 @@ class HybridDetect(KeypointDetect):
 				actuator: Optional[int]=32,
 				step_div: Optional[int]=100,
 				epochs: Optional[int]=10,
+				test: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -427,15 +447,20 @@ class HybridDetect(KeypointDetect):
 						use_aruco=use_aruco,
 						plt_id=plt_id,
 						use_tf=False,
+						test=test,
 						)
 		
+		# actuator control
 		self.epochs = epochs
 		self.step_div = step_div
 		self.actuator = actuator
 		self.start_angles = {}
-		self.target_ids = self.hand_ids['index']
-		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud)
-		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters)
+		# index finger data
+		self.group_ids = self.hand_ids['names']['index'] # joint names
+		self.df = pd.DataFrame(columns=self.group_ids)
+		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
+		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if  not self.test else RH8DSerialStub()
+		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if  not self.test else QdecSerialStub()
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
 		angle = marker_det[id].get('angle') 
@@ -446,39 +471,51 @@ class HybridDetect(KeypointDetect):
 		ypos = (id+1)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
-	def detectionRoutine(self, new_epoch: bool) -> Tuple[dict, bool]:
+	def detectionRoutine(self, new_epoch: bool) -> bool:
 		res = False
 		# get filtered detection
 		(marker_det, det_img, proc_img, _) = self.preProcImage()
 		if marker_det:
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
-				# zero qdec angles
+
+				# zero encoder angles
 				if new_epoch:
 					self.qdec.qdecReset()
 				# encoder angles in rad
 				qdec_angles = self.qdec.readMedianAnglesRad()
-				# compute cv angle
-				# for idx in range(1, len(self.target_ids)):
-				# 	base_id = self.target_ids[idx-1]
-				# 	target_id = self.target_ids[idx]
-				# 	base_marker = marker_det[base_id]
-				# 	target_marker = marker_det[target_id]
-				# 	# detected angle in rad
-				# 	angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
-				# 	# save initially detected angle
-				# 	if new_epoch:
-				# 		self.start_angles.update({idx-1: angle})
-				# 	# substract initial angle
-				# 	angle = angle - self.start_angles[idx-1]
-				# 	qdec_angle = qdec_angles[idx-1]
-				# 	error = np.abs(qdec_angle - angle)
-				# 	marker_det[target_id].update({'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id})
-				# 	print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+				if not qdec_angles:
+					return False
+				
+				# cv angles
+				entry = {}
+				for idx in range(1, len(self.target_ids)):
+					base_idx = idx-1 # predecessor index
+					base_id = self.target_ids[base_idx] # predecessor marker
+					target_id = self.target_ids[idx] # target marker
+					base_marker = marker_det[base_id] # predecessor detection
+					target_marker = marker_det[target_id] # target detection
+					# detected angle in rad
+					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					# save initially detected angle
+					if new_epoch:
+						self.start_angles.update({base_idx: angle})
+					# substract initial angle
+					# angle = angle - self.start_angles[base_idx]
+					qdec_angle = qdec_angles[base_idx]
+					error = np.abs(qdec_angle - angle)
+					# data entry
+					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt}
+					marker_det[target_id].update(data)
+					entry.update({self.group_ids[base_idx]: data})
+					print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
 				res = True
+				self.df = self.df.append(entry, ignore_index=True)
 			else:
 				print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
-
+		else:
+			print("No detection")
+			
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
@@ -489,13 +526,14 @@ class HybridDetect(KeypointDetect):
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
 
-		return marker_det, res
+		return res
 		
 	def run(self) -> None:
 		lim = 300
-		max_pos = self.rh8d_ctrl.MAX_POS - lim
-		step = self.rh8d_ctrl.MAX_POS // self.step_div
+		max_pos = RH8D_MAX_POS - lim
+		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
+		
 		try:
 			for e in range(self.epochs):
 				print("Epoch", e+1)
@@ -503,13 +541,14 @@ class HybridDetect(KeypointDetect):
 				# move to zero
 				self.rh8d_ctrl.setMinPos(self.actuator, 1)
 				pos_cmd = step
+				
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
-					
 					t_start = process_time()
 					# detect angles
-					(det, success) = self.detectionRoutine(new_epoch)
+					success = self.detectionRoutine(new_epoch)
 					# success = True
-					print(process_time()-t_start)
+					print(int(1000*(process_time()-t_start)))
+					
 					if cv2.waitKey(1) == ord("q"):
 						return
 					
@@ -530,6 +569,7 @@ class HybridDetect(KeypointDetect):
 		except Exception as e:
 			rospy.logerr(e)
 		finally:
+			self.df.to_json(QDEC_PTH, orient="index", indent=4)
 			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
@@ -833,13 +873,14 @@ def main() -> None:
 					 use_aruco=rospy.get_param('~use_aruco', False),
 					 plt_id=rospy.get_param('~plot_id', -1),
 					 rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB1"),
-                	 rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
+					 rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
  					 qdec_port=rospy.get_param('~qdec_port', '/dev/ttyUSB0'),
 					 qdec_baud=rospy.get_param('~qdec_baud', 19200),
 					 qdec_filter_iters=rospy.get_param('~qdec_filter_iters', 200),
 					 actuator=rospy.get_param('~actuator', 32),
 					 step_div=rospy.get_param('~step_div', 100),
 					 epochs=rospy.get_param('~epochs', 100),
+					 test=rospy.get_param('~test', False),
 					 ).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),

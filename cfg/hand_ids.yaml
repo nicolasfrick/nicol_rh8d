@@ -1,4 +1,10 @@
-forearm: [0]
-wrist: [1]
-tcp: [2, 3, 4]
-index: [1, 2, 3, 4]
+ids:
+  forearm: [0]
+  wrist: [1]
+  tcp: [2, 3, 4]
+  index: [1, 2, 3, 4]
+names:
+  index: &names ['prox', 'med', 'dist']
+  middle: *names
+  ring: *names
+  thumb: *names

@@ -9,6 +9,7 @@
 	<arg name="step_div" default="100" />
 	<arg name="f_ctrl" default="1" /> 
 	<arg name="debug" default="false" /> 
+	<arg name="test" default="false" /> 
 	<arg name="epochs" default="5" /> 
 
 	<!-- detector params -->
@@ -101,6 +102,7 @@
 		<param name="step_div" value="$(arg step_div)" /> 
 		<param name="epochs" value="$(arg epochs)" /> 
 		<param name="debug" value="$(arg debug)" /> 
+		<param name="test" value="$(arg test)" /> 
 		<param name="qdec_detect" value="true" />
 	</node>
 

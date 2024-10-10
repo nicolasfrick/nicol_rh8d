@@ -12,7 +12,7 @@ from typing import Optional, Tuple, Any, Callable
 from pose_filter import *
 from util import *
 
-DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
+MARKER_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),  "datasets/aruco")
 
 @dataclasses.dataclass(eq=False)
 class KfParams():
@@ -171,8 +171,8 @@ class MarkerDetectorBase():
 		t_current = (cv2.getTickCount() - tick) / cv2.getTickFrequency()
 		self.t_total += t_current
 		self.it_total += 1
-		if self.it_total % 100 == 0:
-			print("Detection Time = {} ms (Mean = {} ms)".format(t_current * 1000, 1000 * self.t_total / self.it_total))
+		if self.it_total % 10 == 0:
+			print("Detection Time = {} ms (Mean = {} ms)".format(int(t_current * 1000), int(1000 * self.t_total / self.it_total)))
 
 	def _drawCamCS(self, img: cv2.typing.MatLike) -> None:
 		thckns = 2
@@ -472,7 +472,7 @@ class ArucoDetector(MarkerDetectorBase):
 	def loadArucoYaml(self, filename: str) -> aru.Dictionary:
 		"""Load yaml dict from 'datasets/aruco/' directory"""
 
-		fl = os.path.join(DATA_PTH, filename)
+		fl = os.path.join(MARKER_PTH, filename)
 		dct = aru.Dictionary()
 
 		with open(fl, 'r') as fr:
@@ -591,7 +591,7 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	# mkdir
 	if save_indiv:
 		file_pth = filename.replace(".png", "")
-		file_pth = os.path.join(DATA_PTH, file_pth)
+		file_pth = os.path.join(MARKER_PTH, file_pth)
 		if not os.path.isdir(file_pth):
 			os.mkdir(file_pth)
 
@@ -630,7 +630,7 @@ def saveArucoImgMatrix(aruco_dict: aru.Dictionary, show: bool=False, filename: s
 	# resize and save
 	if not save_indiv:
 		matrix = cv2.resize(matrix, None, fx=scale, fy=scale, interpolation= cv2.INTER_AREA)
-		cv2.imwrite(os.path.join(DATA_PTH, filename),  matrix)
+		cv2.imwrite(os.path.join(MARKER_PTH, filename),  matrix)
 	if show:
 		cv2.imshow("aruco_img", matrix)
 		if cv2.waitKey(0) == ord("q"):
