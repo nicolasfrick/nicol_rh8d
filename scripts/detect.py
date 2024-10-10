@@ -2,11 +2,12 @@
 
 import os
 import sys
-import yaml
 import cv2
+import yaml
 import rospy
 import tf2_ros
 import cv_bridge
+import subprocess
 import numpy as np
 import sensor_msgs.msg
 from typing import Optional, Any, Tuple
@@ -530,7 +531,10 @@ class HybridDetect(KeypointDetect):
 				res = True
 				self.df = self.df.append(entry, ignore_index=True)
 			else:
-				print("Cannot detect all required ids, missing: ", [id if id not in marker_det.keys() else None for id in self.target_ids])
+				print("Cannot detect all required ids, missing: ", end=" ")
+				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
+				subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg']) # beep
+				print()
 		else:
 			print("No detection")
 			
