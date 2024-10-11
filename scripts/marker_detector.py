@@ -365,6 +365,14 @@ class ArucoDetector(MarkerDetectorBase):
 	"""Detect Aruco marker from an image.
 
 		The tag's coordinate frame is centered at the center of the tag, with x-axis to the right, y-axis up, and z-axis OUT OF the tag.
+		CV convention:
+		X: Right, Y: Down, Z: Forward (into the scene)
+		ROS convention:
+		X: Forward (into the scene), Y: Left, Z: Up
+		Conversion: x_ros = z_opencv; y_ros = -x_opencv; z_ros = -y_opencv
+		Aruco uses the opencv convention with the coordinate system located at the Marker Frame:
+		Marker frame X: Right Y: Up Z: Forward (towards the camera)
+		Camera frame X: Right Y: Down Z: Forward (into the scene)
 
 		@param dict_type:  type of the aruco dictionary out of ARUCO_DICT, loaded if no yaml path provided
 		@type  str
@@ -404,9 +412,16 @@ class ArucoDetector(MarkerDetectorBase):
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
 
-	ROT_TO_AT_CONVENTION = np.array([[1,  0,  0], # rotate by PI around x-axis
-																				[0, -1,  0], # turn z pointing into plane
-																				[0,  0, -1]]) # and y downwards
+	ROT_X = np.array([[1,  0,  0], 
+										[0, -1,  0], 
+										[0,  0, -1]]) 
+	ROT_Y = np.array([[-1,  0,  0], 
+										[0, 1,  0], 
+										[0,  0, -1]]) 
+	ROT_Z = np.array([[-1,  0,  0], 
+										[0, -1,  0],
+										[0,  0, 1]]) 
+	ROT_TO_AT_CONVENTION = ROT_Y
 
 	def __init__(self,
 			  				K: Tuple,
