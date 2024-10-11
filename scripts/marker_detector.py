@@ -68,7 +68,6 @@ class MarkerDetectorBase():
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
-							refine_detection: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
 							) -> None:
 		
@@ -86,7 +85,6 @@ class MarkerDetectorBase():
 		self.marker_length = marker_length
 		self.filter_type = filter_type 
 		self.invert_perspective = invert_pose		
-		self.refine_detection = refine_detection
 		self.f_ctrl = f_ctrl
 		self.bbox = bbox
 		self.filters = {}
@@ -182,24 +180,6 @@ class MarkerDetectorBase():
 		cv2.arrowedLine(img, img_center, (img_center[0], img_center[1]+arw_len), self.GREEN, thckns, cv2.LINE_AA)
 		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
 		cv2.circle(img, img_center, self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
-
-	def refineDetection(self, corners: np.ndarray, tvec: np.ndarray, rvec: np.ndarray, rot_t: RotTypes):
-		"""Solve PnP RANSAC for robust pose estimation.
-		"""
-		image_points = np.array(corners, dtype=np.float32)
-		success, out_rvec, out_tvec, inliers = cv2.solvePnPRansac(objectPoints=self.obj_points,
-														  imagePoints=image_points,
-														  cameraMatrix=self.cmx,
-														  distCoeffs=self.dist,
-														  rvec=rvec,
-														  tvec=tvec,
-														  useExtrinsicGuess=True,
-														  flags=self.params.estimate_params.solvePnPMethod
-														  )
-		if success:
-			return success, out_tvec.reshape(3), getRotation(out_rvec.reshape(3), RotTypes.RVEC, rot_t), inliers
-		# return input
-		return success, tvec, getRotation(rvec.reshape(3), RotTypes.RVEC, rot_t), inliers
 
 	def _printSettings(self) -> None:
 		raise NotImplementedError
@@ -299,7 +279,7 @@ class AprilDetector(MarkerDetectorBase):
 		print(txt)
 		print()
 
-	def validateDetection(self, detection: apl.Detection) -> bool:
+	def _validateDetection(self, detection: apl.Detection) -> bool:
 		corners = detection.corners.astype(int)
 		marker_width = np.linalg.norm(corners[0] - corners[1])
 		marker_height = np.linalg.norm(corners[1] - corners[2])
@@ -311,7 +291,7 @@ class AprilDetector(MarkerDetectorBase):
 							and marker_width >= self.params.min_marker_width \
 								and marker_height >= self.params.min_marker_height
 
-	def drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
+	def _drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
 		corners = detection.corners.astype(int)
 		cv2.putText(img, str(detection.tag_id), tuple(corners[0]), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.RED, self.FONT_THCKNS)
 		for i in range(4):
@@ -334,13 +314,10 @@ class AprilDetector(MarkerDetectorBase):
 		if len(detections) > 0:
 			for detection in detections:
 				# proc detections
-				if self.validateDetection(detection):
+				if self._validateDetection(detection):
 					id = detection.tag_id
 					tvec = detection.pose_t.flatten()
 					rot_mat = detection.pose_R
-					# improve detection
-					if self.refine_detection:
-						(success, tvec, rot_mat, inliers) = self.refineDetection(detection.corners, tvec, getRotation(rot_mat, RotTypes.MAT, RotTypes.RVEC), RotTypes.MAT)
 					# invert pose
 					if self.invert_perspective:
 						(tvec, rot_mat) = invPersp(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT)
@@ -367,9 +344,9 @@ class AprilDetector(MarkerDetectorBase):
 																		'center': detection.center,
 																		'pose_err': detection.pose_err}})
 					if vis:
-						self.drawMarkers(detection, img)
+						self._drawMarkers(detection, img)
 				elif vis:
-					self.drawMarkers(detection, gray)
+					self._drawMarkers(detection, gray)
 
 			# reset flag for next kalman update
 			self.params.kf_params.param_change = False 
@@ -527,9 +504,6 @@ class ArucoDetector(MarkerDetectorBase):
 				# rotate CS
 				if self.at_convention:
 					rvec = self._rot2ApriltagConvention(rvec)
-				# improve detection
-				if self.refine_detection:
-					(success, tvec, rvec, inliers) = self.refineDetection(corner.reshape((4,2)), tvec, rvec, RotTypes.RVEC)
 				if self.invert_perspective:
 					(tvec, rvec) = invPersp(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC)
 				# filtering
