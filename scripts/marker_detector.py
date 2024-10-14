@@ -181,6 +181,11 @@ class MarkerDetectorBase():
 		cv2.putText(img, 'X', (img_center[0]-10, img_center[1]+10), cv2.FONT_HERSHEY_SIMPLEX, 1, self.BLUE, thckns, cv2.LINE_AA)
 		cv2.circle(img, img_center, self.CIRCLE_SIZE, self.CIRCLE_CLR, -1)
 
+	def _drawMarkers(self, id: int, corners: np.ndarray, img: cv2.typing.MatLike) -> None:
+		cv2.putText(img, str(id), tuple(corners[0]), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.RED, self.FONT_THCKNS)
+		for i in range(4):
+			cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), self.GREEN, self.AXIS_THICKNESS)
+
 	def _printSettings(self) -> None:
 		raise NotImplementedError
 	
@@ -291,12 +296,6 @@ class AprilDetector(MarkerDetectorBase):
 							and marker_width >= self.params.min_marker_width \
 								and marker_height >= self.params.min_marker_height
 
-	def _drawMarkers(self, detection: apl.Detection, img: cv2.typing.MatLike) -> None:
-		corners = detection.corners.astype(int)
-		cv2.putText(img, str(detection.tag_id), tuple(corners[0]), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.RED, self.FONT_THCKNS)
-		for i in range(4):
-			cv2.line(img, tuple(corners[i]), tuple(corners[(i + 1) % 4]), self.GREEN, self.AXIS_THICKNESS)
-
 	def _adaptParams(self):
 		self.det.tag_detector_ptr.contents.nthreads = int(self.params.nthreads)
 		self.det.tag_detector_ptr.contents.quad_decimate = float(self.params.quad_decimate)
@@ -337,16 +336,15 @@ class AprilDetector(MarkerDetectorBase):
 							   											'rot_mat': rot_mat,
 							   											'tvec': tvec, 
 																		'points': self.obj_points, 
-																		'corners': detection.corners, 
+																		'corners': detection.corners.astype(int), 
 																		'ftrans': self.getFilteredTranslationById(id), 
 																		'frot': self.getFilteredRotationEulerById(id),
-																		'homography': detection.homography,
 																		'center': detection.center,
 																		'pose_err': detection.pose_err}})
 					if vis:
-						self._drawMarkers(detection, img)
+						self._drawMarkers(id, detection.corners.astype(int), img)
 				elif vis:
-					self._drawMarkers(detection, gray)
+					self._drawMarkers(id, detection.corners.astype(int), gray)
 
 			# reset flag for next kalman update
 			self.params.kf_params.param_change = False 
@@ -365,6 +363,7 @@ class ArucoDetector(MarkerDetectorBase):
 	"""Detect Aruco marker from an image.
 
 		The tag's coordinate frame is centered at the center of the tag, with x-axis to the right, y-axis up, and z-axis OUT OF the tag.
+		
 		CV convention:
 		X: Right, Y: Down, Z: Forward (into the scene)
 		ROS convention:
@@ -411,17 +410,8 @@ class ArucoDetector(MarkerDetectorBase):
 								"DICT_7X7_1000": aru.DICT_7X7_1000,
 								"DICT_ARUCO_ORIGINAL": aru.DICT_ARUCO_ORIGINAL
 	}
-
-	ROT_X = np.array([[1,  0,  0], 
-										[0, -1,  0], 
-										[0,  0, -1]]) 
-	ROT_Y = np.array([[-1,  0,  0], 
-										[0, 1,  0], 
-										[0,  0, -1]]) 
-	ROT_Z = np.array([[-1,  0,  0], 
-										[0, -1,  0],
-										[0,  0, 1]]) 
-	ROT_TO_AT_CONVENTION = ROT_Y
+	
+	ROT_TO_AT_CONVENTION = R.from_euler('y', np.pi).as_matrix()
 
 	def __init__(self,
 			  				K: Tuple,
@@ -540,7 +530,6 @@ class ArucoDetector(MarkerDetectorBase):
 											'corners': corner.reshape((4,2)), 
 											'ftrans': self.getFilteredTranslationById(id), 
 											'frot': self.getFilteredRotationEulerById(id),
-											'homography': None,
 											'center': None,
 											'pose_err': None}})
 				

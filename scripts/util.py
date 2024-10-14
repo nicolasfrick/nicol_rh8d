@@ -9,18 +9,26 @@ class RotTypes(Enum):
 	RVEC='rvec'
 	EULER='xyz_euler'
 	MAT='matrix'
+	QUAT='quaternions'
 
 def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.ndarray:
+	if rot_type == out_type:
+		return rot
+	
 	# convert to mat
 	mat = rot
 	if rot_type == RotTypes.RVEC:
 		(mat, _) = Rodrigues(rot)
 	elif rot_type == RotTypes.EULER:
 		mat = R.from_euler('xyz', rot).as_matrix()
+	elif rot_type == RotTypes.QUAT:
+		# x y z w
+		mat = R.from_quat(rot).as_matrix() 
 	elif rot_type == RotTypes.MAT:
 		pass
 	else:
 		raise NotImplementedError 
+	
 	# convert to output format
 	res = mat
 	if out_type == RotTypes.RVEC:
@@ -29,14 +37,25 @@ def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.n
 	elif out_type == RotTypes.EULER:
 		res = R.from_matrix(res).as_euler('xyz')
 		res = res.flatten()
+	elif out_type == RotTypes.QUAT:
+		res = R.from_matrix(mat).as_quat()
 	elif out_type == RotTypes.MAT:
 		pass
 	else:
 		raise NotImplementedError 
+	
 	return res
 
-def euler2Matrix(euler: np.ndarray) -> np.ndarray:
-	return R.from_euler('xyz', euler).as_matrix()
+def rotDiff(rot1: np.ndarray, rot2: np.ndarray) -> float:
+		diff = rot1.T @ rot2  # relative rotation
+		angle_diff = np.arccos((np.trace(diff) - 1) / 2)  # angle difference
+		return angle_diff
+
+def avgRotMat(rotation_matrices: np.ndarray) -> np.ndarray:
+	quats = np.array([getRotation(mat, RotTypes.MAT, RotTypes.QUAT) for mat in rotation_matrices])
+	avg_quat = np.mean(quats, axis=0) 	# average
+	avg_quat /= np.linalg.norm(avg_quat)    # normalize
+	return getRotation(avg_quat, RotTypes.QUAT, RotTypes.MAT)
 
 def pose2Matrix(tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 	transformation_matrix = np.eye(4)
@@ -53,6 +72,79 @@ def invPersp(tvec: np.ndarray, rot: np.ndarray, rot_t: RotTypes) -> Tuple[np.nda
 	if rot_t != RotTypes.MAT:
 		inv_rot = inv_rot.flatten()
 	return np.array(inv_tvec.flat), inv_rot
+
+def consensusRot(rot_mats: np.ndarray, n_iterations: int=100, threshold: float=0.2) -> Tuple[np.ndarray, list]:
+	"""Find the rotation that has a minimal distance to all rotations."""
+	best_inliers = []
+	best_rotation = None
+	for _ in range(n_iterations):
+		# random sample two rotations
+		sample_indices = np.random.choice(len(rot_mats), 2, replace=False)
+		sample_rotations = [rot_mats[i] for i in sample_indices]
+		
+		# find consensus rotation 
+		consens_rot = avgRotMat(sample_rotations)
+		# find inliers 
+		current_inliers = []
+		for idx, mat in enumerate(rot_mats):
+			if rotDiff(consens_rot, mat) < threshold:
+				current_inliers.append(idx)
+
+		# update best inliers
+		if len(current_inliers) > len(best_inliers):
+			best_inliers = current_inliers
+			best_rotation = consens_rot
+
+	return best_rotation, best_inliers
+
+def refRotZ(rot_mat: np.ndarray, ref_rotations: np.ndarray, threshold: float=1e-6) -> np.ndarray:
+	"""Rotate the z axis of rot_mat by the angular difference to ref_rotations average."""
+	# compute average z-axis from the reference rotations
+	avg_z_axis = np.mean([r[:3, 2] for r in ref_rotations], axis=0)
+	avg_z_axis /= np.linalg.norm(avg_z_axis)
+	# get z-axis of target rotation
+	current_z_axis = rot_mat[:3, 2]
+	current_z_axis /= np.linalg.norm(current_z_axis)  
+
+	# compute the axis- angle to rotate the current z-axis to the average z-axis
+	rotation_axis = np.cross(current_z_axis, avg_z_axis) # axis of rotation
+	if np.linalg.norm(rotation_axis) < threshold:  # already aligned
+		return rot_mat
+	rotation_axis /= np.linalg.norm(rotation_axis)  
+	# compute angle of rotation
+	rotation_angle = np.arccos(np.dot(current_z_axis, avg_z_axis)) 
+
+	# compute the correction rotation matrix around the rotation_axis
+	correction_rotation = R.from_rotvec(rotation_angle * rotation_axis).as_matrix()
+	# align the z-axis while keeping x and y as intact as possible
+	return rot_mat @ correction_rotation
+
+import numpy as np
+
+def findAxisOrientOutliers(rot_mats: np.ndarray, tolerance: float=1e-6, axis: str='x') -> Tuple[list, np.ndarray]:
+	"""Average the axes of all matrices and find the index
+		for matrices that do not match the avg orientation.
+	"""	
+	# index 0, 1, 2 supported
+	if ord(axis) < ord('x') or ord(axis) > ord('z'):
+		raise ValueError
+	# index
+	axis_idx = ord(axis) - ord('x')
+
+	# compute average axes
+	axs_avg = np.mean( [r[:3, axis_idx] for r in rot_mats], axis=0 )
+	axs_avg /= np.linalg.norm(axs_avg)
+
+	# compare each axis to the average
+	outliers = []
+	for idx, mat in enumerate(rot_mats):
+		# normalize
+		axs = mat[:, axis_idx] / np.linalg.norm(mat[:, axis_idx])
+		# check degree of alignment
+		if abs( np.dot(axs, axs_avg) ) < tolerance:
+			outliers.append(idx)
+	
+	return outliers, axs_avg
 
 def greenScreen(img: cv2.typing.MatLike):
 	repl = np.ones(img.shape, dtype=np.float32) * 255
