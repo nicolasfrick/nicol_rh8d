@@ -177,9 +177,12 @@ class DetectBase():
 	print("cannot fix")
 
 	def refineDetection(self, detections: dict) -> None:
+		"""Minimizes the projection error with respect to the rotation and the translation vectors, 
+			 according to a Levenberg-Marquardt iterative minimization process.
+		"""
 		for id in detections.keys():
 			det = detections[id]
-			tvec, rvec = refinePose(tvec=det['ftrans'], 
+			(tvec, rvec) = refinePose(tvec=det['ftrans'], 
 						   								 rvec=getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), 
 														corners=det['corners'], 
 														obj_points=det['points'], 
