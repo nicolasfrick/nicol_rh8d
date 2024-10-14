@@ -7,7 +7,6 @@ import yaml
 import rospy
 import tf2_ros
 import cv_bridge
-import subprocess
 import numpy as np
 import sensor_msgs.msg
 from typing import Optional, Any, Tuple
@@ -60,6 +59,8 @@ class DetectBase():
 		@type bool
 		@param plt_id
 		@type int
+		@param refine_pose
+		@type bool
 
 	"""
 
@@ -79,6 +80,7 @@ class DetectBase():
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
 				test: Optional[bool]=False,
+				refine_pose: Optional[bool]=False,
 				) -> None:
 		
 		self.vis = vis
@@ -87,6 +89,7 @@ class DetectBase():
 		self.f_loop = f_ctrl
 		self.use_aruco = use_aruco
 		self.filter_type = filter_type
+		self.refine_pose = refine_pose
 		self.filter_iters = filter_iters if filter_type != 'none' else 1
 		self.frame_cnt = 0
 
@@ -133,21 +136,60 @@ class DetectBase():
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 
-	def refinePose(self, tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_points: np.ndarray, solver_flag: int=cv2.SOLVEPNP_IPPE_SQUARE) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
-		"""RANSAC over given pose can improve the accuracy."""
-		success, out_rvec, out_tvec, inliers = cv2.solvePnPRansac(objectPoints=obj_points,
-																														imagePoints=np.array(corners, dtype=np.float32),
-																														cameraMatrix=self.det.cmx,
-																														distCoeffs=self.det.dist,
-																														rvec=rvec,
-																														tvec=tvec,
-																														useExtrinsicGuess=False,
-																														flags=solver_flag,
-																														)
-		out_tvec = out_tvec.reshape(3)
-		out_rvec = out_rvec.reshape(3)
-		inliers = inliers.flatten()
-		return success, out_tvec, out_rvec,  inliers
+	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> None:
+		"""Check if all Z axes are oriented similarly and 
+			  flip orientation for outliers. 
+		"""
+		marker_ids = list(detections.keys())
+		# extract filtered rotations
+		rotations = [getRotation(marker_det['frot'], RotTypes.EULER, RotTypes.MAT)  for marker_det in detections.values()]
+		# find outliers
+		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis='z')
+
+		# correct outliers
+		for idx in outliers:
+			mid = marker_ids[idx]
+			print(f"Marker {mid} orientation is likely flipped ...", end=" ")
+			# find possible PnP solutions
+			num_sols, rvecs, tvecs, repr_err = cv2.solvePnPGeneric(detections[mid]['points'], 
+														  																np.array(detections[mid]['corners'], dtype=np.float32), 
+																														self.det.cmx, 
+																														self.det.dist,
+																														getRotation(rotations[idx], RotTypes.MAT, RotTypes.RVEC), 
+																														detections[mid]['tvec'], 
+																														flags=cv2.SOLVEPNP_IPPE_SQUARE)
+			# find solution that matches the average
+			for rvec, tvec in zip(rvecs, tvecs):
+				# normalize rotation
+				mat = getRotation(rvec.flatten(), RotTypes.RVEC, RotTypes.MAT)
+				axs = mat[:, 2] / np.linalg.norm(mat[:, 2])
+				# check angular distance to average
+				if abs( np.dot(axs, axis_avg) ) > tolerance:
+					# set other rot
+					detections[mid]['rot_mat'] = mat
+					detections[mid]['rvec'] = rvec.flatten()
+					detections[mid]['frot'] = getRotation(mat, RotTypes.MAT, RotTypes.EULER)
+					# set other trans
+					detections[mid]['ftrans'] = tvec.flatten()
+					print("fixed")
+					return
+				
+	print("cannot fix")
+
+	def refineDetection(self, detections: dict) -> None:
+		for id in detections.keys():
+			det = detections[id]
+			tvec, rvec = refinePose(tvec=det['ftrans'], 
+						   								 rvec=getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), 
+														corners=det['corners'], 
+														obj_points=det['points'], 
+														cmx=self.det.cmx, 
+														dist=self.det.dist
+														)
+			detections[id]['ftrans'] = tvec
+			detections[id]['frot'] = getRotation(rvec, RotTypes.RVEC, RotTypes.EULER)
+			detections[id]['rot_mat'] = getRotation(rvec, RotTypes.RVEC, RotTypes.MAT)
+			detections[id]['rvec'] = rvec
 	
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
 		""" Put num filter_iters images into
@@ -204,6 +246,10 @@ class KeypointDetect(DetectBase):
 		@type float
 		@param use_tf
 		@type bool
+		@param test
+		@type bool
+		@param flip_outliers
+		@type bool
 
 	"""
 
@@ -232,18 +278,20 @@ class KeypointDetect(DetectBase):
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
 				flip_outliers: Optional[bool]=True,
+				refine_pose: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
 						camera_ns=camera_ns,
-						vis=vis,
 						use_reconfigure=use_reconfigure,
+						refine_pose=refine_pose,
 						filter_type=filter_type,
 						filter_iters=filter_iters,
-						f_ctrl=f_ctrl,
 						use_aruco=use_aruco,
 						plt_id=plt_id,
-						test=test
+						f_ctrl=f_ctrl,
+						test=test,
+						vis=vis,
 						)
 		
 		self.flip_outliers = flip_outliers
@@ -374,46 +422,6 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			self.drawAngle(img, p1, p2, np.rad2deg(angle))
 
-	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> None:
-		"""Check if all Z axes are oriented similarly and 
-			  flip orientation for outliers. 
-		"""
-		marker_ids = list(detections.keys())
-		# extract filtered rotations
-		rotations = [getRotation(marker_det['frot'], RotTypes.EULER, RotTypes.MAT)  for marker_det in detections.values()]
-		# find outliers
-		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis='z')
-
-		# correct outliers
-		for idx in outliers:
-			mid = marker_ids[idx]
-			print(f"Marker {mid} orientation is likely flipped ...", end=" ")
-			# find possible PnP solutions
-			num_sols, rvecs, tvecs, repr_err = cv2.solvePnPGeneric(detections[mid]['points'], 
-														  																np.array(detections[mid]['corners'], dtype=np.float32), 
-																														self.det.cmx, 
-																														self.det.dist,
-																														getRotation(rotations[idx], RotTypes.MAT, RotTypes.RVEC), 
-																														detections[mid]['tvec'], 
-																														flags=cv2.SOLVEPNP_IPPE_SQUARE)
-			# find solution that matches the average
-			for rvec, tvec in zip(rvecs, tvecs):
-				# normalize rotation
-				mat = getRotation(rvec.flatten(), RotTypes.RVEC, RotTypes.MAT)
-				axs = mat[:, 2] / np.linalg.norm(mat[:, 2])
-				# check angular distance to average
-				if abs( np.dot(axs, axis_avg) ) > tolerance:
-					# set other rot
-					detections[mid]['rot_mat'] = mat
-					detections[mid]['rvec'] = rvec.flatten()
-					detections[mid]['frot'] = getRotation(mat, RotTypes.MAT, RotTypes.EULER)
-					# set other trans
-					detections[mid]['ftrans'] = tvec.flatten()
-					print("fixed")
-					return
-				
-	print("cannot fix")
-
 	def detectionRoutine(self) -> dict:
 		(marker_det, det_img, proc_img, _) = self.preProcImage()
 
@@ -513,21 +521,23 @@ class HybridDetect(KeypointDetect):
 				test: Optional[bool]=False,
 				save_imgs: Optional[bool]=True,
 				flip_outliers: Optional[bool]=True,
+				refine_pose: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
-						camera_ns=camera_ns,
-						vis=vis,
-						use_reconfigure=use_reconfigure,
-						filter_type=filter_type,
-						filter_iters=filter_iters,
-						f_ctrl=f_ctrl,
-						use_aruco=use_aruco,
-						plt_id=plt_id,
-						use_tf=False,
-						test=test,
-						flip_outliers=flip_outliers,
-						)
+										use_reconfigure=use_reconfigure,
+										flip_outliers=flip_outliers,
+										refine_pose=refine_pose,
+										camera_ns=camera_ns,
+										filter_type=filter_type,
+										filter_iters=filter_iters,
+										use_aruco=use_aruco,
+										plt_id=plt_id,
+										use_tf=False,
+										f_ctrl=f_ctrl,
+										test=test,
+										vis=vis,
+										)
 		
 		# actuator control
 		self.epochs = epochs
@@ -564,6 +574,9 @@ class HybridDetect(KeypointDetect):
 				# align rotations by consens
 				if self.flip_outliers:
 					self.flipOutliers(marker_det)
+				# improve detection
+				if self.refine_pose:
+					self.refineDetection(marker_det)
 
 				# zero encoder angles
 				if new_epoch:
@@ -603,7 +616,7 @@ class HybridDetect(KeypointDetect):
 			else:
 				print("Cannot detect all required ids, missing: ", end=" ")
 				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
-				subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg']) # beep
+				beep()
 				print()
 		else:
 			print("No detection")
@@ -697,18 +710,20 @@ class CameraPoseDetect(DetectBase):
 				err_term: Optional[float]=1e-8,
 				cart_bound_low: Optional[float]=-3.0,
 				cart_bound_high: Optional[float]=3.0,
+				refine_pose: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
-						camera_ns=camera_ns,
-						vis=vis,
-						use_reconfigure=use_reconfigure,
-						filter_type=filter_type,
-						filter_iters=0, # n/a
-						f_ctrl=f_ctrl,
-						use_aruco=use_aruco,
-						plt_id=plt_id,
-						)
+										use_reconfigure=use_reconfigure,
+										refine_pose=refine_pose,
+										camera_ns=camera_ns,
+										filter_type=filter_type,
+										use_aruco=use_aruco,
+										filter_iters=0, # n/a
+										plt_id=plt_id,
+										f_ctrl=f_ctrl,
+										vis=vis,
+										)
 		self.err_term = err_term
 		self.lower_bounds = [cart_bound_low, cart_bound_low, cart_bound_low, -np.pi, -np.pi, -np.pi]
 		self.upper_bounds = [cart_bound_high, cart_bound_high, cart_bound_high, np.pi, np.pi, np.pi]

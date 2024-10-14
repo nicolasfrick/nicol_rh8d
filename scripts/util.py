@@ -1,4 +1,5 @@
 import os, cv2
+import subprocess	
 import numpy as np
 from enum import Enum
 from typing import Tuple
@@ -145,6 +146,44 @@ def findAxisOrientOutliers(rot_mats: np.ndarray, tolerance: float=1e-6, axis: st
 			outliers.append(idx)
 	
 	return outliers, axs_avg
+
+def ransacPose(tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_points: np.ndarray, cmx: np.ndarray, dist: np.ndarray, solver_flag: int=cv2.SOLVEPNP_IPPE_SQUARE) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+	"""RANSAC over given pose can improve the accuracy."""
+	(success, out_rvec, out_tvec, inliers) = cv2.solvePnPRansac(objectPoints=obj_points,
+																														imagePoints=np.array(corners, dtype=np.float32),
+																														cameraMatrix=cmx,
+																														distCoeffs=dist,
+																														rvec=rvec,
+																														tvec=tvec,
+																														useExtrinsicGuess=False,
+																														flags=solver_flag,
+																														)
+	if success:
+		out_tvec = out_tvec.reshape(3)
+		out_rvec = out_rvec.reshape(3)
+		inliers = inliers.flatten()
+		return success, out_tvec, out_rvec,  inliers
+	
+	return success, tvec, rvec,  None
+
+def refinePose(tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_points: np.ndarray, cmx: np.ndarray, dist: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+	""" Non-linear Levenberg-Marquardt minimization scheme and the current implementation 
+			computes the rotation update as a perturbation and not on SO(3).
+	"""
+	# TermCriteria(TermCriteria::EPS+TermCriteria::COUNT, 20, FLT_EPSILON) 
+	criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001) 
+	(out_rvec, out_tvec) = cv2.solvePnPRefineLM(objectPoints=obj_points,
+										   													imagePoints=np.array(corners, dtype=np.float32),
+																							cameraMatrix=cmx,
+																							distCoeffs=dist,
+																							rvec=rvec,
+																							tvec=tvec,
+																							criteria=criteria,
+																							)
+	return out_tvec.flatten(), out_rvec.flatten()
+
+def beep() -> None:
+	subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
 
 def greenScreen(img: cv2.typing.MatLike):
 	repl = np.ones(img.shape, dtype=np.float32) * 255
