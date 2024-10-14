@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import numpy as np
 from time import sleep
 from typing import Optional, Union
 from dynamixel_sdk import PortHandler, PacketHandler
@@ -17,6 +18,10 @@ class RH8DSerialStub():
         return 0
     def setPos(self, id: int, val: int, t_sleep: float=0.0) -> bool:
         return True
+    def rampMinPos(self, id: int, t_sleep: float=0.05) -> None:
+        pass
+    def rampMaxPos(self, id: int, t_sleep: float=0.05) -> None:
+        pass
 
 class RH8DSerial():
 
@@ -50,6 +55,28 @@ class RH8DSerial():
         if len(self.pres_ids) == 0:
             raise Exception("RH8D com error")
         print("Active ids:", self.pres_ids)
+
+    def rampMinPos(self, id: int, t_sleep: float=0.1) -> None:
+        step = 100
+        crnt = self.getpos(id)
+        while crnt > RH8D_MIN_POS:
+            if crnt <= RH8D_MIN_POS + (RH8D_MIN_POS*0.125) and step > 1:
+                step *= 0.91
+            crnt -= int(step)
+            crnt = max(crnt, RH8D_MIN_POS)
+            self.setPos(id, crnt, t_sleep)
+            print(crnt)
+
+    def rampMaxPos(self, id: int, t_sleep: float=0.1) -> None:
+        step = 100
+        crnt = self.getpos(id)
+        while crnt < RH8D_MAX_POS:
+            if crnt >= RH8D_MAX_POS - (RH8D_MAX_POS*0.125) and step > 1:
+                step *= 0.91
+            crnt += int(step)
+            crnt = min(crnt, RH8D_MAX_POS)
+            self.setPos(id, crnt, t_sleep)
+            print(crnt)
 
     def setMinPos(self, id: int, t_sleep: float=0.0) -> None:
         self.setPos(id, RH8D_MIN_POS, t_sleep)
@@ -105,6 +132,3 @@ if __name__ == "__main__":
 
         time.sleep(2)
         s.setMinPos(id)
-
-
-

@@ -344,7 +344,7 @@ class AprilDetector(MarkerDetectorBase):
 					if vis:
 						self._drawMarkers(id, detection.corners.astype(int), img)
 				elif vis:
-					self._drawMarkers(id, detection.corners.astype(int), gray)
+					self._drawMarkers(detection.tag_id, detection.corners.astype(int), gray)
 
 			# reset flag for next kalman update
 			self.params.kf_params.param_change = False 

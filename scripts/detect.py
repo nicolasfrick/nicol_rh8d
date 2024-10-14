@@ -4,6 +4,7 @@ import os
 import sys
 import cv2
 import yaml
+import time
 import rospy
 import tf2_ros
 import cv_bridge
@@ -24,7 +25,6 @@ from qdec_serial import *
 from rh8d_serial import *
 from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
-from time import process_time
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 # data records
@@ -35,11 +35,17 @@ KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection.json')
 JPG_QUALITY = 60
 REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
+QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
+QDEC_DET_REC_DIR = os.path.join(QDEC_REC_DIR, 'det')
 KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint')
 if not os.path.exists(REC_DIR):
 	os.mkdir(REC_DIR)
 if not os.path.exists(QDEC_REC_DIR):
 	os.mkdir(QDEC_REC_DIR)
+if not os.path.exists(QDEC_ORIG_REC_DIR):
+	os.mkdir(QDEC_ORIG_REC_DIR)
+if not os.path.exists(QDEC_DET_REC_DIR):
+	os.mkdir(QDEC_DET_REC_DIR)
 if not os.path.exists(KEYPT_REC_DIR):
 	os.mkdir(KEYPT_REC_DIR)
 
@@ -136,7 +142,7 @@ class DetectBase():
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 
-	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> None:
+	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> bool:
 		"""Check if all Z axes are oriented similarly and 
 			  flip orientation for outliers. 
 		"""
@@ -147,6 +153,7 @@ class DetectBase():
 		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis='z')
 
 		# correct outliers
+		fixed = []
 		for idx in outliers:
 			mid = marker_ids[idx]
 			print(f"Marker {mid} orientation is likely flipped ...", end=" ")
@@ -172,9 +179,9 @@ class DetectBase():
 					# set other trans
 					detections[mid]['ftrans'] = tvec.flatten()
 					print("fixed")
-					return
+					fixed.append(idx)
 				
-	print("cannot fix")
+		return all([o in fixed for o in outliers])
 
 	def refineDetection(self, detections: dict) -> None:
 		"""Minimizes the projection error with respect to the rotation and the translation vectors, 
@@ -263,7 +270,7 @@ class KeypointDetect(DetectBase):
 	AXES_LEN = 0.015 # meter
 	X_AXIS = np.array([[-AXES_LEN,0,0], [AXES_LEN, 0, 0]], dtype=np.float32)
 	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
-	ELIPSE_COLOR = (0,0,0)
+	ELIPSE_COLOR = (255,255,255)
 	ELIPSE_THKNS = 2
 	X_EL_TXT_OFFSET = 0.95
 	Y_EL_TXT_OFFSET = 1
@@ -344,7 +351,7 @@ class KeypointDetect(DetectBase):
 		tf_points = tf_points.T 
 		return tf_points[:, :3]
 	
-	def drawAngle(self, img: cv2.typing.MatLike, pt1: np.ndarray, pt2: np.ndarray, angle_deg: float) -> None:
+	def drawAngle(self, id: int, img: cv2.typing.MatLike, pt1: np.ndarray, pt2: np.ndarray, angle_deg: float) -> None:
 		# extract point coordinates
 		x1, y1 = pt1
 		x2, y2 = pt2
@@ -412,8 +419,8 @@ class KeypointDetect(DetectBase):
 		x_axis_target_marker, _ = cv2.projectPoints(self.X_AXIS, target_rot, target_trans, self.det.cmx, self.det.dist)
 		x_axis_base_marker = np.int32(x_axis_base_marker).reshape(-1, 2)
 		x_axis_target_marker = np.int32(x_axis_target_marker).reshape(-1, 2)
-		cv2.line(img, x_axis_base_marker[0], x_axis_base_marker[1], self.det.RED, 2)
-		cv2.line(img, x_axis_target_marker[0], x_axis_target_marker[1], self.det.RED, 2)
+		cv2.line(img, x_axis_base_marker[0], x_axis_base_marker[1], self.ELIPSE_COLOR, 2)
+		cv2.line(img, x_axis_target_marker[0], x_axis_target_marker[1], self.ELIPSE_COLOR, 2)
 
 		# draw angle between the x-axes
 		if np.abs(angle) > 0:
@@ -423,7 +430,7 @@ class KeypointDetect(DetectBase):
 			# draw ellipse
 			p1 = tuple(map(int, interpolated_point_base_ax))
 			p2 = tuple(map(int, interpolated_point_target_ax))
-			self.drawAngle(img, p1, p2, np.rad2deg(angle))
+			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
 	def detectionRoutine(self) -> dict:
 		(marker_det, det_img, proc_img, _) = self.preProcImage()
@@ -556,15 +563,16 @@ class HybridDetect(KeypointDetect):
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if  not self.test else QdecSerialStub()
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
+		names = ["spare", "root", "proximal", "medial", "distal"]
 		angle = marker_det[id].get('angle') 
 		if angle is None: 
 			return
-		txt = "{} -> {} cv: {:.2f} deg, qdec: {:.2f} deg, err: {:.2f} deg".format(marker_det[id]['base_id'], id, np.rad2deg(angle), np.rad2deg(marker_det[id]['qdec_angle']), np.rad2deg(marker_det[id]['error']))
+		txt = "{} {} cv: {:.2f} deg, qdec: {:.2f} deg, err: {:.2f} deg".format(id, names[id%len(names)], np.rad2deg(angle), np.rad2deg(marker_det[id]['qdec_angle']), np.rad2deg(marker_det[id]['error']))
 		xpos = self.TXT_OFFSET
-		ypos = (id+1)*self.TXT_OFFSET
+		ypos = (id+2)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
-	def detectionRoutine(self, new_epoch: bool) -> bool:
+	def detectionRoutine(self, new_epoch: bool, pos_cmd: int, epoch: int) -> bool:
 		res = False
 		# get filtered detection
 		(marker_det, det_img, proc_img, img) = self.preProcImage()
@@ -576,7 +584,9 @@ class HybridDetect(KeypointDetect):
 				
 				# align rotations by consens
 				if self.flip_outliers:
-					self.flipOutliers(marker_det)
+					if not self.flipOutliers(marker_det):
+						beep()
+						return False
 				# improve detection
 				if self.refine_pose:
 					self.refineDetection(marker_det)
@@ -609,10 +619,10 @@ class HybridDetect(KeypointDetect):
 					error = np.abs(qdec_angle - angle)
 
 					# data entry
-					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt}
+					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'cmd': pos_cmd, 'epoch': epoch}
 					marker_det[target_id].update(data)
 					entry.update({self.group_ids[base_idx]: data})
-					print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
 
 				res = True
 				self.df = self.df.append(entry, ignore_index=True)
@@ -627,6 +637,8 @@ class HybridDetect(KeypointDetect):
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			# actuator position
+			cv2.putText(out_img, f"actuator position: {pos_cmd}", (self.TXT_OFFSET, self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw angle labels and possibly fixed detections 
 			for id, detection in marker_det.items():
 				self.labelDetection(out_img, id, marker_det) # cv angle
@@ -639,13 +651,13 @@ class HybridDetect(KeypointDetect):
 			cv2.imshow('Detection', det_img)
 			cv2.imshow('Output', out_img)
 			if self.save_imgs:
-				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '_orig.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '_det.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(QDEC_ORIG_REC_DIR, str(self.frame_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(QDEC_DET_REC_DIR, str(self.frame_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 
 		return res
 		
 	def run(self) -> None:
-		lim = 300
+		lim = 100
 		max_pos = RH8D_MAX_POS - lim
 		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
@@ -655,24 +667,31 @@ class HybridDetect(KeypointDetect):
 				print("Epoch", e+1)
 				new_epoch = True
 				# move to zero
-				self.rh8d_ctrl.setMinPos(self.actuator, 1)
+				self.rh8d_ctrl.rampMinPos(self.actuator)
 				pos_cmd = step
+				fails = 0
+				time.sleep(5)
 				
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
 					# detect angles
-					success = self.detectionRoutine(new_epoch)
+					success = self.detectionRoutine(new_epoch, pos_cmd, e)
 					
 					if cv2.waitKey(1) == ord("q"):
 						return
 					
 					# move finger
-					print("Setting position", pos_cmd)
 					self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
+					print("Setting position", pos_cmd, "epoch", e)
+					print()
 					
 					# increment position if detection was successful
 					if success:
 						pos_cmd += step
 						new_epoch = False
+					else:
+						if fails > 3:
+							break
+						fails += 1
 
 					try:
 						rate.sleep()

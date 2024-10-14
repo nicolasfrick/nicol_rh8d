@@ -6,11 +6,11 @@
 	<arg name="markers_camera_name" default="markers_camera" />
     <arg name="fps"              default="30" />
 	<arg name="actuator" default="36" />
-	<arg name="step_div" default="100" />
+	<arg name="step_div" default="200" />
 	<arg name="f_ctrl" default="1" /> 
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
-	<arg name="epochs" default="5" /> 
+	<arg name="epochs" default="15" /> 
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
