@@ -132,6 +132,22 @@ class DetectBase():
 		if use_reconfigure:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+
+	def refinePose(self, tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_points: np.ndarray, solver_flag: int=cv2.SOLVEPNP_IPPE_SQUARE) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+		"""RANSAC over given pose can improve the accuracy."""
+		success, out_rvec, out_tvec, inliers = cv2.solvePnPRansac(objectPoints=obj_points,
+																														imagePoints=np.array(corners, dtype=np.float32),
+																														cameraMatrix=self.det.cmx,
+																														distCoeffs=self.det.dist,
+																														rvec=rvec,
+																														tvec=tvec,
+																														useExtrinsicGuess=False,
+																														flags=solver_flag,
+																														)
+		out_tvec = out_tvec.reshape(3)
+		out_rvec = out_rvec.reshape(3)
+		inliers = inliers.flatten()
+		return success, out_tvec, out_rvec,  inliers
 	
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
 		""" Put num filter_iters images into
@@ -215,6 +231,7 @@ class KeypointDetect(DetectBase):
 				plt_id: Optional[int]=-1,
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
+				flip_outliers: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -229,6 +246,8 @@ class KeypointDetect(DetectBase):
 						test=test
 						)
 		
+		self.flip_outliers = flip_outliers
+
 		# init ros
 		if use_tf:
 			self.buf = tf2_ros.Buffer()
@@ -239,6 +258,9 @@ class KeypointDetect(DetectBase):
 		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
 		with open(self.fl, 'r') as fr:
 			self.hand_ids = yaml.safe_load(fr)
+
+		if vis:
+			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
 	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XZ plane in the markee frame.
@@ -352,6 +374,46 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			self.drawAngle(img, p1, p2, np.rad2deg(angle))
 
+	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> None:
+		"""Check if all Z axes are oriented similarly and 
+			  flip orientation for outliers. 
+		"""
+		marker_ids = list(detections.keys())
+		# extract filtered rotations
+		rotations = [getRotation(marker_det['frot'], RotTypes.EULER, RotTypes.MAT)  for marker_det in detections.values()]
+		# find outliers
+		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis='z')
+
+		# correct outliers
+		for idx in outliers:
+			mid = marker_ids[idx]
+			print(f"Marker {mid} orientation is likely flipped ...", end=" ")
+			# find possible PnP solutions
+			num_sols, rvecs, tvecs, repr_err = cv2.solvePnPGeneric(detections[mid]['points'], 
+														  																np.array(detections[mid]['corners'], dtype=np.float32), 
+																														self.det.cmx, 
+																														self.det.dist,
+																														getRotation(rotations[idx], RotTypes.MAT, RotTypes.RVEC), 
+																														detections[mid]['tvec'], 
+																														flags=cv2.SOLVEPNP_IPPE_SQUARE)
+			# find solution that matches the average
+			for rvec, tvec in zip(rvecs, tvecs):
+				# normalize rotation
+				mat = getRotation(rvec.flatten(), RotTypes.RVEC, RotTypes.MAT)
+				axs = mat[:, 2] / np.linalg.norm(mat[:, 2])
+				# check angular distance to average
+				if abs( np.dot(axs, axis_avg) ) > tolerance:
+					# set other rot
+					detections[mid]['rot_mat'] = mat
+					detections[mid]['rvec'] = rvec.flatten()
+					detections[mid]['frot'] = getRotation(mat, RotTypes.MAT, RotTypes.EULER)
+					# set other trans
+					detections[mid]['ftrans'] = tvec.flatten()
+					print("fixed")
+					return
+				
+	print("cannot fix")
+
 	def detectionRoutine(self) -> dict:
 		(marker_det, det_img, proc_img, _) = self.preProcImage()
 
@@ -450,6 +512,7 @@ class HybridDetect(KeypointDetect):
 				epochs: Optional[int]=10,
 				test: Optional[bool]=False,
 				save_imgs: Optional[bool]=True,
+				flip_outliers: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -463,6 +526,7 @@ class HybridDetect(KeypointDetect):
 						plt_id=plt_id,
 						use_tf=False,
 						test=test,
+						flip_outliers=flip_outliers,
 						)
 		
 		# actuator control
@@ -490,10 +554,16 @@ class HybridDetect(KeypointDetect):
 	def detectionRoutine(self, new_epoch: bool) -> bool:
 		res = False
 		# get filtered detection
-		(marker_det, det_img, proc_img, _) = self.preProcImage()
+		(marker_det, det_img, proc_img, img) = self.preProcImage()
+		out_img = img.copy()
+
 		if marker_det:
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
+				
+				# align rotations by consens
+				if self.flip_outliers:
+					self.flipOutliers(marker_det)
 
 				# zero encoder angles
 				if new_epoch:
@@ -541,14 +611,20 @@ class HybridDetect(KeypointDetect):
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-			for id in marker_det.keys():
-				# label marker angle
-				self.labelDetection(det_img, id, marker_det)
-				self.labelQdecAngles(det_img, id, marker_det)
+			# draw angle labels and possibly fixed detections 
+			for id, detection in marker_det.items():
+				self.labelDetection(out_img, id, marker_det) # cv angle
+				self.labelQdecAngles(out_img, id, marker_det) # qdec angle
+				self.det._drawMarkers(id, detection['corners'], out_img) # square
+				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
+				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
+				
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
+			cv2.imshow('Output', out_img)
 			if self.save_imgs:
-				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '_orig.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(QDEC_REC_DIR, str(self.frame_cnt) + '_det.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 
 		return res
 		
@@ -844,7 +920,7 @@ class CameraPoseDetect(DetectBase):
 							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
 							if id == self.plt_id and self.frame_cnt > 10:
-								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], euler2Matrix(det['frot']), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
+								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.MAT), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(1) == ord("q"):
@@ -872,6 +948,7 @@ def main() -> None:
 				   f_ctrl=rospy.get_param('~f_ctrl', 30),
 				   use_aruco=rospy.get_param('~use_aruco', False),
 				   plt_id=rospy.get_param('~plot_id', -1),
+				   test=rospy.get_param('~test', False),
 				   ).runDebug()
 	elif rospy.get_param('~camera_pose', False):
 		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
