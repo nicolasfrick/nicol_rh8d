@@ -65,7 +65,6 @@ class RH8DSerial():
             crnt -= int(step)
             crnt = max(crnt, RH8D_MIN_POS)
             self.setPos(id, crnt, t_sleep)
-            print(crnt)
 
     def rampMaxPos(self, id: int, t_sleep: float=0.1) -> None:
         step = 100
@@ -76,7 +75,6 @@ class RH8DSerial():
             crnt += int(step)
             crnt = min(crnt, RH8D_MAX_POS)
             self.setPos(id, crnt, t_sleep)
-            print(crnt)
 
     def setMinPos(self, id: int, t_sleep: float=0.0) -> None:
         self.setPos(id, RH8D_MIN_POS, t_sleep)

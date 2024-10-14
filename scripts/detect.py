@@ -591,12 +591,11 @@ class HybridDetect(KeypointDetect):
 				if self.refine_pose:
 					self.refineDetection(marker_det)
 
-				# zero encoder angles
-				if new_epoch:
-					self.qdec.qdecReset()
 				# encoder angles in rad
 				qdec_angles = self.qdec.readMedianAnglesRad()
 				if not qdec_angles:
+					print("No qdec angles")
+					beep()
 					return False
 				
 				# cv angles
@@ -661,16 +660,19 @@ class HybridDetect(KeypointDetect):
 		max_pos = RH8D_MAX_POS - lim
 		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
+		# zero encoder angles
+		self.qdec.qdecReset()
 		
 		try:
 			for e in range(self.epochs):
 				print("Epoch", e+1)
 				new_epoch = True
-				# move to zero
-				self.rh8d_ctrl.rampMinPos(self.actuator)
 				pos_cmd = step
 				fails = 0
-				time.sleep(5)
+				# move to zero
+				self.rh8d_ctrl.rampMinPos(self.actuator)
+				if e:
+					time.sleep(1)
 				
 				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
 					# detect angles
