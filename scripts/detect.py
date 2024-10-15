@@ -10,12 +10,12 @@ import tf2_ros
 import cv_bridge
 import numpy as np
 import sensor_msgs.msg
-from typing import Optional, Any, Tuple
 import dynamic_reconfigure.server
+from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
-from scipy.spatial.transform import Rotation as R
 from geometry_msgs.msg import PoseStamped
 from tf2_geometry_msgs import PointStamped
+from scipy.spatial.transform import Rotation as R
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
 from util import *
@@ -142,7 +142,7 @@ class DetectBase():
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
 
-	def flipOutliers(self, detections: dict, tolerance: float=0.3) -> bool:
+	def flipOutliers(self, detections: dict, tolerance: float=0.5) -> bool:
 		"""Check if all Z axes are oriented similarly and 
 			  flip orientation for outliers. 
 		"""
@@ -559,8 +559,8 @@ class HybridDetect(KeypointDetect):
 		self.group_ids = self.hand_ids['names']['index'] # joint names
 		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
-		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if  not self.test else RH8DSerialStub()
-		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if  not self.test else QdecSerialStub()
+		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
+		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if not self.test else QdecSerialStub()
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
 		names = ["spare", "root", "proximal", "medial", "distal"]
@@ -572,7 +572,7 @@ class HybridDetect(KeypointDetect):
 		ypos = (id+2)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 		
-	def detectionRoutine(self, new_epoch: bool, pos_cmd: int, epoch: int) -> bool:
+	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
 		res = False
 		# get filtered detection
 		(marker_det, det_img, proc_img, img) = self.preProcImage()
@@ -610,7 +610,7 @@ class HybridDetect(KeypointDetect):
 					# detected angle in rad
 					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
 					# save initially detected angle
-					if new_epoch:
+					if init:
 						self.start_angles.update({base_idx: angle})
 					# substract initial angle
 					angle = angle - self.start_angles[base_idx]
@@ -618,7 +618,7 @@ class HybridDetect(KeypointDetect):
 					error = np.abs(qdec_angle - angle)
 
 					# data entry
-					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'cmd': pos_cmd, 'epoch': epoch}
+					data = {'angle': angle, 'qdec_angle': qdec_angle, 'error': error, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
 					marker_det[target_id].update(data)
 					entry.update({self.group_ids[base_idx]: data})
 					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
@@ -629,7 +629,6 @@ class HybridDetect(KeypointDetect):
 				print("Cannot detect all required ids, missing: ", end=" ")
 				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
 				beep()
-				print()
 		else:
 			print("No detection")
 			
@@ -656,17 +655,24 @@ class HybridDetect(KeypointDetect):
 		return res
 		
 	def run(self) -> None:
-		lim = 100
-		max_pos = RH8D_MAX_POS - lim
+		max_pos = 2700 # encoder covers marker
+		min_pos = RH8D_MIN_POS
 		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
 		# zero encoder angles
 		self.qdec.qdecReset()
+		# save initial cv angles once
+		init = True
+
+		# initially closing
+		direction = 1
+		# 0: n/a, 1: closing, -1: opening
+		conditions = [False, lambda cmd: cmd <= max_pos, lambda cmd: cmd >= min_pos]
 		
 		try:
+			# epoch
 			for e in range(self.epochs):
-				print("Epoch", e+1)
-				new_epoch = True
+				print("Epoch", e)
 				pos_cmd = step
 				fails = 0
 				# move to zero
@@ -674,31 +680,35 @@ class HybridDetect(KeypointDetect):
 				if e:
 					time.sleep(1)
 				
-				while not rospy.is_shutdown() and (pos_cmd <= max_pos):
-					# detect angles
-					success = self.detectionRoutine(new_epoch, pos_cmd, e)
-					
-					if cv2.waitKey(1) == ord("q"):
-						return
-					
-					# move finger
-					self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
-					print("Setting position", pos_cmd, "epoch", e)
-					print()
-					
-					# increment position if detection was successful
-					if success:
-						pos_cmd += step
-						new_epoch = False
-					else:
-						if fails > 3:
-							break
-						fails += 1
+				# closing and opening cycle
+				for i in range(2):
+					while not rospy.is_shutdown() and conditions[direction](pos_cmd):
+						# detect angles
+						success = self.detectionRoutine(init, pos_cmd, e, direction)
+						
+						if cv2.waitKey(1) == ord("q"):
+							return
+						
+						# move finger
+						self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
+						print()
+						
+						# increment position if detection was successful
+						if success:
+							pos_cmd += direction * step
+							init = False
+						else:
+							if fails > 3:
+								break
+							fails += 1
 
-					try:
-						rate.sleep()
-					except:
-						pass
+						try:
+							rate.sleep()
+						except:
+							pass
+
+					# invert direction
+					direction *= -1
 
 		except Exception as e:
 			rospy.logerr(e)
