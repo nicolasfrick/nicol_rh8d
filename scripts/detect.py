@@ -925,7 +925,8 @@ class CameraPoseDetect(DetectBase):
 				error.append(orientation_error)		
 
 				# reprojection_error
-				# error.append(self.projectSingleMarker(det, id, T_camera_world))
+				repr_err = self.projectSingleMarker(det, id, T_camera_world)
+				# error.append(repr_err)
 
 		return np.hstack(error) if len(error) else np.array(error)
 
@@ -935,7 +936,7 @@ class CameraPoseDetect(DetectBase):
 							args=(self.marker_table_poses, detection),
 							method='trf', 
 							bounds=(self.lower_bounds, self.upper_bounds),
-							max_nfev=1200, # max iterations
+							max_nfev=5000, # max iterations
 							ftol=1e-8,    # tolerance for the cost function
 							xtol=1e-8,    # tolerance for the solution parameters
 							gtol=1e-8     # tolerance for the gradient
@@ -991,8 +992,21 @@ class CameraPoseDetect(DetectBase):
 
 		try:
 			while not rospy.is_shutdown():
+					
 					# detect markers 
 					(marker_det, det_img, proc_img, _) = self.preProcImage()
+
+					for id, det in marker_det.items():
+						success, tvec, rvec, _ = ransacPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), det['corners'], det['points'], self.det.cmx, self.det.dist)
+						marker_det[id]['ftrans'] = tvec
+						marker_det[id]['frot'] = getRotation(rvec, RotTypes.RVEC, RotTypes.EULER)
+
+					# initially show 
+					if self.vis:
+						cv2.imshow('Processed', proc_img)
+						cv2.imshow('Detection', det_img)
+						if cv2.waitKey(10000 if init else 1) == ord("q"):
+							break
 
 					# estimate cam pose
 					if marker_det:
@@ -1005,8 +1019,8 @@ class CameraPoseDetect(DetectBase):
 						print("Running estimation")
 						(err, est_camera_pose) = self.estimatePoseLS(det_img, err, initial_guess, marker_det)
 
-						if err < self.err_term:
-							print(f"Estimated camera pose xyz: {est_camera_pose[:3]}, extr. xyz Euler angles: {est_camera_pose[3:]}, mean reprojection error: {err}")
+						if err <= self.err_term:
+							print(f"Estimated camera pose xyz (m): {est_camera_pose[:3]}, extr. xyz Euler angles (rad): {est_camera_pose[3:]}, mean reprojection error: {err}")
 							success = True
 
 					if self.vis:
@@ -1018,23 +1032,23 @@ class CameraPoseDetect(DetectBase):
 							# plot pose by id
 							if id == self.plt_id:
 								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.MAT), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
+
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
-
-						if success:
-							input("Camera pose estimation successful, press any key to exit.")
-							break
-
-						if cv2.waitKey(1) == ord("q"):
+						if cv2.waitKey(100000 if success else 1) == ord("q"):
 							break
 					
+					if success:
+						break
+
 					try:
 						rate.sleep()
 					except:
 						pass
 
 		except Exception as e:
-			rospy.logerr(e)
+			print(e)
+
 		finally:
 			cv2.destroyAllWindows()
 
