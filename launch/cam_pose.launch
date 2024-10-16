@@ -5,11 +5,16 @@
 	<arg name="use_realsense"  default="true" />
 	<arg name="markers_camera_name" default="markers_camera" />
     <arg name="fps"                             default="30" />
+	<arg name="f_ctrl" default="5" /> 
+	<arg name="debug" default="false" /> 
+	<arg name="marker_poses_file" default="marker_holder_poses.yml" /> 
+	<arg name="err_term" default="2.0" />
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
+	<arg name="filter_iters" default="5" />
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
 	<arg name="plot_id" default="-1" />
@@ -27,6 +32,7 @@
 	<arg name="filters"                   default="colorizer"/>
 	<arg name="clip_distance"             default="-2"/>
 	<arg name="align_depth"               default="false"/>
+	<arg name="output"               default="log"/>
 
 	<!-- webcam args -->
     <arg name="always_capture"                            default="true"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
@@ -71,13 +77,18 @@
 	<!-- dataset collector script -->
 	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
 		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
-		<param name="marker_length" value="$(arg marker_length)" />
+		<param name="marker_poses_file" value="$(arg marker_poses_file)" /> 
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
+		<param name="marker_length" value="$(arg marker_length)" />
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
-		<param name="f_ctrl" value="$(arg fps)" />
+		<param name="filter_iters" value="$(arg filter_iters)" /> 
+		<param name="f_ctrl" value="$(arg f_ctrl)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
+		<param name="debug" value="$(arg debug)" /> 
+		<param name="fps"     value="$(arg fps)" />
+		<param name="err_term" value="$(arg err_term)" />
 		<param name="camera_pose" value="true" />
 	</node>
 

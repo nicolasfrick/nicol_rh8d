@@ -36,8 +36,8 @@ class MarkerDetectorBase():
 		@type  tuple
 		@param D: camera distorsion coefficients (plumb bob)
 		@type  tuple
-		@param f_ctrl Control loop frequency
-		@type int
+		@param dt Time delta for Kalman filter
+		@type float
 		@param bbox: bounding box ((x_min, x_max),(y_min,y_max)), if provided, image will be cropped
 		@type  tuple
 		@param print_stats Print detection statistics
@@ -64,7 +64,7 @@ class MarkerDetectorBase():
 			  				K: Tuple,
 							D: Tuple,
 							marker_length: float,
-							f_ctrl: Optional[int]=30,
+							dt: Optional[float]=0.1,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
@@ -85,7 +85,7 @@ class MarkerDetectorBase():
 		self.marker_length = marker_length
 		self.filter_type = filter_type 
 		self.invert_perspective = invert_pose		
-		self.f_ctrl = f_ctrl
+		self.dt = dt
 		self.bbox = bbox
 		self.filters = {}
 		self.cmx = np.asanyarray(K).reshape(3,3)
@@ -239,7 +239,7 @@ class AprilDetector(MarkerDetectorBase):
 			  				K: Tuple,
 							D: Tuple,
 							marker_length: float,
-							f_ctrl: Optional[int]=30,
+							dt: Optional[float]=0.1,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
@@ -251,7 +251,7 @@ class AprilDetector(MarkerDetectorBase):
 		super().__init__(K=K, 
 				   						D=D, 
 										marker_length=marker_length, 
-										f_ctrl=f_ctrl, 
+										dt=dt, 
 										bbox=bbox, 
 										invert_pose=invert_pose,
 										print_stats=print_stats, 
@@ -276,7 +276,7 @@ class AprilDetector(MarkerDetectorBase):
 		txt += f"Distorsion: {self.dist}\n"
 		txt += f"print_stats: {self.print_stats},\n"
 		txt += f"marker_length: {self.marker_length},\n"
-		txt += f"control frequency: {self.f_ctrl},\n"
+		txt += f"delta t: {self.dt},\n"
 		txt += f"filter type: {self.filter_type},\n"
 		for attr in dir(self.params):
 			if not attr.startswith('__'):
@@ -327,7 +327,7 @@ class AprilDetector(MarkerDetectorBase):
 						# new filter
 						self.filters.update( {id: createFilter(self.filter_type, 
 																							PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rot_mat, rot_t=RotTypes.MAT),
-																							f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+																							dt_kalman=self.dt, # applies only for kalman filter
 																							process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
 																							measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
 																							error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter
@@ -417,7 +417,7 @@ class ArucoDetector(MarkerDetectorBase):
 			  				K: Tuple,
 							D: Tuple,
 							marker_length: float,
-							f_ctrl: Optional[int]=30,
+							dt: Optional[float]=0.1,
 							bbox: Optional[Tuple]=None,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
@@ -430,7 +430,7 @@ class ArucoDetector(MarkerDetectorBase):
 		super().__init__(K=K, 
 				   						D=D, 
 										marker_length=marker_length, 
-										f_ctrl=f_ctrl, 
+										dt=dt, 
 										bbox=bbox, 
 										invert_pose=invert_pose,
 										print_stats=print_stats, 
@@ -518,7 +518,7 @@ class ArucoDetector(MarkerDetectorBase):
 					# new filter
 					self.filters.update( {id: createFilter(self.filter_type, 
 																						PoseFilterBase.poseToMeasurement(tvec=tvec, rot=rvec, rot_t=RotTypes.RVEC),
-																						f_ctrl_kalman=self.f_ctrl, # applies only for kalman filter
+																						dt_kalman=self.dt, # applies only for kalman filter
 																						process_noise_kalman=self.params.kf_params.process_noise, # applies only for kalman filter
 																						measurement_noise_kalman=self.params.kf_params.measurement_noise, # applies only for kalman filter 
 																						error_post_kalman=self.params.kf_params.error_post)} ) # applies only for kalman filter

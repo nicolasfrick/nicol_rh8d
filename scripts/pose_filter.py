@@ -106,7 +106,7 @@ class PoseFilterKalman(PoseFilterBase):
 		and https://pieriantraining.com/kalman-filter-opencv-python-example/
 		the latter is using a linear motion model that is suitable for slow movements.
 
-		@param f_ctrl Loop frequency
+		@param dt Time delta for updates
 		@type float
 		@param state_init Initialize the states of the filter (x,y,z,r,p,y)
 		@type Tuple[float,float,float,float,float,float]
@@ -124,7 +124,7 @@ class PoseFilterKalman(PoseFilterBase):
 	num_measurements_per_model = [6, 3]
 
 	def __init__(self,
-			  	f_ctrl: float,
+			  	dt: float,
 				state_init: Optional[Tuple[float,float,float,float,float,float]]=tuple(6*[0]),
 				process_noise: Optional[float]=1e-10,
 				measurement_noise: Optional[float]=1e-10,
@@ -132,7 +132,7 @@ class PoseFilterKalman(PoseFilterBase):
 				lin_motion: Optional[bool]=True) -> None:
 		
 		super().__init__(state_init)
-		self.dt = 1/f_ctrl
+		self.dt = dt
 		self.state_init = state_init
 		self.process_noise = process_noise
 		self.measurement_noise = measurement_noise
@@ -287,7 +287,7 @@ class PoseFilterKalman(PoseFilterBase):
 	
 def createFilter(filter_type: Union[FilterTypes, str], 
 				init_state: Optional[Tuple[float, float, float, float, float, float]]=6*[0],
-				f_ctrl_kalman: Optional[int]=100,
+				dt_kalman: Optional[float]=0.1,
 				process_noise_kalman: Optional[float]=1e-10, 
 				measurement_noise_kalman: Optional[float]=1e-10, 
 				error_post_kalman: Optional[float]=0.0
@@ -297,7 +297,7 @@ def createFilter(filter_type: Union[FilterTypes, str],
 		return PoseFilterMean(state_init=init_state, 
 							use_median=ft==FilterTypes.MEDIAN)  
 	elif ft in [FilterTypes.KALMAN, FilterTypes.KALMAN_SIMPLE]:
-		return PoseFilterKalman(f_ctrl=f_ctrl_kalman, 
+		return PoseFilterKalman(dt=dt_kalman, 
 						  		state_init=init_state, 
 								measurement_noise=measurement_noise_kalman, 
 								process_noise=process_noise_kalman, 

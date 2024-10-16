@@ -67,6 +67,10 @@ class DetectBase():
 		@type int
 		@param refine_pose
 		@type bool
+		@param flip_outliers
+		@type bool
+		@param fps
+		@type float
 
 	"""
 
@@ -87,6 +91,8 @@ class DetectBase():
 				plt_id: Optional[int]=-1,
 				test: Optional[bool]=False,
 				refine_pose: Optional[bool]=False,
+				flip_outliers: Optional[bool]=False,
+				fps: Optional[float]=30.0,
 				) -> None:
 		
 		self.vis = vis
@@ -96,6 +102,7 @@ class DetectBase():
 		self.use_aruco = use_aruco
 		self.filter_type = filter_type
 		self.refine_pose = refine_pose
+		self.flip_outliers = flip_outliers
 		self.filter_iters = filter_iters if filter_type != 'none' else 1
 		self.frame_cnt = 0
 
@@ -116,18 +123,18 @@ class DetectBase():
 		# init detector
 		if use_aruco:
 			self.det = ArucoDetector(marker_length=marker_length, 
-															K=rgb_info.K, 
-															D=rgb_info.D,
-															f_ctrl=f_ctrl,
-															invert_pose=False,
-															filter_type=filter_type)
+									K=rgb_info.K, 
+									D=rgb_info.D,
+									dt=1/fps,
+									invert_pose=False,
+									filter_type=filter_type)
 		else:
 			self.det = AprilDetector(marker_length=marker_length, 
-															K=rgb_info.K, 
-															D=rgb_info.D,
-															f_ctrl=f_ctrl,
-															invert_pose=False,
-															filter_type=filter_type)
+									K=rgb_info.K, 
+									D=rgb_info.D,
+									dt=1/fps,
+									invert_pose=False,
+									filter_type=filter_type)
 			
 		# init vis	
 		if vis:
@@ -190,12 +197,12 @@ class DetectBase():
 		for id in detections.keys():
 			det = detections[id]
 			(tvec, rvec) = refinePose(tvec=det['ftrans'], 
-						   								 rvec=getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), 
-														corners=det['corners'], 
-														obj_points=det['points'], 
-														cmx=self.det.cmx, 
-														dist=self.det.dist
-														)
+						   				rvec=getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), 
+										corners=det['corners'], 
+										obj_points=det['points'], 
+										cmx=self.det.cmx, 
+										dist=self.det.dist,
+										)
 			detections[id]['ftrans'] = tvec
 			detections[id]['frot'] = getRotation(rvec, RotTypes.RVEC, RotTypes.EULER)
 			detections[id]['rot_mat'] = getRotation(rvec, RotTypes.RVEC, RotTypes.MAT)
@@ -206,15 +213,26 @@ class DetectBase():
 			fresh detection filter and get last
 			detection.
 		"""
-		raw_img = self.img # test
+		# test img
+		raw_img = self.img
 		self.det.resetFilters()
 		iters = self.filter_iters if self.filter_iters > 0 else 1 # iters >= 1
 		for i in range(iters):
 			self.frame_cnt += 1
+			# real image
 			if not self.test:
 				rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
 				raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
 			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if (i >= iters-1 and self.vis) else False)
+
+		# align rotations by consens
+		if self.flip_outliers:
+			if not self.flipOutliers(marker_det):
+				beep()
+		# improve detection
+		if self.refine_pose:
+			self.refineDetection(marker_det)
+
 		return marker_det, det_img, proc_img, raw_img
 	
 	def runDebug(self) -> None:
@@ -258,8 +276,6 @@ class KeypointDetect(DetectBase):
 		@type bool
 		@param test
 		@type bool
-		@param flip_outliers
-		@type bool
 
 	"""
 
@@ -289,12 +305,14 @@ class KeypointDetect(DetectBase):
 				test: Optional[bool]=False,
 				flip_outliers: Optional[bool]=True,
 				refine_pose: Optional[bool]=True,
+				fps: Optional[float]=30.0,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
 						camera_ns=camera_ns,
 						use_reconfigure=use_reconfigure,
 						refine_pose=refine_pose,
+						flip_outliers=flip_outliers,
 						filter_type=filter_type,
 						filter_iters=filter_iters,
 						use_aruco=use_aruco,
@@ -302,10 +320,9 @@ class KeypointDetect(DetectBase):
 						f_ctrl=f_ctrl,
 						test=test,
 						vis=vis,
+						fps=fps,
 						)
 		
-		self.flip_outliers = flip_outliers
-
 		# init ros
 		if use_tf:
 			self.buf = tf2_ros.Buffer()
@@ -532,22 +549,24 @@ class HybridDetect(KeypointDetect):
 				save_imgs: Optional[bool]=True,
 				flip_outliers: Optional[bool]=True,
 				refine_pose: Optional[bool]=True,
+				fps: Optional[float]=30.0,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
-										use_reconfigure=use_reconfigure,
-										flip_outliers=flip_outliers,
-										refine_pose=refine_pose,
-										camera_ns=camera_ns,
-										filter_type=filter_type,
-										filter_iters=filter_iters,
-										use_aruco=use_aruco,
-										plt_id=plt_id,
-										use_tf=False,
-										f_ctrl=f_ctrl,
-										test=test,
-										vis=vis,
-										)
+						use_reconfigure=use_reconfigure,
+						flip_outliers=flip_outliers,
+						refine_pose=refine_pose,
+						camera_ns=camera_ns,
+						filter_type=filter_type,
+						filter_iters=filter_iters,
+						use_aruco=use_aruco,
+						plt_id=plt_id,
+						use_tf=False,
+						f_ctrl=f_ctrl,
+						test=test,
+						vis=vis,
+						fps=fps,
+						)
 		
 		# actuator control
 		self.epochs = epochs
@@ -581,15 +600,6 @@ class HybridDetect(KeypointDetect):
 		if marker_det:
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
-				
-				# align rotations by consens
-				if self.flip_outliers:
-					if not self.flipOutliers(marker_det):
-						beep()
-						return False
-				# improve detection
-				if self.refine_pose:
-					self.refineDetection(marker_det)
 
 				# encoder angles in rad
 				qdec_angles = self.qdec.readMedianAnglesRad()
@@ -729,6 +739,8 @@ class CameraPoseDetect(DetectBase):
 		@type float
 		@param cart_bound_high
 		@type float
+		@param fn
+		@type str
 
 	"""
 
@@ -738,31 +750,41 @@ class CameraPoseDetect(DetectBase):
 				vis :Optional[bool]=True,
 				use_reconfigure: Optional[bool]=False,
 				filter_type: Optional[str]='none',
+				filter_iters: Optional[int]=10,
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
-				err_term: Optional[float]=1e-8,
+				err_term: Optional[float]=2.0,
 				cart_bound_low: Optional[float]=-3.0,
 				cart_bound_high: Optional[float]=3.0,
+				flip_outliers: Optional[bool]=True,
 				refine_pose: Optional[bool]=True,
+				fn: Optional[str]= 'marker_holder_poses.yml',
+				fps: Optional[float]=30.0,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
-										use_reconfigure=use_reconfigure,
-										refine_pose=refine_pose,
-										camera_ns=camera_ns,
-										filter_type=filter_type,
-										use_aruco=use_aruco,
-										filter_iters=0, # n/a
-										plt_id=plt_id,
-										f_ctrl=f_ctrl,
-										vis=vis,
-										)
+						use_reconfigure=use_reconfigure,
+						flip_outliers=flip_outliers,
+						refine_pose=refine_pose,
+						camera_ns=camera_ns,
+						filter_type=filter_type,
+						use_aruco=use_aruco,
+						filter_iters=filter_iters,
+						plt_id=plt_id,
+						f_ctrl=f_ctrl,
+						test=False,
+						vis=vis,
+						fps=fps,
+						)
+		
+		self.CAM_LABEL_YPOS = 20
 		self.err_term = err_term
+		self.reprojection_errors = {}
 		self.lower_bounds = [cart_bound_low, cart_bound_low, cart_bound_low, -np.pi, -np.pi, -np.pi]
 		self.upper_bounds = [cart_bound_high, cart_bound_high, cart_bound_high, np.pi, np.pi, np.pi]
 		# load marker poses
-		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_poses.yml")
+		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/"+fn)
 		with open(self.fl, 'r') as fr:
 			self.marker_table_poses = yaml.safe_load(fr)
 
@@ -778,11 +800,27 @@ class CameraPoseDetect(DetectBase):
 			cv2.putText(img, pos_txt, (x_max+x_offset, y_max+(y_offset1 if y_offset1 > 0 else y_offset2)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			cv2.putText(img, ori_txt, (x_max+x_offset, y_max+(y_offset2 if y_offset1 > 0 else y_offset1)), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 
-	def labelDetection(self, img: cv2.typing.MatLike, id: int, trans: np.ndarray, rot: np.ndarray) -> None:
-			pos_txt = "{} X: {:.4f} Y: {:.4f} Z: {:.4f} R: {:.4f} P: {:.4f} Y: {:.4f}".format(id, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2])
-			xpos = self.TXT_OFFSET
-			ypos = (id+1)*self.TXT_OFFSET
-			cv2.putText(img, pos_txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+	def labelDetection(self, img: cv2.typing.MatLike, id: int, trans: np.ndarray, rot: np.ndarray, err: Optional[Union[float, None]]=None) -> None:
+			if id > -1:
+				repr_error = self.reprojection_errors.get(id)
+				if repr_error is None:
+					repr_error = -1.0
+				pos_txt = "{} X: {:.4f} Y: {:.4f} Z: {:.4f} R: {:.4f} P: {:.4f} Y: {:.4f}, err {:.2f}".format(id, trans[0], trans[1], trans[2], rot[0], rot[1], rot[2], repr_error)
+				xpos = self.TXT_OFFSET
+				ypos = (id+1)*self.TXT_OFFSET
+				cv2.putText(img, pos_txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.RED, self.FONT_THCKNS, cv2.LINE_AA)
+			else:
+				xpos = self.TXT_OFFSET
+				ypos = self.CAM_LABEL_YPOS*self.TXT_OFFSET
+				cv2.putText(img, "CAMERA", (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "X {:.4f}".format(trans[0]), (xpos, ypos+2*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "Y {:.4f}".format(trans[1]), (xpos, ypos+3*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "Z {:.4f}".format(trans[2]), (xpos, ypos+4*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "roll {:.4f}".format(rot[0]), (xpos, ypos+5*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "pitch {:.4f}".format(rot[1]), (xpos, ypos+6*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				cv2.putText(img, "yaw {:.4f}".format(rot[2]), (xpos, ypos+7*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
+				if err is not None and err is not np.inf:
+					cv2.putText(img, "mean reprojection error: {:.4f}".format(err), (xpos, ypos+8*self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.det.GREEN, self.FONT_THCKNS, cv2.LINE_AA)
 
 	def reprojectionError(self, det_corners: np.ndarray, proj_corners: np.ndarray) -> float:
 		error = np.linalg.norm(det_corners - proj_corners, axis=1)
@@ -804,14 +842,16 @@ class CameraPoseDetect(DetectBase):
 		return self.reprojectionError(detection['corners'], projected_corners)
 	
 	def projectMarkers(self, detection:dict, camera_pose: np.ndarray, img: cv2.typing.MatLike=None) -> float:
-		err = 0
+		err = []
 		# invert world to camera tf for reprojection
 		tvec_inv, euler_inv = invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
 		T_cam_world = pose2Matrix(tvec_inv, euler_inv, RotTypes.EULER)
 		# iter measured markers
 		for id, det in detection.items():
 			# reprojection error
-			err += self.projectSingleMarker(det, id, T_cam_world, img)
+			e = self.projectSingleMarker(det, id, T_cam_world, img)
+			self.reprojection_errors.update({id: e})
+			err.append(e)
 		return err
 	
 	def tagWorldCorners(self, world_tag_tf: np.ndarray, tag_corners: np.ndarray) -> np.ndarray:
@@ -867,8 +907,10 @@ class CameraPoseDetect(DetectBase):
 		# invert for reprojection
 		tvec_inv, euler_inv = invPersp(tvec=camera_pose[:3], rot=camera_pose[3:], rot_t=RotTypes.EULER)
 		T_camera_world = pose2Matrix(tvec=tvec_inv, rot=euler_inv, rot_t=RotTypes.EULER)
+
 		for id in marker_poses:
 			det = detection.get(id)
+
 			if det is not None:
 				# detected tag pose wrt camera frame
 				T_camera_marker = pose2Matrix(det['ftrans'], det['frot'], RotTypes.EULER)
@@ -876,18 +918,15 @@ class CameraPoseDetect(DetectBase):
 				# measured tag pose wrt world 
 				T_world_marker = self.getWorldMarkerTF(id)
 
-				# position error (euclidean distance)
+				# errors
 				position_error = np.linalg.norm(T_world_marker_est[:3, 3] - T_world_marker[:3, 3])
-				# Orientation error (angle between rotations)
-				# R_world_marker_est = T_world_marker_est[:3, :3]
-				# R_world_marker = T_world_marker[:3, :3]
-				# R_error = R_world_marker_est.T @ R_world_marker  # relative rotation
-				# orientation_error = np.arccos((np.trace(R_error) - 1) / 2)
 				orientation_error = np.linalg.norm(T_world_marker_est[:3, :3] - T_world_marker[:3, :3])
 				error.append(position_error)  
 				error.append(orientation_error)		
+
 				# reprojection_error
 				# error.append(self.projectSingleMarker(det, id, T_camera_world))
+
 		return np.hstack(error) if len(error) else np.array(error)
 
 	def estimatePoseLS(self, img: cv2.typing.MatLike, err: float, est_camera_pose: np.ndarray, detection: dict) -> np.ndarray:
@@ -896,17 +935,16 @@ class CameraPoseDetect(DetectBase):
 							args=(self.marker_table_poses, detection),
 							method='trf', 
 							bounds=(self.lower_bounds, self.upper_bounds),
-							max_nfev=700, # max iterations
+							max_nfev=1200, # max iterations
 							ftol=1e-8,    # tolerance for the cost function
 							xtol=1e-8,    # tolerance for the solution parameters
 							gtol=1e-8     # tolerance for the gradient
 							)
 		if res.success:
 			opt_cam_pose = res.x
-			# put pose label
-			self.labelDetection(img, 30, opt_cam_pose[:3], opt_cam_pose[3:])
 			# reproject markers
-			reserr = self.projectMarkers(detection, opt_cam_pose, img)
+			errors = self.projectMarkers(detection, opt_cam_pose, img)
+			reserr = np.mean(errors) if len(errors) else np.inf
 			txt = f"Result: {res.status} {res.message}\n"
 			txt += f"camera world pose trans: {opt_cam_pose[:3]}, rot (extr. xyz euler): {opt_cam_pose[3:]}\n"
 			txt += f"reprojection error: {reserr}\n"
@@ -914,8 +952,17 @@ class CameraPoseDetect(DetectBase):
 			txt += f"evaluations: {res.nfev}\n"
 			txt += f"optimality: {res.optimality}\n"
 			print(txt)
+
+			for id, error in self.reprojection_errors.items():
+				if error > self.err_term:
+					print("id {} reprojection error: {:.2f} > {} threshold".format(id, error, self.err_term))
+
+			# put pose label
+			self.labelDetection(img, -1, opt_cam_pose[:3], opt_cam_pose[3:], reserr)
+
 			return reserr, opt_cam_pose
-		print(f"Least squares failed: {res.status}")
+		
+		print(f"Least squares failed: {res.status} {res.message}")
 		return err, est_camera_pose
 	
 	def estimatePoseFL(self, img: cv2.typing.MatLike, err: float, detection: dict) -> np.ndarray:
@@ -936,30 +983,31 @@ class CameraPoseDetect(DetectBase):
 		return err, filtered_pose
 		
 	def run(self) -> None:
-		"""	Use only overwritten run() as 
-			we detect from quasi static image. 
-		"""
+		init = True
+		success = False
 		err = np.inf
 		est_camera_pose = np.zeros(6)
 		rate = rospy.Rate(self.f_loop)
+
 		try:
 			while not rospy.is_shutdown():
-					
-					# detected markers 
+					# detect markers 
 					(marker_det, det_img, proc_img, _) = self.preProcImage()
+
 					# estimate cam pose
 					if marker_det:
-						(err, est_camera_pose) = self.estimatePoseLS(det_img, 
-												 				   err, 
-																   self.initialGuess(marker_det) if self.frame_cnt == 0 else est_camera_pose, 
-																   marker_det)
-						# (err, est_camera_pose) = self.estimatePoseFL(det_img, err, marker_det)
+
+						initial_guess = est_camera_pose
+						if init:
+							init = False
+							initial_guess = self.initialGuess(marker_det)
+						
+						print("Running estimation")
+						(err, est_camera_pose) = self.estimatePoseLS(det_img, err, initial_guess, marker_det)
+
 						if err < self.err_term:
-							self.marker_table_poses.update({"camera": {'xyz': est_camera_pose[:3], 'rpy': est_camera_pose[3:]}})
-							with open(self.fl, 'w') as fw:
-								yaml.dump(self.marker_table_poses, fw)
-							print("Final pose est:", est_camera_pose)
-							break
+							print(f"Estimated camera pose xyz: {est_camera_pose[:3]}, extr. xyz Euler angles: {est_camera_pose[3:]}, mean reprojection error: {err}")
+							success = True
 
 					if self.vis:
 						# frame counter
@@ -968,10 +1016,15 @@ class CameraPoseDetect(DetectBase):
 							# label marker pose
 							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
-							if id == self.plt_id and self.frame_cnt > 10:
+							if id == self.plt_id:
 								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.MAT), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
+
+						if success:
+							input("Camera pose estimation successful, press any key to exit.")
+							break
+
 						if cv2.waitKey(1) == ord("q"):
 							break
 					
@@ -998,16 +1051,21 @@ def main() -> None:
 				   use_aruco=rospy.get_param('~use_aruco', False),
 				   plt_id=rospy.get_param('~plot_id', -1),
 				   test=rospy.get_param('~test', False),
+				   fps=rospy.get_param('~fps', 30.0),
 				   ).runDebug()
 	elif rospy.get_param('~camera_pose', False):
 		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
+				   		fn=rospy.get_param('~marker_poses_file', 'marker_holder_poses.yml'),
 						marker_length=rospy.get_param('~marker_length', 0.010),
 						use_reconfigure=rospy.get_param('~use_reconfigure', False),
 						vis=rospy.get_param('~vis', True),
 						filter_type=rospy.get_param('~filter', 'none'),
+						filter_iters=rospy.get_param('~filter_iters', 10),
 						f_ctrl=rospy.get_param('~f_ctrl', 30),
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),
+				   		fps=rospy.get_param('~fps', 30.0),
+						err_term=rospy.get_param('~err_term', 2.0),
 						).run()
 	elif rospy.get_param('~qdec_detect', False):
 		HybridDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
@@ -1028,6 +1086,7 @@ def main() -> None:
 					 step_div=rospy.get_param('~step_div', 100),
 					 epochs=rospy.get_param('~epochs', 100),
 					 test=rospy.get_param('~test', False),
+					 fps=rospy.get_param('~fps', 30.0),
 					 ).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
@@ -1040,6 +1099,7 @@ def main() -> None:
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),
 						use_tf=rospy.get_param('~use_tf', False),
+				   		fps=rospy.get_param('~fps', 30.0),
 						).run()
 	
 if __name__ == "__main__":

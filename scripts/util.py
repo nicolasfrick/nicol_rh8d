@@ -21,6 +21,9 @@ def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.n
 	if rot_type == RotTypes.RVEC:
 		(mat, _) = Rodrigues(rot)
 	elif rot_type == RotTypes.EULER:
+		# gimble lock?
+		if np.abs(np.abs(rot[1]) - np.pi*0.5) < 1e-6:
+			print("Incoming gimble lock detected")
 		mat = R.from_euler('xyz', rot).as_matrix()
 	elif rot_type == RotTypes.QUAT:
 		# x y z w
@@ -38,6 +41,9 @@ def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.n
 	elif out_type == RotTypes.EULER:
 		res = R.from_matrix(res).as_euler('xyz')
 		res = res.flatten()
+		# gimble lock?
+		if np.abs(np.abs(res[1]) - np.pi*0.5) < 1e-6:
+			print("Outgoing gimble lock detected")
 	elif out_type == RotTypes.QUAT:
 		res = R.from_matrix(mat).as_quat()
 	elif out_type == RotTypes.MAT:
