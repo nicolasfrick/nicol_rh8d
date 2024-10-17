@@ -10,6 +10,7 @@ import tf2_ros
 import cv_bridge
 import numpy as np
 import sensor_msgs.msg
+from datetime import datetime
 import dynamic_reconfigure.server
 from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
@@ -27,27 +28,47 @@ from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
+dt_now = datetime.now()
+dt_now = dt_now.strftime("%H_%M_%S")
+
 # data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
-QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection.json')
-KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection.json')
+QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')
+KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
 REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+if not os.path.exists(REC_DIR):
+	os.mkdir(REC_DIR)
+
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
 QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
 QDEC_DET_REC_DIR = os.path.join(QDEC_REC_DIR, 'det')
-KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint')
-if not os.path.exists(REC_DIR):
-	os.mkdir(REC_DIR)
 if not os.path.exists(QDEC_REC_DIR):
 	os.mkdir(QDEC_REC_DIR)
 if not os.path.exists(QDEC_ORIG_REC_DIR):
 	os.mkdir(QDEC_ORIG_REC_DIR)
 if not os.path.exists(QDEC_DET_REC_DIR):
 	os.mkdir(QDEC_DET_REC_DIR)
+
+KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint_'+ dt_now)
+KEYPT_ORIG_REC_DIR = os.path.join(KEYPT_REC_DIR, 'orig')
+KEYPT_DET_REC_DIR = os.path.join(KEYPT_REC_DIR, 'det')
+KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
+KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
+KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
 if not os.path.exists(KEYPT_REC_DIR):
 	os.mkdir(KEYPT_REC_DIR)
+if not os.path.exists(KEYPT_ORIG_REC_DIR):
+	os.mkdir(KEYPT_ORIG_REC_DIR)
+if not os.path.exists(KEYPT_DET_REC_DIR):
+	os.mkdir(KEYPT_DET_REC_DIR)
+if not os.path.exists(KEYPT_R_EYE_REC_DIR):
+	os.mkdir(KEYPT_R_EYE_REC_DIR)
+if not os.path.exists(KEYPT_L_EYE_REC_DIR):
+	os.mkdir(KEYPT_L_EYE_REC_DIR)
+if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
+	os.mkdir(KEYPT_TOP_CAM_REC_DIR)
 
 class DetectBase():
 	"""
@@ -71,6 +92,8 @@ class DetectBase():
 		@type bool
 		@param fps
 		@type float
+		@param test
+		@type bool
 
 	"""
 
@@ -266,16 +289,25 @@ class KeypointDetect(DetectBase):
 	"""
 		Detect keypoints from marker poses.
 
-		@param err_term
-		@type float
-		@param cart_bound_low
-		@type float
-		@param cart_bound_high
-		@type float
+		@param rh8d_port
+		@type str
+		@param rh8d_baud
+		@type int
+		@param step_div
+		@type int
+		@param epochs
+		@type int
 		@param use_tf
 		@type bool
-		@param test
+		@param attached
 		@type bool
+		@param save_imgs
+		@type bool
+		@param use_eye_cameras
+		@type bool
+		@param use_top_camera
+		@type bool
+
 
 	"""
 
@@ -311,6 +343,9 @@ class KeypointDetect(DetectBase):
 				refine_pose: Optional[bool]=True,
 				fps: Optional[float]=30.0,
 				save_imgs: Optional[bool]=True,
+				attached: Optional[bool]=False,
+				use_eye_cameras: Optional[bool]=False,
+				use_top_camera: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -330,13 +365,25 @@ class KeypointDetect(DetectBase):
 
 		self.epochs = epochs
 		self.step_div = step_div
-		self.start_angles = {}
 		self.save_imgs = save_imgs
+		self.use_eye_cameras = use_eye_cameras
+		self.use_top_camera = use_top_camera
 
-		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
+		# load hand marker ids
+		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
+		with open(self.fl, 'r') as fr:
+			self.hand_ids = yaml.safe_load(fr)
+
 		self.group_ids = self.hand_ids['names']['index'] # joint names
-		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
+		self.df = pd.DataFrame(columns=self.group_ids) # dataset
+		self.start_angles = {}
+
+		# init controller
+		if attached:
+			pass
+		else:
+			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
 
 		# init ros
 		if use_tf:
@@ -344,11 +391,7 @@ class KeypointDetect(DetectBase):
 			self.listener = tf2_ros.TransformListener(self.buf)
 		self.use_tf = use_tf
 
-		# load hand marker ids
-		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
-		with open(self.fl, 'r') as fr:
-			self.hand_ids = yaml.safe_load(fr)
-
+		# init vis
 		if vis:
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
@@ -594,10 +637,6 @@ class HybridDetect(KeypointDetect):
 		Detect keypoints from marker poses and quadrature encoders 
 		while moving the hand.
 
-		@param rh8d_port
-		@type str
-		@param rh8d_baud
-		@type int
  		@param qdec_port
 		@type str
 		@param qdec_baud
@@ -608,12 +647,6 @@ class HybridDetect(KeypointDetect):
 		@type int
 		@param actuator
 		@type int
-		@param step_div
-		@type int
-		@param epochs
-		@type
-		@param test
-		@type
 
 	"""
 
@@ -1212,6 +1245,9 @@ def main() -> None:
 					 	rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
 						test=rospy.get_param('~test', False),
 				   		fps=rospy.get_param('~fps', 30.0),
+						attached=rospy.get_param('~attached', False),
+						use_eye_cameras=rospy.get_param('~use_eye_cameras', False),
+						use_top_camera=rospy.get_param('~use_top_camera', False),
 						).run()
 	
 if __name__ == "__main__":
