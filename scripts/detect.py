@@ -55,7 +55,7 @@ KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint_'+ dt_now)
 KEYPT_ORIG_REC_DIR = os.path.join(KEYPT_REC_DIR, 'orig')
 KEYPT_DET_REC_DIR = os.path.join(KEYPT_REC_DIR, 'det')
 KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
-KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
+KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'left_eye')
 KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
 if not os.path.exists(KEYPT_REC_DIR):
 	os.mkdir(KEYPT_REC_DIR)
@@ -307,7 +307,14 @@ class KeypointDetect(DetectBase):
 		@type bool
 		@param use_top_camera
 		@type bool
-
+		@param depth_enabled
+		@type bool
+		@param top_camera_name
+		@type str
+		@param left_eye_camera_name
+		@type str
+		@param right_eye_camera_name
+		@type str
 
 	"""
 
@@ -346,6 +353,10 @@ class KeypointDetect(DetectBase):
 				attached: Optional[bool]=False,
 				use_eye_cameras: Optional[bool]=False,
 				use_top_camera: Optional[bool]=False,
+				depth_enabled: Optional[bool]=False,
+				top_camera_name: Optional[str]='top_camera',
+				left_eye_camera_name: Optional[str]='left_eye_camera',
+				right_eye_camera_name: Optional[str]='right_eye_camera',
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -368,6 +379,24 @@ class KeypointDetect(DetectBase):
 		self.save_imgs = save_imgs
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
+		self.depth_enabled = depth_enabled
+		self.record_cnt = 0
+
+		# img topics
+		if not test:
+			if depth_enabled:
+				depth_topic = camera_ns.replace('color', 'depth')
+				self.depth_img_topic = depth_topic + '/image_rect_raw'	
+
+			if use_top_camera:
+				self.top_img_topic = top_camera_name + '/image_raw'
+				if depth_enabled:
+					depth_topic = top_camera_name.replace('color', 'depth')
+					self.top_depth_img_topic = depth_topic + '/image_rect_raw'	
+
+			if use_eye_cameras:
+				self.right_img_topic = right_eye_camera_name + '/image_raw'
+				self.left_img_topic = left_eye_camera_name + '/image_raw'
 
 		# load hand marker ids
 		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -507,8 +536,61 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
+	def saveImgs(self) -> None:
+			if self.depth_enabled:
+				cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), self.depth_img)
+				self.depth_img = None
+
+			if self.use_top_camera:
+				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), self.top_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				self.top_raw_img = None
+				if self.depth_enabled:
+					cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), self.top_depth_img)
+					self.top_depth_img = None
+
+			if self.use_eye_cameras:
+				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), self.left_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), self.right_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				self.left_raw_img = None
+				self.right_raw_img = None
+
+	def recScndImgs(self) -> bool:
+		try:
+
+			if self.depth_enabled:
+				depth = rospy.wait_for_message(self.depth_img_topic, sensor_msgs.msg.Image)
+				depth_img = self.bridge.imgmsg_to_cv2(depth, 'passthrough')
+				self.depth_img = (depth_img).astype('float32')
+
+			if self.use_top_camera:
+				rgb = rospy.wait_for_message(self.top_img_topic, sensor_msgs.msg.Image)
+				self.top_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+				if self.depth_enabled:
+					depth = rospy.wait_for_message(self.top_depth_img_topic, sensor_msgs.msg.Image)
+					depth_img = self.bridge.imgmsg_to_cv2(depth, 'passthrough')
+					self.top_depth_img = (depth_img).astype('float32')
+
+			if self.use_eye_cameras:
+				rgb = rospy.wait_for_message(self.left_img_topic, sensor_msgs.msg.Image)
+				self.left_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+				rgb = rospy.wait_for_message(self.right_img_topic, sensor_msgs.msg.Image)
+				self.right_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
+
+		except Exception as e:
+			print(e)	
+			return False
+	
+		return True
+
 	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
 		res = False
+		entry = {} # data entry
+
+		# record additional images before proc delay
+		if not self.test:
+			if not self.recScndImgs():
+				return False
+			
 		# get filtered detection
 		(marker_det, det_img, proc_img, img) = self.preProcImage()
 		out_img = img.copy()
@@ -517,8 +599,6 @@ class KeypointDetect(DetectBase):
 			# check all ids detected
 			if all([id in marker_det.keys() for id in self.target_ids]):
 				
-				# cv angles
-				entry = {}
 				for idx in range(1, len(self.target_ids)):
 					base_idx = idx-1 # predecessor index
 					base_id = self.target_ids[base_idx] # predecessor marker
@@ -535,13 +615,12 @@ class KeypointDetect(DetectBase):
 					angle = angle - self.start_angles[base_idx]
 
 					# data entry
-					data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
+					data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'rec_cnt': self.record_cnt,  'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
 					marker_det[target_id].update(data)
 					entry.update({self.group_ids[base_idx]: data})
 					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
 
 				res = True
-				self.df = self.df.append(entry, ignore_index=True)
 			else:
 				print("Cannot detect all required ids, missing: ", end=" ")
 				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
@@ -551,7 +630,7 @@ class KeypointDetect(DetectBase):
 			
 		if self.vis:
 			# frame counter
-			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# actuator position
 			cv2.putText(out_img, f"actuator position: {pos_cmd}", (self.TXT_OFFSET, self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw angle labels and possibly fixed detections 
@@ -564,9 +643,19 @@ class KeypointDetect(DetectBase):
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
 			cv2.imshow('Output', out_img)
-			if self.save_imgs:
-				cv2.imwrite(os.path.join(QDEC_ORIG_REC_DIR, str(self.frame_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-				cv2.imwrite(os.path.join(QDEC_DET_REC_DIR, str(self.frame_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if self.save_imgs and not self.test and res:
+				try:
+					self.df = self.df.append(entry, ignore_index=True) # save data entry
+					self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4) # write data
+					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
+					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
+					self.saveImgs() # save additional resources
+					self.record_cnt += 1
+					if self.df.last_valid_index() != str(self.record_cnt):
+						print("RECORD DEVIATION data index: ", self.df.last_valid_index(), " img index:", str(self.record_cnt))
+				except Exception as e:
+					print(e)
+					return False
 
 		return res
 		
@@ -627,7 +716,6 @@ class KeypointDetect(DetectBase):
 		except Exception as e:
 			rospy.logerr(e)
 		finally:
-			self.df.to_json(QDEC_DET_PTH, orient="index", indent=4)
 			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
@@ -1248,6 +1336,11 @@ def main() -> None:
 						attached=rospy.get_param('~attached', False),
 						use_eye_cameras=rospy.get_param('~use_eye_cameras', False),
 						use_top_camera=rospy.get_param('~use_top_camera', False),
+						save_imgs=rospy.get_param('~save_imgs', False),
+						depth_enabled=rospy.get_param('~depth_enabled', False),
+						top_camera_name=rospy.get_param('~top_camera_name', 'top_camera'),
+						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
+						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
 						).run()
 	
 if __name__ == "__main__":

@@ -11,8 +11,11 @@
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
 	<arg name="top_camera_name" default="top_camera" />
+	<arg name="left_eye_camera_name" default="left_camera" />
+	<arg name="right_eye_camera_name" default="right_camera" />
 
 	<arg name="vis" default="true" />
+	<arg name="save_imgs" default="true" />
     <arg name="fps"             default="30" />
 	<arg name="f_ctrl" default="1" /> 
 	<arg name="debug" default="false" /> 
@@ -112,6 +115,8 @@
 		<arg name="fps"                                                    value="$(arg fps)"   />
 		<arg name="width"                               			 	value="$(arg color_width)" />
     	<arg name="height"                              				value="$(arg color_height)" />
+		<arg name="left_camera_name"                       value="$(arg left_eye_camera_name)" />
+		<arg name="right_camera_name"                       value="$(arg right_eye_camera_name)" />
 	</include>
 	<include if="$(eval use_markers_camera and use_top_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
 		<arg name="external_manager"    value="true"/>
@@ -135,6 +140,9 @@
 	<!-- dataset collector script -->
 	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
 		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
+		<param name="top_camera_name" 			value="$(arg top_camera_name)/color" />
+		<param name="left_eye_camera_name"   value="$(arg left_eye_camera_name)" />
+		<param name="right_eye_camera_name"   value="$(arg right_eye_camera_name)" />
 		<param name="marker_length" value="$(arg marker_length)" />
 		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
 		<param name="vis" value="$(arg vis)" />
@@ -152,8 +160,10 @@
 		<param name="fps"     value="$(arg fps)" />
 		<param name="use_tf"     value="$(arg use_tf)" />
 		<param name="attached"     value="$(arg attached)" />
+		<param name="save_imgs"     value="$(arg save_imgs)" />
 		<param name="use_eye_cameras"     value="$(arg use_eye_cameras)" />
 		<param name="use_top_camera"     value="$(arg use_top_camera)" />
+		<param name="depth_enabled"     value="$(arg enable_depth)" />
 	</node>
 
 </launch>
