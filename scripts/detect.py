@@ -301,11 +301,16 @@ class KeypointDetect(DetectBase):
 				f_ctrl: Optional[int]=30,
 				use_aruco: Optional[bool]=False,
 				plt_id: Optional[int]=-1,
+				rh8d_port: Optional[str]="/dev/ttyUSB1",
+				rh8d_baud: Optional[int]=1000000,
+				step_div: Optional[int]=100,
+				epochs: Optional[int]=10,
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
 				flip_outliers: Optional[bool]=True,
 				refine_pose: Optional[bool]=True,
 				fps: Optional[float]=30.0,
+				save_imgs: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -322,7 +327,17 @@ class KeypointDetect(DetectBase):
 						vis=vis,
 						fps=fps,
 						)
-		
+
+		self.epochs = epochs
+		self.step_div = step_div
+		self.start_angles = {}
+		self.save_imgs = save_imgs
+
+		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
+		self.group_ids = self.hand_ids['names']['index'] # joint names
+		self.df = pd.DataFrame(columns=self.group_ids) # dataset
+		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
+
 		# init ros
 		if use_tf:
 			self.buf = tf2_ros.Buffer()
@@ -449,54 +464,130 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
-	def detectionRoutine(self) -> dict:
-		(marker_det, det_img, proc_img, _) = self.preProcImage()
+	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
+		res = False
+		# get filtered detection
+		(marker_det, det_img, proc_img, img) = self.preProcImage()
+		out_img = img.copy()
 
 		if marker_det:
-			ids = self.hand_ids['ids']['index']
 			# check all ids detected
-			if not all([id in marker_det.keys() for id in ids]):
-				print("Cannot detect all required ids: ", ids)
-				return False
-			# compute angle
-			for idx in range(1, len(ids)):
-				base_id = ids[idx-1]
-				target_id = ids[idx]
-				base_marker = marker_det[base_id]
-				target_marker = marker_det[target_id]
-				angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
-				marker_det[target_id].update({'angle': angle, 'base_id': base_id})
+			if all([id in marker_det.keys() for id in self.target_ids]):
+				
+				# cv angles
+				entry = {}
+				for idx in range(1, len(self.target_ids)):
+					base_idx = idx-1 # predecessor index
+					base_id = self.target_ids[base_idx] # predecessor marker
+					target_id = self.target_ids[idx] # target marker
+					base_marker = marker_det[base_id] # predecessor detection
+					target_marker = marker_det[target_id] # target detection
 
+					# detected angle in rad
+					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					# save initially detected angle
+					if init:
+						self.start_angles.update({base_idx: angle})
+					# substract initial angle
+					angle = angle - self.start_angles[base_idx]
+
+					# data entry
+					data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
+					marker_det[target_id].update(data)
+					entry.update({self.group_ids[base_idx]: data})
+					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+
+				res = True
+				self.df = self.df.append(entry, ignore_index=True)
+			else:
+				print("Cannot detect all required ids, missing: ", end=" ")
+				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
+				beep()
+		else:
+			print("No detection")
+			
 		if self.vis:
 			# frame counter
-			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-40, 20), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-			for id in marker_det.keys():
-				# label marker angle
-				self.labelDetection(det_img, id, marker_det)
+			cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			# actuator position
+			cv2.putText(out_img, f"actuator position: {pos_cmd}", (self.TXT_OFFSET, self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+			# draw angle labels and possibly fixed detections 
+			for id, detection in marker_det.items():
+				self.labelDetection(out_img, id, marker_det) # cv angle
+				self.det._drawMarkers(id, detection['corners'], out_img) # square
+				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
+				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
+				
 			cv2.imshow('Processed', proc_img)
 			cv2.imshow('Detection', det_img)
+			cv2.imshow('Output', out_img)
+			if self.save_imgs:
+				cv2.imwrite(os.path.join(QDEC_ORIG_REC_DIR, str(self.frame_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				cv2.imwrite(os.path.join(QDEC_DET_REC_DIR, str(self.frame_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 
-		return marker_det
+		return res
 		
 	def run(self) -> None:
+		max_pos = 2700 # avoid tip marker collision
+		min_pos = RH8D_MIN_POS
+		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
+		# save initial cv angles once
+		init = True
+
+		# initially closing
+		direction = 1
+		# 0: n/a, 1: closing, -1: opening
+		conditions = [False, lambda cmd: cmd <= max_pos, lambda cmd: cmd >= min_pos]
+		
 		try:
-			while not rospy.is_shutdown():
+			# epoch
+			for e in range(self.epochs):
+				print("Epoch", e)
+				pos_cmd = step
+				fails = 0
+				# move to zero
+				self.rh8d_ctrl.rampMinPos(self.actuator)
+				if e:
+					time.sleep(1)
+				
+				# closing and opening cycle
+				for i in range(2):
+					while not rospy.is_shutdown() and conditions[direction](pos_cmd):
+						# detect angles
+						success = self.detectionRoutine(init, pos_cmd, e, direction)
+						
+						if cv2.waitKey(1) == ord("q"):
+							return
+						
+						# move finger
+						self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
+						print()
+						
+						# increment position if detection was successful
+						if success:
+							pos_cmd += direction * step
+							init = False
+						else:
+							if fails > 3:
+								break
+							fails += 1
 
-				self.detectionRoutine()
-					
-				if cv2.waitKey(1) == ord("q"):
-					break
-					
-				try:
-					rate.sleep()
-				except:
-					pass
+						try:
+							rate.sleep()
+						except:
+							pass
 
-		except ValueError as e:
+					# invert direction
+					direction *= -1
+
+		except Exception as e:
 			rospy.logerr(e)
 		finally:
+			self.df.to_json(QDEC_DET_PTH, orient="index", indent=4)
+			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
+			rospy.signal_shutdown(0)
 
 class HybridDetect(KeypointDetect):
 	"""
@@ -559,26 +650,26 @@ class HybridDetect(KeypointDetect):
 						camera_ns=camera_ns,
 						filter_type=filter_type,
 						filter_iters=filter_iters,
+						save_imgs=save_imgs,
 						use_aruco=use_aruco,
+						rh8d_port=rh8d_port,
+						rh8d_baud=rh8d_baud,
+						step_div=step_div,
 						plt_id=plt_id,
 						use_tf=False,
 						f_ctrl=f_ctrl,
+						epochs=epochs,
 						test=test,
 						vis=vis,
 						fps=fps,
 						)
 		
 		# actuator control
-		self.epochs = epochs
-		self.step_div = step_div
 		self.actuator = actuator
-		self.start_angles = {}
-		self.save_imgs = save_imgs
 		# index finger data
 		self.group_ids = self.hand_ids['names']['index'] # joint names
 		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
-		self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if not self.test else QdecSerialStub()
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
@@ -1066,6 +1157,8 @@ def main() -> None:
 				   plt_id=rospy.get_param('~plot_id', -1),
 				   test=rospy.get_param('~test', False),
 				   fps=rospy.get_param('~fps', 30.0),
+				   refine_pose=True,
+				   flip_outliers=True,
 				   ).runDebug()
 	elif rospy.get_param('~camera_pose', False):
 		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),
@@ -1113,6 +1206,11 @@ def main() -> None:
 						use_aruco=rospy.get_param('~use_aruco', False),
 						plt_id=rospy.get_param('~plot_id', -1),
 						use_tf=rospy.get_param('~use_tf', False),
+						step_div=rospy.get_param('~step_div', 100),
+					 	epochs=rospy.get_param('~epochs', 100),
+						rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB1"),
+					 	rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
+						test=rospy.get_param('~test', False),
 				   		fps=rospy.get_param('~fps', 30.0),
 						).run()
 	

@@ -10,7 +10,12 @@
 	<arg name="use_eye_cameras" default="false" />
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
-    <arg name="fps"                             default="30" />
+    <arg name="fps"             default="30" />
+	<arg name="step_div" default="200" />
+	<arg name="f_ctrl" default="1" /> 
+	<arg name="debug" default="false" /> 
+	<arg name="test" default="false" /> 
+	<arg name="epochs" default="15" /> 
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
@@ -20,6 +25,8 @@
 	<arg name="vis" default="true" />
 	<arg name="use_aruco" default="false" />
 	<arg name="plot_id" default="-1" />
+	<arg name="rh8d_port" default="/dev/ttyUSB1" />
+	<arg name="rh8d_baud" default="1000000" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
@@ -101,9 +108,15 @@
 		<param name="vis" value="$(arg vis)" />
 		<param name="filter" value="$(arg filter)" />
 		<param name="filter_iters" value="$(arg filter_iters)" /> 
-		<param name="f_ctrl" value="$(arg fps)" />
+		<param name="f_ctrl" value="$(arg f_ctrl)" />
 		<param name="use_aruco" value="$(arg use_aruco)" />
 		<param name="plot_id" value="$(arg plot_id)" />
+		<param name="rh8d_port" value="$(arg rh8d_port)" />
+		<param name="rh8d_baud" value="$(arg rh8d_baud)" />
+		<param name="step_div" value="$(arg step_div)" /> 
+		<param name="epochs" value="$(arg epochs)" /> 
+		<param name="debug" value="$(arg debug)" /> 
+		<param name="test" value="$(arg test)" /> 
 		<param name="fps"     value="$(arg fps)" />
 	</node>
 
