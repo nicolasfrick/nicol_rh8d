@@ -45,6 +45,7 @@ JPG_QUALITY = 60
 REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
 if not os.path.exists(REC_DIR):
 	os.mkdir(REC_DIR)
+print("Writing images to", REC_DIR)
 
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
 QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
@@ -135,9 +136,9 @@ class DetectBase():
 		self.frame_cnt = 0
 
 		# dummies
-		rgb_info= sensor_msgs.msg.CameraInfo()
-		rgb_info.K = np.array([1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0], dtype=np.float64)
-		rgb_info.D = np.array([0,0,0,0,0], dtype=np.float64)
+		self.rgb_info= sensor_msgs.msg.CameraInfo()
+		self.rgb_info.K = np.array([1396.5938720703125, 0.0, 944.5514526367188, 0.0, 1395.5264892578125, 547.0949096679688, 0.0, 0.0, 1.0], dtype=np.float64)
+		self.rgb_info.D = np.array([0,0,0,0,0], dtype=np.float64)
 		self.img = cv2.imread(os.path.join(DATA_PTH, 'test_img.jpg'), cv2.IMREAD_COLOR)
 		# init ros
 		if not test:
@@ -145,21 +146,21 @@ class DetectBase():
 			self.bridge = cv_bridge.CvBridge()
 			self.img_topic = camera_ns + '/image_raw'
 			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
-			rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
-			print("Camera height:", rgb_info.height, "width:", rgb_info.width)
+			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
+			print("Camera height:", self.rgb_info.height, "width:", self.rgb_info.width)
 
 		# init detector
 		if use_aruco:
 			self.det = ArucoDetector(marker_length=marker_length, 
-									K=rgb_info.K, 
-									D=rgb_info.D,
+									K=self.rgb_info.K, 
+									D=self.rgb_info.D,
 									dt=1/fps,
 									invert_pose=False,
 									filter_type=filter_type)
 		else:
 			self.det = AprilDetector(marker_length=marker_length, 
-									K=rgb_info.K, 
-									D=rgb_info.D,
+									K=self.rgb_info.K, 
+									D=self.rgb_info.D,
 									dt=1/fps,
 									invert_pose=False,
 									filter_type=filter_type)
@@ -435,43 +436,89 @@ class KeypointDetect(DetectBase):
 		if vis:
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
+	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str) -> None:
+		info_dict = {"frame_id": info.header.frame_id,
+			   		 "width": info.width,
+					 "height": info.height,
+					 "distortion_model": info.distortion_model,
+					 "D": list(info.D),
+					 "K": list(info.K),					 
+					 "R": list(info.R),
+					 "P": list(info.P),
+					 "binning_x": info.binning_x,
+					 "binning_y": info.binning_y,
+					 "roi": {
+						"x_offset": info.roi.x_offset,
+						"y_offset": info.roi.y_offset,
+						"height": info.roi.height,
+						"width": info.roi.width,
+						"do_rectify": info.roi.do_rectify,
+					 	}, 
+					}
+		with open(fn, "w") as fw:
+			yaml.dump(info_dict, fw, default_flow_style=None, sort_keys=False)
+
 	def initSubscriber(self) -> None:
 		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
-		print("Subscribed to", self.joint_state_topic)
 		self.subs.append(self.joint_states_sub)
+		print("Subscribed to", self.joint_state_topic)
 
 		self.det_img_sub = Subscriber(self.img_topic, Image)
-		print("Subscribed to", self.img_topic)
 		self.subs.append(self.det_img_sub)
+		print("Subscribed to", self.img_topic)
+		# save camera info
+		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_rgb.yaml"))
 
 		if self.depth_enabled:
 			depth_topic = self.camera_ns.replace('color', 'depth')
 			self.depth_img_topic = depth_topic + '/image_rect_raw'	
 			self.depth_img_sub = Subscriber(self.depth_img_topic,  Image)
-			print("Subscribed to", self.depth_img_topic)
 			self.subs.append(self.depth_img_sub)
+			print("Subscribed to", self.depth_img_topic)
+			# save camera info
+			print("Waiting for camera_info from", depth_topic + '/camera_info')
+			depth_info = rospy.wait_for_message(depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo)
+			self.saveCamInfo(depth_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_depth.yaml"))
 
 		if self.use_top_camera:
 			self.top_img_topic = self.top_camera_name + '/image_raw'
 			self.top_img_sub = Subscriber(self.top_img_topic, Image)
-			print("Subscribed to", self.top_img_topic)
 			self.subs.append(self.top_img_sub)
+			print("Subscribed to", self.top_img_topic)
+			# save camera info
+			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
+			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435_info_rgb.yaml"))
 			if self.depth_enabled:
 				depth_topic = self.top_camera_name.replace('color', 'depth')
 				self.top_depth_img_topic = depth_topic + '/image_rect_raw'	
 				self.top_depth_img_sub = Subscriber(self.top_depth_img_topic, Image)
-				print("Subscribed to", self.top_depth_img_topic)
 				self.subs.append(self.top_depth_img_sub)
+				print("Subscribed to", self.top_depth_img_topic)
+				# save camera info
+				print("Waiting for camera_info from", depth_topic + '/camera_info')
+				depth_info = rospy.wait_for_message(depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo)
+				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435_info_depth.yaml"))
 
 		if self.use_eye_cameras:
+			# right eye
 			self.right_img_topic = self.right_eye_camera_name + '/image_raw'
-			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
 			self.right_img_sub = Subscriber(self.right_img_topic, Image)
-			print("Subscribed to", self.right_img_topic)
 			self.subs.append(self.right_img_sub)
+			print("Subscribed to", self.right_img_topic)
+			# save camera info
+			print("Waiting for camera_info from", self.right_eye_camera_name + '/camera_info')
+			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_R_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
+			# left eye
+			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
 			self.left_img_sub = Subscriber(self.left_img_topic, Image)
-			print("Subscribed to", self.left_img_topic)
 			self.subs.append(self.left_img_sub)
+			print("Subscribed to", self.left_img_topic)
+			# save camera info
+			print("Waiting for camera_info from", self.left_eye_camera_name + '/camera_info')
+			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_L_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
 	
 		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=10, slop=0.1)
 		self.sync.registerCallback(self.recCB)
@@ -741,63 +788,28 @@ class KeypointDetect(DetectBase):
 		return res
 		
 	def run(self) -> None:
-		max_pos = 2700 # avoid tip marker collision
-		min_pos = RH8D_MIN_POS
-		step = RH8D_MAX_POS // self.step_div
 		rate = rospy.Rate(self.f_loop)
-		# save initial cv angles once
-		init = True
-
-		# initially closing
-		direction = 1
-		# 0: n/a, 1: closing, -1: opening
-		conditions = [False, lambda cmd: cmd <= max_pos, lambda cmd: cmd >= min_pos]
 		
 		try:
 			# epoch
-			for e in range(self.epochs):
-				print("Epoch", e)
-				pos_cmd = step
-				fails = 0
-				# move to zero
-				self.rh8d_ctrl.rampMinPos(self.actuator)
-				if e:
-					time.sleep(1)
-				
-				# closing and opening cycle
-				for i in range(2):
-					while not rospy.is_shutdown() and conditions[direction](pos_cmd):
-						# detect angles
-						success = self.detectionRoutine(init, pos_cmd, e, direction)
-						
-						if cv2.waitKey(1) == ord("q"):
-							return
-						
-						# move finger
-						self.rh8d_ctrl.setPos(self.actuator, pos_cmd)
-						print()
-						
-						# increment position if detection was successful
-						if success:
-							pos_cmd += direction * step
-							init = False
-						else:
-							if fails > 3:
-								break
-							fails += 1
+			# for e in range(self.epochs):
+					
+				while not rospy.is_shutdown():
 
-						try:
-							rate.sleep()
-						except:
-							pass
+					# detect angles
+					# success = self.detectionRoutine(init, pos_cmd, e, direction)
 
-					# invert direction
-					direction *= -1
+					if cv2.waitKey(1) == ord("q"):
+						return
+					
+					try:
+						rate.sleep()
+					except:
+						pass
 
 		except Exception as e:
 			rospy.logerr(e)
 		finally:
-			self.rh8d_ctrl.setMinPos(self.actuator, 1)
 			cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
 

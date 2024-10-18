@@ -1,7 +1,8 @@
 <launch>
 <!-- 
 	run robot alongside with:
-	roslaunch nicol_controller NICOL_launch_all.launch use_platform:=false launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false
+	$ $HOME/catkin_ws/src/nicol_ros/nicol_vision/config/configure_cameras.sh
+	$ roslaunch nicol_controller NICOL_launch_all.launch use_platform:=false launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false
  -->
 
 	<!-- glob params -->
@@ -11,13 +12,13 @@
 	<arg name="use_top_camera" default="false" />
 	<arg name="markers_camera_name" default="markers_camera" />
 	<arg name="top_camera_name" default="top_camera" />
-	<arg name="left_eye_camera_name" default="left_camera" />
-	<arg name="right_eye_camera_name" default="right_camera" />
+	<arg name="left_eye_camera_name" default="left_eye_cam" />
+	<arg name="right_eye_camera_name" default="right_eye_cam" />
 	<arg name="joint_state_topic" default="/right/open_manipulator_p/actuator_states" />
 
 	<arg name="vis" default="true" />
 	<arg name="save_imgs" default="true" />
-    <arg name="fps"             default="30" />
+    <arg name="fps"             default="15" />
 	<arg name="f_ctrl" default="1" /> 
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
@@ -37,21 +38,21 @@
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
-	<arg name="top_cam_serial_no"           default="0"/>
-	<arg name="enable_depth"        default="false"/>
+	<arg name="top_cam_serial_no"   default="250122078945"/>
+	<arg name="enable_depth"        default="true"/>
 	<arg name="depth_width"         default="1280"/>
 	<arg name="depth_height"        default="720"/>  
-	<arg name="depth_fps"             default="$(arg fps)"/>
+	<arg name="depth_fps"           default="$(arg fps)"/>
 	<arg name="enable_color"        default="true"/>
 	<arg name="color_width"         default="1920"/>
 	<arg name="color_height"        default="1080"/>
 	<arg name="color_fps"           default="$(arg fps)"/>
-	<arg name="filters"                   default="colorizer"/>
+	<arg name="filters"                   default=""/>
 	<arg name="clip_distance"             default="-2"/>
-	<arg name="align_depth"               default="true"/>
+	<arg name="align_depth"               default="false"/>
 
 	<!-- webcam args -->
-    <arg name="always_capture"                            default="true"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
+    <arg name="always_capture"                            default="false"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
     <arg name="video_stream_provider"            default="/dev/video0"                         doc="video device"/> 
     <arg name="width"                                              default="1280"                                        doc="set resolution"/> 
     <arg name="height"                                            default="960"                                         doc="set resolution"/> 
@@ -119,7 +120,8 @@
 		<arg name="left_camera_name"                       value="$(arg left_eye_camera_name)" />
 		<arg name="right_camera_name"                       value="$(arg right_eye_camera_name)" />
 	</include>
-	<include if="$(eval use_markers_camera and use_top_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
+
+	<!-- <include if="$(eval use_markers_camera and use_top_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
 		<arg name="external_manager"    value="true"/>
 		<arg name="manager"             value="/manager"/>
 		<arg name="use_realsense" value="$(arg use_top_camera)" />
@@ -128,7 +130,7 @@
 		<arg name="enable_depth"        value="$(arg enable_depth)"/>
 		<arg name="depth_width"         value="$(arg depth_width)"/>
 		<arg name="depth_height"        value="$(arg depth_height)"/>  
-		<arg name="depth_fps"           value="$(arg depth_fps)"/>
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>s
 		<arg name="enable_color"        value="$(arg enable_color)"/>
 		<arg name="color_width"         value="$(arg color_width)"/>
 		<arg name="color_height"        value="$(arg color_height)"/>
@@ -136,10 +138,10 @@
 		<arg name="filters"                   value="$(arg filters)"/>
 		<arg name="clip_distance"             value="$(arg clip_distance)"/>
 		<arg name="align_depth"               value="$(arg align_depth)"/>
-	</include>
+	</include> -->
 
 	<!-- dataset collector script -->
-	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
+	<!-- <node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
 		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
 		<param name="top_camera_name" 			value="$(arg top_camera_name)/color" />
 		<param name="left_eye_camera_name"   value="$(arg left_eye_camera_name)" />
@@ -166,6 +168,6 @@
 		<param name="use_top_camera"     value="$(arg use_top_camera)" />
 		<param name="depth_enabled"     value="$(arg enable_depth)" />
 		<param name="joint_state_topic"     value="$(arg joint_state_topic)" />
-	</node>
+	</node> -->
 
 </launch>
