@@ -94,3 +94,7 @@ dependencies:
       - urllib3==1.26.19
       - xtcocotools==1.14.3
       - zipp==3.19.2
+      - rospkg==1.5.1
+      - catkin==0.8.10
+      - catkin-pkg==1.0.0
+      - scipy==1.13.1
