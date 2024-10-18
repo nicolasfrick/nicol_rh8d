@@ -2,36 +2,64 @@
 <robot name="marker_cam" xmlns:xacro="http://ros.org/wiki/xacro">
 
     <xacro:include filename="$(find realsense2_description)/urdf/_d415.urdf.xacro" />
- 
-    <link name="world"/>
-    <gazebo reference="world"/>
+    
+    <link name="$(arg world_name)"/>
+    <gazebo reference="$(arg world_name)"/>
 
     <joint name="marker_cam_joint" type="fixed">
         <origin rpy="0 0 $(arg theta)" xyz="0 0 0"/>
-        <parent link="world"/>
+        <parent link="$(arg world_name)"/>
         <child link="marker_cam_link"/>
     </joint>
 
-    <link name="marker_cam_link">
+    <!-- <joint name="box_joint" type="fixed">
+        <origin rpy="-1.57 0 -1.57" xyz="0 0 0.185"/>
+        <parent link="$(arg world_name)"/>
+        <child link="box_link"/>
+    </joint>
+    <link name="box_link">
         <visual>
-        <origin rpy="0 0 0" xyz="0 0 0"/>
-        <geometry>
-            <mesh filename="package://nicol_rh8d/inventor/cam_holder.stl" scale="0.001 0.001 0.001"/>
-        </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <geometry>
+                <box size="0.075 0.1 0.005"/>
+            </geometry>
             <material name="cam_link_color">
                 <color rgba="0.5 0.5 0.5 1.0"/>
             </material>
         </visual>
         <collision>
-        <origin rpy="0 0 0" xyz="0 0 0"/>
-        <geometry>
-            <box size="0 0 0"/>
-        </geometry>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
         </collision>
         <inertial>
-        <origin rpy="0 0 0" xyz="0 0 0"/>
-        <mass value="0"/>
-        <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <mass value="0"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+        </inertial>
+    </link> -->
+
+    <link name="marker_cam_link">
+        <visual>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <geometry>
+                <mesh filename="package://nicol_rh8d/inventor/cam_holder.stl" scale="0.001 0.001 0.001"/>
+            </geometry>
+            <material name="cam_link_color">
+                <color rgba="0.5 0.5 0.5 1.0"/>
+            </material>
+        </visual>
+        <collision>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <geometry>
+                <box size="0 0 0"/>
+            </geometry>
+        </collision>
+        <inertial>
+            <origin rpy="0 0 0" xyz="0 0 0"/>
+            <mass value="0"/>
+            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
         </inertial>
     </link>
     <gazebo reference="marker_cam_link">
@@ -39,12 +67,12 @@
     </gazebo>
 
     <xacro:sensor_d415 parent="marker_cam_link" 
-                  name="marker_realsense" 
+                  name="$(arg tf_name)" 
                   use_nominal_extrinsics="true" 
                   use_mesh="true" >
-        <origin xyz="$(arg x_dist) 0 $(arg z_dist)" rpy="${pi*0.5} 0 0"/>
+        <origin xyz="$(arg x_dist) $(arg y_dist) $(arg z_dist)" rpy="${pi*0.5} 0 0"/>
     </xacro:sensor_d415>
-    <gazebo reference="marker_realsense">
+    <gazebo reference="$(arg tf_name)">
         <material>Gazebo/Grey</material>
     </gazebo>
 

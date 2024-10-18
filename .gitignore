@@ -3,3 +3,5 @@
 *.pyc
 # aruco
 inventor/lockfile.lck
+*.code-workspace
+.vscode

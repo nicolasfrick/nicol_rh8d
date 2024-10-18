@@ -4,46 +4,127 @@
 	roslaunch nicol_controller NICOL_launch_all.launch use_platform:=false launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false
  -->
 
-	<!-- marker cam params -->
+	<!-- glob params -->
 	<arg name="use_markers_camera"  default="true" />
+	<arg name="use_realsense"  default="true" />
+	<arg name="use_eye_cameras" default="false" />
+	<arg name="use_top_camera" default="false" />
+	<arg name="markers_camera_name" default="markers_camera" />
+	<arg name="top_camera_name" default="top_camera" />
+	<arg name="left_eye_camera_name" default="left_camera" />
+	<arg name="right_eye_camera_name" default="right_camera" />
+	<arg name="joint_state_topic" default="/right/open_manipulator_p/actuator_states" />
+
+	<arg name="vis" default="true" />
+	<arg name="save_imgs" default="true" />
+    <arg name="fps"             default="30" />
+	<arg name="f_ctrl" default="1" /> 
+	<arg name="debug" default="false" /> 
+	<arg name="test" default="false" /> 
+	<arg name="use_tf" default="true" /> 
+	<arg name="plot_id" default="-1" />
+	<arg name="rh8d_port" default="/dev/ttyUSB1" />
+	<arg name="rh8d_baud" default="1000000" />
+	<arg name="step_div" default="200" />
+	<arg name="epochs" default="15" /> 
+
+	<!-- detector params -->
+	<arg name="marker_length" default="0.01" />
+	<arg name="use_reconfigure" default="false" />
+	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
+	<arg name="filter_iters" default="10" />
+	<arg name="use_aruco" default="false" />
+
+	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
+	<arg name="top_cam_serial_no"           default="0"/>
 	<arg name="enable_depth"        default="false"/>
 	<arg name="depth_width"         default="1280"/>
 	<arg name="depth_height"        default="720"/>  
-	<arg name="depth_fps"           default="30"/>
+	<arg name="depth_fps"             default="$(arg fps)"/>
 	<arg name="enable_color"        default="true"/>
 	<arg name="color_width"         default="1920"/>
 	<arg name="color_height"        default="1080"/>
-	<arg name="color_fps"           default="6"/>
+	<arg name="color_fps"           default="$(arg fps)"/>
 	<arg name="filters"                   default="colorizer"/>
 	<arg name="clip_distance"             default="-2"/>
 	<arg name="align_depth"               default="true"/>
 
-	<!-- <arg name="use_wrist_camera" default="false" />
-	<arg name="use_top_camera" default="false" /> -->
+	<!-- webcam args -->
+    <arg name="always_capture"                            default="true"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
+    <arg name="video_stream_provider"            default="/dev/video0"                         doc="video device"/> 
+    <arg name="width"                                              default="1280"                                        doc="set resolution"/> 
+    <arg name="height"                                            default="960"                                         doc="set resolution"/> 
+    <arg name="camera_info_url"                          default="file:///$(find nicol_rh8d)/cfg/camcalib_$(arg width)x$(arg height).yaml"  doc=" camera info loading"/>
 
 	<!-- model args -->
 	<arg name="theta"      default="0" doc="Angle of wrist part wrt. z axis of link6"/>
-    <arg name="x_dist"      default="-0.45" doc="Distance along x axis"/>
-    <arg name="z_dist"      default="0.25" doc="Distance along z axis"/>
+    <arg name="x_dist"      default="-0.3527" doc="Distance along x axis"/>
+	<arg name="y_dist"      default="0.01245" doc="Distance along y axis"/>
+    <arg name="z_dist"      default="0.2406" doc="Distance along z axis"/>
     <arg name="attached"      default="false"/>
+	<arg name="launch_rviz"      default="false"/>
 
-	<!-- <include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
 		<arg name="theta"      value="$(arg theta)"/>
 		<arg name="x_dist"      value="$(arg x_dist)" />
+		<arg name="y_dist"      value="$(arg y_dist)" />
 		<arg name="z_dist"      value="$(arg z_dist)" />
-		<arg name="attached" value="$(arg attached)"/>
-	</include> -->
+		<arg name="attached" 	value="$(arg attached)"/>
+		<arg name="launch_rviz" value="$(arg launch_rviz)"/>
+		<arg name="tf_name" 	value="$(arg markers_camera_name)"/>
+	</include>
 
 	<!-- common manager -->
-	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="rs_manager" args="manager" output="screen" required="true" />
+	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="manager" args="manager" output="screen" required="true" />
 	<!-- markers cam -->
-	<include if="$(eval use_markers_camera or bool(play_bag))" file="$(find nicol_rh8d)/launch/realsense.launch">
+	<include if="$(eval use_markers_camera and use_realsense)" file="$(find nicol_rh8d)/launch/realsense.launch">
 		<arg name="external_manager"    value="true"/>
-		<arg name="manager"             value="/rs_manager"/>
+		<arg name="manager"             value="/manager"/>
 		<arg name="use_realsense" value="$(arg use_markers_camera)" />
-		<arg name="camera"             value="marker_realsense" />
+		<arg name="camera"             value="$(arg markers_camera_name)" />
 		<arg name="serial_no"           value="$(arg serial_no)"/>
+		<arg name="enable_depth"        value="$(arg enable_depth)"/>
+		<arg name="depth_width"         value="$(arg depth_width)"/>
+		<arg name="depth_height"        value="$(arg depth_height)"/>  
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>
+		<arg name="enable_color"        value="$(arg enable_color)"/>
+		<arg name="color_width"         value="$(arg color_width)"/>
+		<arg name="color_height"        value="$(arg color_height)"/>
+		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="filters"                   value="$(arg filters)"/>
+		<arg name="clip_distance"             value="$(arg clip_distance)"/>
+		<arg name="align_depth"               value="$(arg align_depth)"/>
+	</include>
+	<include if="$(eval use_markers_camera and not use_realsense)" ns="$(arg markers_camera_name)/color"  file="$(find nicol_rh8d)/launch/webcam.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="nodelet_manager"     value="/manager"/>
+		<arg name="fps"                                   value="$(arg fps)" />
+    	<arg name="always_capture"           value="$(arg always_capture)" />
+    	<arg name="camera_name"              value="$(arg markers_camera_name)" />
+    	<arg name="video_stream_provider"   value="$(arg video_stream_provider)" />
+    	<arg name="width"                                value="$(arg width)" />
+    	<arg name="height"                              value="$(arg height)" />
+    	<arg name="camera_info_url"           value="$(arg camera_info_url)" />
+	</include>
+
+	<!-- secondary cameras -->
+	<include if="$(eval use_markers_camera and use_eye_cameras)" file="$(find nicol_vision)/launch/nicol_eye_cameras.launch">
+		<arg name="nodelet_manager"                         value="/manager"/>
+		<arg name="external_manager"                       value="true"  />  
+		<arg name="use_4k"                                             value="false" /> 
+		<arg name="fps"                                                    value="$(arg fps)"   />
+		<arg name="width"                               			 	value="$(arg color_width)" />
+    	<arg name="height"                              				value="$(arg color_height)" />
+		<arg name="left_camera_name"                       value="$(arg left_eye_camera_name)" />
+		<arg name="right_camera_name"                       value="$(arg right_eye_camera_name)" />
+	</include>
+	<include if="$(eval use_markers_camera and use_top_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="manager"             value="/manager"/>
+		<arg name="use_realsense" value="$(arg use_top_camera)" />
+		<arg name="camera"             value="$(arg top_camera_name)" />
+		<arg name="serial_no"           value="$(arg top_cam_serial_no)"/>
 		<arg name="enable_depth"        value="$(arg enable_depth)"/>
 		<arg name="depth_width"         value="$(arg depth_width)"/>
 		<arg name="depth_height"        value="$(arg depth_height)"/>  
@@ -58,8 +139,33 @@
 	</include>
 
 	<!-- dataset collector script -->
-	<node pkg="nicol_rh8d" name="RH8D_dataset_collector" type="dataset_collector.py" output="screen" required="true">
-		<!-- <param name="move_hand"        type="bool"   value="$(arg move_hand)" /> -->
+	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
+		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
+		<param name="top_camera_name" 			value="$(arg top_camera_name)/color" />
+		<param name="left_eye_camera_name"   value="$(arg left_eye_camera_name)" />
+		<param name="right_eye_camera_name"   value="$(arg right_eye_camera_name)" />
+		<param name="marker_length" value="$(arg marker_length)" />
+		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
+		<param name="vis" value="$(arg vis)" />
+		<param name="filter" value="$(arg filter)" />
+		<param name="filter_iters" value="$(arg filter_iters)" /> 
+		<param name="f_ctrl" value="$(arg f_ctrl)" />
+		<param name="use_aruco" value="$(arg use_aruco)" />
+		<param name="plot_id" value="$(arg plot_id)" />
+		<param name="rh8d_port" value="$(arg rh8d_port)" />
+		<param name="rh8d_baud" value="$(arg rh8d_baud)" />
+		<param name="step_div" value="$(arg step_div)" /> 
+		<param name="epochs" value="$(arg epochs)" /> 
+		<param name="debug" value="$(arg debug)" /> 
+		<param name="test" value="$(arg test)" /> 
+		<param name="fps"     value="$(arg fps)" />
+		<param name="use_tf"     value="$(arg use_tf)" />
+		<param name="attached"     value="$(arg attached)" />
+		<param name="save_imgs"     value="$(arg save_imgs)" />
+		<param name="use_eye_cameras"     value="$(arg use_eye_cameras)" />
+		<param name="use_top_camera"     value="$(arg use_top_camera)" />
+		<param name="depth_enabled"     value="$(arg enable_depth)" />
+		<param name="joint_state_topic"     value="$(arg joint_state_topic)" />
 	</node>
 
 </launch>

@@ -23,6 +23,11 @@ $ conda create -n $ENV python=$PYTHON
 $ conda activate $ENV
 $ conda install -c pytorch numpy=1.22 cudatoolkit=10.2 pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 torchtext==0.13.1 'libtiff<4.5'
 
+## OpenCV
+as described in https://pypi.org/project/opencv-python/: To use the new manylinux2014 pre-built wheels (or to build from source), your pip version must be >= 19.3 (otherwise imports of cv static libraries coming with opencv-python may fail)
+$ pip install --upgrade pip
+$ pip install opencv-contrib-python==4.10.0.84
+
 ## OpenMM
 $ pip install --upgrade openmim
 $ mim install 'mmtrack<1' 'mmpose<1' 'mmdet<3' mmcls 'mmcv-full<1.7'
@@ -30,6 +35,13 @@ $ mim list
 $ pip uninstall xtcocotools  # <-- Otherwise import mmpose.apis fails...
 $ pip install --no-binary xtcocotools xtcocotools
 $ pip check
+
+## PyKDL
+$ sudo apt install libeigen3-dev libcppunit-dev
+$ conda install future pybind11
+$ ENV=nicol_rh8d; PYTHON=3.9
+$ conda activate $ENV; OLDDIR="$(pwd)"; cd /tmp; rm -rf /tmp/orocos_kinematics_dynamics; git clone --recursive https://github.com/orocos/orocos_kinematics_dynamics.git; cd /tmp/orocos_kinematics_dynamics; git checkout 8dbdda7; git checkout --recurse-submodules 8dbdda7; git submodule sync; git submodule update --init --recursive; git submodule status; cd /tmp/orocos_kinematics_dynamics/orocos_kdl; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" ..; make -j8; make install; cd /tmp/orocos_kinematics_dynamics/python_orocos_kdl; mkdir build; cd build; cmake -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" -DROS_PYTHON_VERSION=3 ..; make -j8; make install; ln -s "$CONDA_PREFIX/lib/python3/dist-packages/PyKDL.so" "$CONDA_PREFIX/lib/python$PYTHON/lib-dynload/PyKDL.so"; cd "$OLDDIR"; rm -rf /tmp/orocos_kinematics_dynamics
+
 
 ## Config
 $ ln -s "$DATASETS_DIR" "$CONDA_PREFIX"/lib/python$PYTHON/site-packages/mmdet/.mim/data
@@ -398,3 +410,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ```
 
 python demo.py --ckpt_path checkpoints_dir--use_big_decoder --dec_layers 6
+
+# Embedded
+The AMT103 quadrature encoders are attached to each shaft of the index finger. The  XMEGA-A4-USB MCU from RODENHAUSEN ELECTRONIC (dev-tools.de purchase) can handle 3 encoders.
+The code is compiled with AtmelStudio 7 (WIN10). Open project \atxmega_qenc\atxmega_qenc.cproj and compile the project. The memory is flashed with Nano Development Manager (www.dev-tools.de).
+
+To flash the memory start application and select Targetsystem: Mikrocontrollermodule, Module: XMEGA-A4-USB, Flash Memory: click open and select \atxmega_qenc\atxmega_qenc\Debug\\atxmega_qenc\atxmega_qenc.hex,
+Programming: click Write Flash Memory (select the proper COM port on top right).
+
+UART setting: 
+		-> 19200 Baud @ 2 MHz with CLK2X = 0, BSCALE = -5
+		-> Rx InterruptW
+		-> Use Rx and Tx
+		-> 8N1

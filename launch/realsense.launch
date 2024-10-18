@@ -3,8 +3,8 @@
 	<!-- rs args -->
 	<arg name="external_manager"    default="false"/>
 	<arg name="manager"             default="rs_manager"/>
-	<arg name="use_realsense" default="true" />
-	<arg name="camera"            default="realsense"/>
+	<arg name="use_realsense" 		default="true" />
+	<arg name="camera"            	default="realsense"/>
 	<arg name="serial_no"           default="822512060411"/>
 	<arg name="tf_prefix"           default="$(arg camera)"/>
 	<arg name="enable_depth"        default="true"/>
@@ -15,61 +15,35 @@
 	<arg name="color_width"         default="1920"/>
 	<arg name="color_height"        default="1080"/>
 	<arg name="color_fps"           default="30"/>
-	<arg name="enable_pointcloud"         default="false"/>
-	<arg name="publish_tf"                default="true"/>
-	<arg name="tf_publish_rate"           default="0"/>
-	<arg name="filters"                   default=""/>
-	<arg name="clip_distance"             default="-2"/>
-	<arg name="align_depth"               default="true"/>
+	<arg name="enable_pointcloud"   default="false"/>
+	<arg name="publish_tf"          default="true"/>
+	<arg name="tf_publish_rate"     default="0"/>
+	<arg name="filters"             default=""/>
+	<arg name="clip_distance"       default="-2"/>
+	<arg name="align_depth"         default="true"/>
+	<arg name="output"              default="screen"/>
 
-	<!-- rosbag args -->
-	<arg name="play_bag" default="" />
-	<arg name="play_bag_rate" default="1" />
-	<arg name="play_bag_pause" default="false" />
-	<arg name="play_bag_args" default="" />
-	<arg name="record_bag" default="" />
-	<arg name="record_bag_delay" default="10" />
-	
-	<!-- playback rosbag -->
-	<group if="$(eval bool(play_bag))">
-
-		<param name="/use_sim_time" value="true" />
-
-		<arg name="play_bag_args_all" value="$(eval ('--pause' if play_bag_pause else '') + ' ' + play_bag_args)" />
-
-		<node pkg="rosbag" type="play" name="play_camera_bag" output="screen" args="--quiet --queue=2 --clock --loop -r $(arg play_bag_rate) $(arg play_bag_args_all) $(arg play_bag)" required="true" />
-
-	</group>
-
-	<!-- launch cam and tracking nodes -->
-	<group if="$(eval not play_bag and use_realsense)">
-
-		<param name="/use_sim_time" value="false" />
-
-		<include file="$(find realsense2_camera)/launch/rs_camera.launch">
-			<arg name="external_manager" value="$(arg external_manager)"/>
-			<arg name="manager"                   value="$(arg manager)"/>
-			<arg name="camera"                   value="$(arg camera)"/>
-			<arg name="serial_no"                value="$(arg serial_no)"/>
-			<arg name="tf_prefix"                   value="$(arg tf_prefix)"/>
-			<arg name="enable_depth"              value="$(arg enable_depth)"/>
-			<arg name="depth_width"                 value="$(arg depth_width)"/>
-			<arg name="depth_height"                 value="$(arg depth_height)"/>
-			<arg name="depth_fps"           value="$(arg depth_fps)"/>
-			<arg name="enable_color"              value="$(arg enable_color)"/>
-			<arg name="color_width"         value="$(arg color_width)"/>
-			<arg name="color_height"        value="$(arg color_height)"/>
-			<arg name="color_fps"           value="$(arg color_fps)"/>
-			<arg name="enable_pointcloud"         value="$(arg enable_pointcloud)"/>
-			<arg name="publish_tf"                value="$(arg publish_tf)"/>
-			<arg name="tf_publish_rate"           value="$(arg tf_publish_rate)"/>
-			<arg name="filters"                   value="$(arg filters)"/>
-			<arg name="clip_distance"             value="$(arg clip_distance)"/>
-			<arg name="align_depth"             value="$(arg align_depth)"/>
-		</include>
-
-		<node if="$(eval bool(record_bag))" pkg="rosbag" type="record" name="record_camera_bag" output="screen" args="--lz4 --output-name $(arg record_bag) /tf /tf_static /right/open_manipulator_p/actuator_states /$(arg camera)/color/image_raw /$(arg camera)/color/camera_info /$(arg camera)/depth/image_rect_raw /$(arg camera)/depth/camera_info" launch-prefix="bash -c 'sleep $(arg record_bag_delay); $0 $@'" required="false" />
-
-	</group>
+	<include file="$(find realsense2_camera)/launch/rs_camera.launch">
+		<arg name="external_manager" value="$(arg external_manager)"/>
+		<arg name="manager"                   value="$(arg manager)"/>
+		<arg name="camera"                   value="$(arg camera)"/>
+		<arg name="serial_no"                value="$(arg serial_no)"/>
+		<arg name="tf_prefix"                   value="$(arg tf_prefix)"/>
+		<arg name="enable_depth"              value="$(arg enable_depth)"/>
+		<arg name="depth_width"                 value="$(arg depth_width)"/>
+		<arg name="depth_height"                 value="$(arg depth_height)"/>
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>
+		<arg name="enable_color"              value="$(arg enable_color)"/>
+		<arg name="color_width"         value="$(arg color_width)"/>
+		<arg name="color_height"        value="$(arg color_height)"/>
+		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="enable_pointcloud"         value="$(arg enable_pointcloud)"/>
+		<arg name="publish_tf"                value="$(arg publish_tf)"/>
+		<arg name="tf_publish_rate"           value="$(arg tf_publish_rate)"/>
+		<arg name="filters"                   value="$(arg filters)"/>
+		<arg name="clip_distance"             value="$(arg clip_distance)"/>
+		<arg name="align_depth"             value="$(arg align_depth)"/>
+		<arg name="output"             value="$(arg output)"/>
+	</include>
 
 </launch>

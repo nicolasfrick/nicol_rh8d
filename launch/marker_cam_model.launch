@@ -1,14 +1,18 @@
 <launch>   
     <arg name="theta"      default="0" doc="Angle of wrist part wrt. z axis of link6"/>
-    <arg name="x_dist"      default="-0.45" doc="Distance along x axis"/>
-    <arg name="z_dist"      default="0.25" doc="Distance along z axis"/>
+    <arg name="x_dist"      default="-0.5" doc="Distance along x axis"/>
+    <arg name="y_dist"      default="0.01245" doc="Distance along y axis"/>
+    <arg name="z_dist"      default="0.3" doc="Distance along z axis"/>
     <arg name="launch_rviz"      default="true"/>
     <arg name="attached"      default="false"/>
+    <arg name="tf_name"      default="marker_realsense"/>
+    <arg if="$(arg attached)" name="world_name"      default="marker_cam_world"/>
+    <arg unless="$(arg attached)" name="world_name"      default="world"/>
 
     <group ns="marker_cam">
-        <param name="robot_description" command="xacro '$(find nicol_rh8d)/urdf/marker_cam.xacro' theta:=$(arg theta) x_dist:=$(arg x_dist) z_dist:=$(arg z_dist)" />
-        <node if="$(arg attached)" name="marker_cam_static_transform_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 /world /world"/>
+        <param name="robot_description" command="xacro '$(find nicol_rh8d)/urdf/marker_cam.xacro' theta:=$(arg theta) x_dist:=$(arg x_dist) y_dist:=$(arg y_dist) z_dist:=$(arg z_dist) tf_name:=$(arg tf_name) world_name:=$(arg world_name)" />
+        <node if="$(arg attached)" name="marker_cam_static_transform_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 r_open_manipulator_p/link6 /$(arg world_name) 30"/>
         <node name="marker_cam_robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>
-        <node if="$(eval launch_rviz and not attached)" name="rviz" pkg="rviz" type="rviz" args="-d $(find nicol_rh8d)/cfg/marker_cam.rviz" required="false" output="screen"/>
+        <node if="$(eval launch_rviz)" name="rviz" pkg="rviz" type="rviz" args="-d $(find nicol_rh8d)/cfg/marker_cam.rviz" required="false" output="screen"/>
     </group>
 </launch>
