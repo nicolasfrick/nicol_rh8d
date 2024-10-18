@@ -8,14 +8,19 @@ import time
 import rospy
 import tf2_ros
 import cv_bridge
+import threading
 import numpy as np
 import sensor_msgs.msg
+from sensor_msgs.msg import Image
+from collections import deque
 from datetime import datetime
 import dynamic_reconfigure.server
 from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
 from geometry_msgs.msg import PoseStamped
 from tf2_geometry_msgs import PointStamped
+from sensor_msgs.msg import JointState
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 from scipy.spatial.transform import Rotation as R
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
@@ -126,7 +131,7 @@ class DetectBase():
 		self.filter_type = filter_type
 		self.refine_pose = refine_pose
 		self.flip_outliers = flip_outliers
-		self.filter_iters = filter_iters if filter_type != 'none' else 1
+		self.filter_iters = filter_iters if (filter_type != 'none' and filter_iters > 0) else 1
 		self.frame_cnt = 0
 
 		# dummies
@@ -239,14 +244,13 @@ class DetectBase():
 		# test img
 		raw_img = self.img
 		self.det.resetFilters()
-		iters = self.filter_iters if self.filter_iters > 0 else 1 # iters >= 1
-		for i in range(iters):
+		for i in range(self.filter_iters):
 			self.frame_cnt += 1
 			# real image
 			if not self.test:
-				rgb = rospy.wait_for_message(self.img_topic, sensor_msgs.msg.Image)
+				rgb = rospy.wait_for_message(self.img_topic, Image)
 				raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if (i >= iters-1 and self.vis) else False)
+			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis if (i >= self.filter_iters-1 and self.vis) else False)
 
 		# align rotations by consens
 		if self.flip_outliers:
@@ -315,6 +319,8 @@ class KeypointDetect(DetectBase):
 		@type str
 		@param right_eye_camera_name
 		@type str
+		@param joint_state_topic
+		@type str
 
 	"""
 
@@ -357,6 +363,7 @@ class KeypointDetect(DetectBase):
 				top_camera_name: Optional[str]='top_camera',
 				left_eye_camera_name: Optional[str]='left_eye_camera',
 				right_eye_camera_name: Optional[str]='right_eye_camera',
+				joint_state_topic: Optional[str]='joint_states',
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -380,23 +387,27 @@ class KeypointDetect(DetectBase):
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
 		self.depth_enabled = depth_enabled
+		self.camera_ns = camera_ns
+		self.top_camera_name = top_camera_name
+		self.left_eye_camera_name = left_eye_camera_name
+		self.right_eye_camera_name = right_eye_camera_name
+		self.joint_state_topic = joint_state_topic
 		self.record_cnt = 0
+		self.subs = []
+
+		# topic  buffers
+		self.det_img_buffer = deque(maxlen=self.filter_iters)
+		self.depth_img_buffer = deque(maxlen=1)
+		self.top_img_buffer = deque(maxlen=1)
+		self.top_depth_img_buffer = deque(maxlen=1)
+		self.left_img_buffer = deque(maxlen=1)
+		self.right_img_buffer = deque(maxlen=1)
+		self.joint_state_buffer = deque(maxlen=1)
+		self.buf_lock = threading.Lock()
 
 		# img topics
 		if not test:
-			if depth_enabled:
-				depth_topic = camera_ns.replace('color', 'depth')
-				self.depth_img_topic = depth_topic + '/image_rect_raw'	
-
-			if use_top_camera:
-				self.top_img_topic = top_camera_name + '/image_raw'
-				if depth_enabled:
-					depth_topic = top_camera_name.replace('color', 'depth')
-					self.top_depth_img_topic = depth_topic + '/image_rect_raw'	
-
-			if use_eye_cameras:
-				self.right_img_topic = right_eye_camera_name + '/image_raw'
-				self.left_img_topic = left_eye_camera_name + '/image_raw'
+			self.initSubscriber()
 
 		# load hand marker ids
 		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -423,6 +434,128 @@ class KeypointDetect(DetectBase):
 		# init vis
 		if vis:
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
+
+	def initSubscriber(self) -> None:
+		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
+		print("Subscribed to", self.joint_state_topic)
+		self.subs.append(self.joint_states_sub)
+
+		self.det_img_sub = Subscriber(self.img_topic, Image)
+		print("Subscribed to", self.img_topic)
+		self.subs.append(self.det_img_sub)
+
+		if self.depth_enabled:
+			depth_topic = self.camera_ns.replace('color', 'depth')
+			self.depth_img_topic = depth_topic + '/image_rect_raw'	
+			self.depth_img_sub = Subscriber(self.depth_img_topic,  Image)
+			print("Subscribed to", self.depth_img_topic)
+			self.subs.append(self.depth_img_sub)
+
+		if self.use_top_camera:
+			self.top_img_topic = self.top_camera_name + '/image_raw'
+			self.top_img_sub = Subscriber(self.top_img_topic, Image)
+			print("Subscribed to", self.top_img_topic)
+			self.subs.append(self.top_img_sub)
+			if self.depth_enabled:
+				depth_topic = self.top_camera_name.replace('color', 'depth')
+				self.top_depth_img_topic = depth_topic + '/image_rect_raw'	
+				self.top_depth_img_sub = Subscriber(self.top_depth_img_topic, Image)
+				print("Subscribed to", self.top_depth_img_topic)
+				self.subs.append(self.top_depth_img_sub)
+
+		if self.use_eye_cameras:
+			self.right_img_topic = self.right_eye_camera_name + '/image_raw'
+			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
+			self.right_img_sub = Subscriber(self.right_img_topic, Image)
+			print("Subscribed to", self.right_img_topic)
+			self.subs.append(self.right_img_sub)
+			self.left_img_sub = Subscriber(self.left_img_topic, Image)
+			print("Subscribed to", self.left_img_topic)
+			self.subs.append(self.left_img_sub)
+	
+		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=10, slop=0.1)
+		self.sync.registerCallback(self.recCB)
+
+	def recCB(self, 
+		   				joint_state: JointState, 
+		   				det_img: Image, 
+						msg3: Image=None,  # depth_img
+						msg4: Image=None,  # top_img
+						msg5: Image=None,  # top_depth_img
+						msg6: Image=None,  # right_img
+						msg7: Image=None,  # left_img
+						) -> None:
+		
+		# try lock
+		if not self.buf_lock.acquire(blocking=False):
+					return  
+		try:
+			self.joint_state_buffer.append(joint_state)
+			self.det_img_buffer.append(det_img)
+			if self.depth_enabled:
+				self.depth_img_buffer.append(msg3)
+			if self.use_top_camera:
+				self.top_img_buffer.append(msg4 if self.depth_enabled else msg3)
+				if self.depth_enabled:
+					self.top_depth_img_buffer.append(msg5)
+			if self.use_eye_cameras:
+				self.right_img_buffer.append(msg6 if self.use_top_camera and self.depth_enabled else msg5 if self.use_top_camera  else msg4  if self.depth_enabled else msg3)
+				self.left_img_buffer.append(msg7 if self.use_top_camera and self.depth_enabled else msg6 if self.use_top_camera  else msg5  if self.depth_enabled else msg4)
+		finally:
+			self.buf_lock.release()
+
+	def saveRecord(self) -> None:		
+		if self.depth_enabled and len(self.depth_img_buffer):
+			depth_img = self.bridge.imgmsg_to_cv2(self.depth_img_buffer.pop(), 'passthrough')
+			depth_img = (depth_img).astype('float32')
+			cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+
+		if self.use_top_camera and len(self.top_img_buffer):
+			raw_img = self.bridge.imgmsg_to_cv2(self.top_img_buffer.pop(), 'bgr8')
+			cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if self.depth_enabled and len(self.top_depth_img_buffer):
+				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
+				depth_img = (depth_img).astype('float32')
+				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+
+		if self.use_eye_cameras:
+			if len(self.left_img_buffer):
+				raw_img = self.bridge.imgmsg_to_cv2(self.left_img_buffer.pop(), 'bgr8')
+				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if len(self.right_img_buffer):
+				raw_img = self.bridge.imgmsg_to_cv2(self.right_img_buffer.pop(), 'bgr8')
+				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+
+	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
+		""" Put num filter_iters images into fresh detection filter and save last images."""
+
+		with self.buf_lock:
+			
+			if len(self.det_img_buffer) != self.filter_iters:
+				print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
+
+			self.det.resetFilters()
+			while len(self.det_img_buffer):
+				self.frame_cnt += 1
+				raw_img = self.bridge.imgmsg_to_cv2(self.det_img_buffer.pop(), 'bgr8')
+				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
+			# dummy img
+			if self.test:
+				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(self.img.copy(), vis and self.vis)
+
+			# align rotations by consens
+			if self.flip_outliers:
+				if not self.flipOutliers(marker_det):
+					beep()
+			# improve detection
+			if self.refine_pose:
+				self.refineDetection(marker_det)
+
+			# save additional resources
+			if not self.test:
+				self.saveRecord()
+
+			return marker_det, det_img, proc_img, raw_img
 
 	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XZ plane in the markee frame.
@@ -536,62 +669,10 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
-	def saveImgs(self) -> None:
-			if self.depth_enabled:
-				cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), self.depth_img)
-				self.depth_img = None
-
-			if self.use_top_camera:
-				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), self.top_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-				self.top_raw_img = None
-				if self.depth_enabled:
-					cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), self.top_depth_img)
-					self.top_depth_img = None
-
-			if self.use_eye_cameras:
-				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), self.left_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), self.right_raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-				self.left_raw_img = None
-				self.right_raw_img = None
-
-	def recScndImgs(self) -> bool:
-		try:
-
-			if self.depth_enabled:
-				depth = rospy.wait_for_message(self.depth_img_topic, sensor_msgs.msg.Image)
-				depth_img = self.bridge.imgmsg_to_cv2(depth, 'passthrough')
-				self.depth_img = (depth_img).astype('float32')
-
-			if self.use_top_camera:
-				rgb = rospy.wait_for_message(self.top_img_topic, sensor_msgs.msg.Image)
-				self.top_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-				if self.depth_enabled:
-					depth = rospy.wait_for_message(self.top_depth_img_topic, sensor_msgs.msg.Image)
-					depth_img = self.bridge.imgmsg_to_cv2(depth, 'passthrough')
-					self.top_depth_img = (depth_img).astype('float32')
-
-			if self.use_eye_cameras:
-				rgb = rospy.wait_for_message(self.left_img_topic, sensor_msgs.msg.Image)
-				self.left_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-				rgb = rospy.wait_for_message(self.right_img_topic, sensor_msgs.msg.Image)
-				self.right_raw_img = self.bridge.imgmsg_to_cv2(rgb, 'bgr8')
-
-		except Exception as e:
-			print(e)	
-			return False
-	
-		return True
-
 	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
 		res = False
 		entry = {} # data entry
-
-		# record additional images before proc delay
-		if not self.test:
-			if not self.recScndImgs():
-				return False
-			
-		# get filtered detection
+		# get filtered detection and save other resources
 		(marker_det, det_img, proc_img, img) = self.preProcImage()
 		out_img = img.copy()
 
@@ -1341,6 +1422,7 @@ def main() -> None:
 						top_camera_name=rospy.get_param('~top_camera_name', 'top_camera'),
 						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
 						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
+						joint_state_topic=rospy.get_param('~joint_state_topic', 'joint_states'),
 						).run()
 	
 if __name__ == "__main__":

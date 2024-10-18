@@ -13,6 +13,7 @@
 	<arg name="top_camera_name" default="top_camera" />
 	<arg name="left_eye_camera_name" default="left_camera" />
 	<arg name="right_eye_camera_name" default="right_camera" />
+	<arg name="joint_state_topic" default="/right/open_manipulator_p/actuator_states" />
 
 	<arg name="vis" default="true" />
 	<arg name="save_imgs" default="true" />
@@ -164,6 +165,7 @@
 		<param name="use_eye_cameras"     value="$(arg use_eye_cameras)" />
 		<param name="use_top_camera"     value="$(arg use_top_camera)" />
 		<param name="depth_enabled"     value="$(arg enable_depth)" />
+		<param name="joint_state_topic"     value="$(arg joint_state_topic)" />
 	</node>
 
 </launch>

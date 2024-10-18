@@ -53,16 +53,79 @@ class RH8DSerial():
 
         self.pres_ids = self._scan()
         if len(self.pres_ids) == 0:
-            raise Exception("RH8D com error")
+            raise Exception("RH8D com error!")
         print("Active ids:", self.pres_ids)
+
+        if not all([id in self.pres_ids for id in RH8D_IDS.values()]):
+            raise Exception("Not all ids present!")
+
+        self.palm_ids = [id for id in RH8D_IDS.values()][:2]
+        self.finger_ids = [id for id in RH8D_IDS.values()][2:]
+
+    def zeroAll(self) -> bool:
+        res = self.rampPalmMinPos()
+        res = self.rampFingerMinPos() and res
+        return res
+
+    def rampPalmMinPos(self, t_sleep: float=0.1) -> bool:
+        cnt = 0
+        step = 100
+        crnt = np.array([self.getpos(id) for id in self.palm_ids], dtype=np.int16)
+        zeros = np.array([RH8D_MIN_POS for _ in range(len(crnt))])
+
+        while not np.isclose(crnt, zeros):
+            for idx, id in enumerate(self.palm_ids):
+                if not np.isclose(crnt[idx], zeros[idx]):
+                    if abs(crnt[idx]) <= (RH8D_MAX_POS - (RH8D_MAX_POS*0.875))*0.5 and step > 1:
+                        step *= 0.91
+                        step = max(int(step), 1)
+                    if crnt[idx] > RH8D_MIN_POS:
+                        crnt[idx] -= step
+                        crnt[idx] = max(crnt[idx], RH8D_MIN_POS)
+                    else:
+                        crnt[idx] += step
+                        crnt[idx] = min(crnt[idx], RH8D_MIN_POS)
+                    self.setPos(id, crnt[idx], 0.0)
+
+            time.sleep(t_sleep)
+            cnt += 1
+            if cnt > 1000:
+                print("RH8D Timeout ramping to zero:", crnt)
+                return False
+        
+        return True
+
+    def rampFingerMinPos(self, t_sleep: float=0.1) -> bool:
+        cnt = 0
+        step = 100
+        crnt = np.array([self.getpos(id) for id in self.finger_ids], dtype=np.int16)
+
+        while not all(crnt <= RH8D_MIN_POS):
+            for idx, id in enumerate(self.finger_ids):
+                if crnt[idx] > RH8D_MIN_POS:
+                    if crnt[idx] <= RH8D_MAX_POS - (RH8D_MAX_POS*0.875) and step > 1:
+                        step *= 0.91
+                        step = max(int(step), 1)
+                    crnt[idx] -= step
+                    crnt[idx] = max(crnt, RH8D_MIN_POS)
+                    self.setPos(id, crnt[idx], 0.0)
+
+            time.sleep(t_sleep)
+            cnt += 1
+            if cnt > 1000:
+                print("RH8D Timeout ramping to zero:", crnt)
+                return False
+        
+        return True
 
     def rampMinPos(self, id: int, t_sleep: float=0.1) -> None:
         step = 100
         crnt = self.getpos(id)
         while crnt > RH8D_MIN_POS:
-            if crnt <= RH8D_MIN_POS + (RH8D_MIN_POS*0.125) and step > 1:
+            if crnt <= RH8D_MAX_POS - (RH8D_MAX_POS*0.875) and step > 1:
                 step *= 0.91
-            crnt -= int(step)
+                step = max(int(step), 1)
+            crnt -= step
             crnt = max(crnt, RH8D_MIN_POS)
             self.setPos(id, crnt, t_sleep)
 
@@ -72,7 +135,8 @@ class RH8DSerial():
         while crnt < RH8D_MAX_POS:
             if crnt >= RH8D_MAX_POS - (RH8D_MAX_POS*0.125) and step > 1:
                 step *= 0.91
-            crnt += int(step)
+                step = max(int(step), 1)
+            crnt += step
             crnt = min(crnt, RH8D_MAX_POS)
             self.setPos(id, crnt, t_sleep)
 
