@@ -22,6 +22,7 @@
 	<arg name="clip_distance"       default="-2"/>
 	<arg name="align_depth"         default="true"/>
 	<arg name="output"              default="screen"/>
+	<arg name="initial_reset"       default="true"/>
 
 	<include file="$(find realsense2_camera)/launch/rs_camera.launch">
 		<arg name="external_manager" value="$(arg external_manager)"/>
@@ -44,6 +45,7 @@
 		<arg name="clip_distance"             value="$(arg clip_distance)"/>
 		<arg name="align_depth"             value="$(arg align_depth)"/>
 		<arg name="output"             value="$(arg output)"/>
+		<arg name="initial_reset"             value="$(arg initial_reset)"/>
 	</include>
 
 </launch>

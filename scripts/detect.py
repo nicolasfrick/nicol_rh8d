@@ -34,7 +34,7 @@ from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 dt_now = datetime.now()
-dt_now = dt_now.strftime("%H_%M_%S")
+dt_now = '' # dt_now.strftime("%H_%M_%S")
 
 # data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
@@ -63,6 +63,7 @@ KEYPT_DET_REC_DIR = os.path.join(KEYPT_REC_DIR, 'det')
 KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
 KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'left_eye')
 KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
+KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
 if not os.path.exists(KEYPT_REC_DIR):
 	os.mkdir(KEYPT_REC_DIR)
 if not os.path.exists(KEYPT_ORIG_REC_DIR):
@@ -75,6 +76,8 @@ if not os.path.exists(KEYPT_L_EYE_REC_DIR):
 	os.mkdir(KEYPT_L_EYE_REC_DIR)
 if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
 	os.mkdir(KEYPT_TOP_CAM_REC_DIR)
+if not os.path.exists(KEYPT_HEAD_CAM_REC_DIR):
+	os.mkdir(KEYPT_HEAD_CAM_REC_DIR)
 
 class DetectBase():
 	"""
@@ -322,6 +325,10 @@ class KeypointDetect(DetectBase):
 		@type str
 		@param joint_state_topic
 		@type str
+		@param use_head_camera
+		@type bool
+		@param head_camera_name
+		@type str
 
 	"""
 
@@ -360,10 +367,12 @@ class KeypointDetect(DetectBase):
 				attached: Optional[bool]=False,
 				use_eye_cameras: Optional[bool]=False,
 				use_top_camera: Optional[bool]=False,
+				use_head_camera: Optional[bool]=False,
 				depth_enabled: Optional[bool]=False,
 				top_camera_name: Optional[str]='top_camera',
 				left_eye_camera_name: Optional[str]='left_eye_camera',
 				right_eye_camera_name: Optional[str]='right_eye_camera',
+				head_camera_name: Optional[str]='head_camera',
 				joint_state_topic: Optional[str]='joint_states',
 				) -> None:
 		
@@ -387,9 +396,11 @@ class KeypointDetect(DetectBase):
 		self.save_imgs = save_imgs
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
+		self.use_head_camera = use_head_camera
 		self.depth_enabled = depth_enabled
 		self.camera_ns = camera_ns
 		self.top_camera_name = top_camera_name
+		self.head_camera_name = head_camera_name
 		self.left_eye_camera_name = left_eye_camera_name
 		self.right_eye_camera_name = right_eye_camera_name
 		self.joint_state_topic = joint_state_topic
@@ -401,13 +412,15 @@ class KeypointDetect(DetectBase):
 		self.depth_img_buffer = deque(maxlen=1)
 		self.top_img_buffer = deque(maxlen=1)
 		self.top_depth_img_buffer = deque(maxlen=1)
+		self.head_img_buffer = deque(maxlen=1)
+		self.head_depth_img_buffer = deque(maxlen=1)
 		self.left_img_buffer = deque(maxlen=1)
 		self.right_img_buffer = deque(maxlen=1)
 		self.joint_state_buffer = deque(maxlen=1)
 		self.buf_lock = threading.Lock()
 
 		# img topics
-		if not test:
+		if not test and attached:
 			self.initSubscriber()
 
 		# load hand marker ids
@@ -437,6 +450,9 @@ class KeypointDetect(DetectBase):
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str) -> None:
+		if not self.save_imgs:
+			return
+		
 		info_dict = {"frame_id": info.header.frame_id,
 			   		 "width": info.width,
 					 "height": info.height,
@@ -461,93 +477,124 @@ class KeypointDetect(DetectBase):
 	def initSubscriber(self) -> None:
 		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
 		self.subs.append(self.joint_states_sub)
-		print("Subscribed to", self.joint_state_topic)
 
 		self.det_img_sub = Subscriber(self.img_topic, Image)
 		self.subs.append(self.det_img_sub)
-		print("Subscribed to", self.img_topic)
 		# save camera info
 		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_rgb.yaml"))
 
 		if self.depth_enabled:
-			depth_topic = self.camera_ns.replace('color', 'depth')
-			self.depth_img_topic = depth_topic + '/image_rect_raw'	
-			self.depth_img_sub = Subscriber(self.depth_img_topic,  Image)
+			self.depth_topic = self.camera_ns.replace('color', 'depth')
+			depth_img_topic = self.depth_topic + '/image_rect_raw'	
+			self.depth_img_sub = Subscriber(depth_img_topic,  Image)
 			self.subs.append(self.depth_img_sub)
-			print("Subscribed to", self.depth_img_topic)
 			# save camera info
-			print("Waiting for camera_info from", depth_topic + '/camera_info')
-			depth_info = rospy.wait_for_message(depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo)
+			print("Waiting for camera_info from", self.depth_topic + '/camera_info')
+			depth_info = rospy.wait_for_message(self.depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
 			self.saveCamInfo(depth_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_depth.yaml"))
 
 		if self.use_top_camera:
 			self.top_img_topic = self.top_camera_name + '/image_raw'
 			self.top_img_sub = Subscriber(self.top_img_topic, Image)
 			self.subs.append(self.top_img_sub)
-			print("Subscribed to", self.top_img_topic)
 			# save camera info
 			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435_info_rgb.yaml"))
+			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"))
 			if self.depth_enabled:
-				depth_topic = self.top_camera_name.replace('color', 'depth')
-				self.top_depth_img_topic = depth_topic + '/image_rect_raw'	
-				self.top_depth_img_sub = Subscriber(self.top_depth_img_topic, Image)
+				self.top_depth_topic = self.top_camera_name.replace('color', 'depth')
+				top_depth_img_topic = self.top_depth_topic + '/image_rect_raw'	
+				self.top_depth_img_sub = Subscriber(top_depth_img_topic, Image)
 				self.subs.append(self.top_depth_img_sub)
-				print("Subscribed to", self.top_depth_img_topic)
 				# save camera info
-				print("Waiting for camera_info from", depth_topic + '/camera_info')
-				depth_info = rospy.wait_for_message(depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo)
-				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435_info_depth.yaml"))
+				print("Waiting for camera_info from", self.top_depth_topic + '/camera_info')
+				depth_info = rospy.wait_for_message(self.top_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_depth.yaml"))
+
+		if self.use_head_camera:
+			self.head_img_topic = self.head_camera_name + '/image_raw'
+			self.head_img_sub = Subscriber(self.head_img_topic, Image)
+			self.subs.append(self.head_img_sub)
+			# save camera info
+			print("Waiting for camera_info from", self.head_camera_name + '/camera_info')
+			rgb_info = rospy.wait_for_message(self.head_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_rgb.yaml"))
+			if self.depth_enabled:
+				self.head_depth_topic = self.head_camera_name.replace('color', 'depth')
+				head_depth_img_topic = self.head_depth_topic + '/image_rect_raw'	
+				self.head_depth_img_sub = Subscriber(head_depth_img_topic, Image)
+				self.subs.append(self.head_depth_img_sub)
+				# save camera info
+				print("Waiting for camera_info from", self.head_depth_topic + '/camera_info')
+				depth_info = rospy.wait_for_message(self.head_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+				self.saveCamInfo(depth_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_depth.yaml"))
 
 		if self.use_eye_cameras:
 			# right eye
 			self.right_img_topic = self.right_eye_camera_name + '/image_raw'
 			self.right_img_sub = Subscriber(self.right_img_topic, Image)
 			self.subs.append(self.right_img_sub)
-			print("Subscribed to", self.right_img_topic)
 			# save camera info
 			print("Waiting for camera_info from", self.right_eye_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
+			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_R_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
 			# left eye
 			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
 			self.left_img_sub = Subscriber(self.left_img_topic, Image)
 			self.subs.append(self.left_img_sub)
-			print("Subscribed to", self.left_img_topic)
 			# save camera info
 			print("Waiting for camera_info from", self.left_eye_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo)
+			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_L_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
-	
-		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=10, slop=0.1)
+		
+		# trigger condition
+		self.depth_frame_id = self.camera_ns.replace('color', 'depth').replace('/', '_')
+		self.top_img_frame_id = self.top_camera_name.replace('/', '_')
+		self.top_depth_frame_id = self.top_camera_name.replace('color', 'depth').replace('/', '_')
+		self.head_img_frame_id = self.head_camera_name.replace('/', '_')
+		self.head_depth_frame_id = self.head_camera_name.replace('color', 'depth').replace('/', '_')
+
+		# sync callback
+		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=1000, slop=1)
 		self.sync.registerCallback(self.recCB)
+		for s in self.subs:
+			print("Subscribed to topic", s.topic)
+		print("Syncing all aubscibers")
 
 	def recCB(self, 
-		   				joint_state: JointState, 
-		   				det_img: Image, 
-						msg3: Image=None,  # depth_img
-						msg4: Image=None,  # top_img
-						msg5: Image=None,  # top_depth_img
-						msg6: Image=None,  # right_img
-						msg7: Image=None,  # left_img
-						) -> None:
-		
+		   		joint_state: JointState, 
+		   		det_img: Image, 
+				msg3: Image=None,  # depth_img
+				msg4: Image=None,  # top_img
+				msg5: Image=None,  # top_depth_img
+				msg6: Image=None,  # head_img
+				msg7: Image=None,  # head_depth_img
+				msg8: Image=None,  # right_img
+				msg9: Image=None,  # left_img
+				) -> None:
 		# try lock
 		if not self.buf_lock.acquire(blocking=False):
 					return  
 		try:
 			self.joint_state_buffer.append(joint_state)
 			self.det_img_buffer.append(det_img)
-			if self.depth_enabled:
-				self.depth_img_buffer.append(msg3)
-			if self.use_top_camera:
-				self.top_img_buffer.append(msg4 if self.depth_enabled else msg3)
-				if self.depth_enabled:
-					self.top_depth_img_buffer.append(msg5)
-			if self.use_eye_cameras:
-				self.right_img_buffer.append(msg6 if self.use_top_camera and self.depth_enabled else msg5 if self.use_top_camera  else msg4  if self.depth_enabled else msg3)
-				self.left_img_buffer.append(msg7 if self.use_top_camera and self.depth_enabled else msg6 if self.use_top_camera  else msg5  if self.depth_enabled else msg4)
+
+			for msg in [msg3, msg4, msg5, msg6, msg7, msg8, msg9]:
+				if msg is not None:
+					if self.depth_frame_id in msg.header.frame_id:
+						self.depth_img_buffer.append(msg)
+					elif self.top_img_frame_id in msg.header.frame_id:
+						self.top_img_buffer.append(msg)
+					elif self.top_depth_frame_id in msg.header.frame_id:
+						self.top_depth_img_buffer.append(msg)
+					elif self.head_img_frame_id in msg.header.frame_id:
+						self.head_img_buffer.append(msg)
+					elif self.head_depth_frame_id in msg.header.frame_id:
+						self.head_depth_img_buffer.append(msg)
+					elif self.right_eye_camera_name in msg.header.frame_id:
+						self.right_img_buffer.append(msg)
+					elif self.left_eye_camera_name in msg.header.frame_id:
+						self.left_img_buffer.append(msg)
 		finally:
 			self.buf_lock.release()
 
@@ -564,6 +611,14 @@ class KeypointDetect(DetectBase):
 				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
 				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+
+		if self.use_head_camera and len(self.head_img_buffer):
+			raw_img = self.bridge.imgmsg_to_cv2(self.head_img_buffer.pop(), 'bgr8')
+			cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if self.depth_enabled and len(self.head_depth_img_buffer):
+				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
+				depth_img = (depth_img).astype('float32')
+				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
 		if self.use_eye_cameras:
 			if len(self.left_img_buffer):
@@ -599,7 +654,7 @@ class KeypointDetect(DetectBase):
 				self.refineDetection(marker_det)
 
 			# save additional resources
-			if not self.test:
+			if not self.test and self.save_imgs:
 				self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img
@@ -798,6 +853,9 @@ class KeypointDetect(DetectBase):
 
 					# detect angles
 					# success = self.detectionRoutine(init, pos_cmd, e, direction)
+					with self.buf_lock:
+						self.saveRecord()
+						self.record_cnt += 1
 
 					if cv2.waitKey(1) == ord("q"):
 						return
@@ -1429,9 +1487,11 @@ def main() -> None:
 						attached=rospy.get_param('~attached', False),
 						use_eye_cameras=rospy.get_param('~use_eye_cameras', False),
 						use_top_camera=rospy.get_param('~use_top_camera', False),
+						use_head_camera=rospy.get_param('~use_head_camera', False),
 						save_imgs=rospy.get_param('~save_imgs', False),
 						depth_enabled=rospy.get_param('~depth_enabled', False),
 						top_camera_name=rospy.get_param('~top_camera_name', 'top_camera'),
+						head_camera_name=rospy.get_param('~head_camera_name', 'head_camera'),
 						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
 						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
 						joint_state_topic=rospy.get_param('~joint_state_topic', 'joint_states'),
