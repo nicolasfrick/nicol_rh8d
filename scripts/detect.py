@@ -351,16 +351,14 @@ class KeypointDetect(DetectBase):
 	Y_EL_TXT_OFFSET = 1
 
 	TF_TARGET_FRAME = 'world'
-	RH8D_SOURCE_FRAME = 'r_forearm'
+	RH8D_SOURCE_FRAME = 'r_forearm' # dynamic
+	MARKER_CAM_SOURCE_FRAME = 'markers_camera_base_link' # TODO: use camera base frame
+	MARKER_CAM_OPTICAL_SOURCE_FRAME = 'markers_camera_color_optical_frame'
 	TOP_RS_SOURCE_FRAME = 'realsense_link'
 	TOP_RS_OPTICAL_SOURCE_FRAME = 'realsense_color_optical_frame'
-	HEAD_RS_SOURCE_FRAME = 'head_realsense_link'
-	LEFT_EYE_SOURCE_FRAME = 'left_eye_cam'
-	RIGHT_EYE_SOURCE_FRAME = 'right_eye_cam'
-
-# world -> realsense_link -> optical_frame 1x
-# head_realsense_link -> optical frame 1 x
-# cam holder -> marker_cam_link -> markers_camera_color_optical_frame frame 1x
+	HEAD_RS_SOURCE_FRAME = 'head_realsense_link' # dynamic
+	LEFT_EYE_SOURCE_FRAME = 'left_eye_cam' # dynamic
+	RIGHT_EYE_SOURCE_FRAME = 'right_eye_cam' # dynamic
 
 	JS_COLS = ['name', 'position', 'velocity', 'effort', 'timestamp']
 	TF_COLS = ['frame_id', 'child_frame_id', 'trans', 'quat', 'timestamp']
@@ -522,8 +520,8 @@ class KeypointDetect(DetectBase):
 		self.subs.append(self.det_img_sub)
 		# save camera info
 		if self.use_tf:
-			tf_dict = self.lookupTF(rospy.Time(0), 'marker_realsense', 'marker_realsense_optical_frame')
-		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"), tf=tf_dict)
+			tf_dict = self.lookupTF(rospy.Time(0), self.MARKER_CAM_SOURCE_FRAME, self.MARKER_CAM_OPTICAL_SOURCE_FRAME)
+		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"), tf={'optical_extrinsics': tf_dict})
 
 		if self.depth_enabled:
 			self.depth_topic = self.camera_ns.replace('color', 'depth')
@@ -543,7 +541,9 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"))
+			if self.use_tf:
+				tf_dict = self.lookupTF(rospy.Time(0), self.TOP_RS_SOURCE_FRAME, self.TOP_RS_OPTICAL_SOURCE_FRAME)
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"), tf={'optical_extrinsics': tf_dict})
 			if self.depth_enabled:
 				self.top_depth_topic = self.top_camera_name.replace('color', 'depth')
 				top_depth_img_topic = self.top_depth_topic + '/image_rect_raw'	
@@ -648,11 +648,10 @@ class KeypointDetect(DetectBase):
 			tf = self.buf.lookup_transform(target_frame, source_frame, stamp, rospy.Duration(1.0))
 			trans = tf.transform.translation
 			rot = tf.transform.rotation
-			print(tf)
 			tf_dict = { 'frame_id': tf.header.frame_id,
 			  			'child_frame_id': tf.child_frame_id,
-						'trans': np.array([trans.x, trans.y, trans.z]),
-						'quat': np.array([rot.x, rot.y, rot.z, rot.w]),
+						'trans': [trans.x, trans.y, trans.z],
+						'quat': [rot.x, rot.y, rot.z, rot.w],
 						'timestamp': stamp.secs + stamp.nsecs*1e-9
 						}
 			return tf_dict
@@ -661,15 +660,11 @@ class KeypointDetect(DetectBase):
 			return {}
 
 	def saveRecord(self) -> None:	
-		# check df lengths
-		if self.record_cnt != self.js_df.last_valid_index():
-			print("Record size deviates js dataframe index:", self.record_cnt, "!=", self.js_df.last_valid_index())
-		if self.use_tf:
-			if self.record_cnt != self.rh8d_tf_df.last_valid_index():
-				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tf_df.last_valid_index())
+		num_saved = 0
 
-		# joint states & tf
+		# joint states 
 		if len(self.joint_state_buffer):
+			num_saved += 1
 			msg = self.joint_state_buffer.pop()
 			state_dict = {'name': msg.name,
 							'position': msg.position,
@@ -686,12 +681,14 @@ class KeypointDetect(DetectBase):
 
 		# marker cam depth img
 		if self.depth_enabled and len(self.depth_img_buffer):
+			num_saved += 1
 			depth_img = self.bridge.imgmsg_to_cv2(self.depth_img_buffer.pop(), 'passthrough')
 			depth_img = (depth_img).astype('float32')
 			cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
 		# top realsense
 		if self.use_top_camera and len(self.top_img_buffer):
+			num_saved += 1
 			raw_img = self.bridge.imgmsg_to_cv2(self.top_img_buffer.pop(), 'bgr8')
 			cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# depth
@@ -702,13 +699,12 @@ class KeypointDetect(DetectBase):
 
 		# head realsense imgs & tf
 		if self.use_head_camera and len(self.head_img_buffer):
+			num_saved += 1
 			msg = self.head_img_buffer.pop()
 			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 			cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# save head rs tf
 			if self.use_tf:
-				if self.record_cnt != self.head_rs_tf_df.last_valid_index():
-					print("Record size deviates from head rs dataframe index:", self.record_cnt, "!=", self.head_rs_tf_df.last_valid_index())
 				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
 				if tf_dict:
 					self.head_rs_tf_df = self.head_rs_tf_df.append(tf_dict, ignore_index=True)
@@ -720,14 +716,13 @@ class KeypointDetect(DetectBase):
 
 		# eyes imgs & tf
 		if self.use_eye_cameras:
+			num_saved += 1
 			if len(self.left_img_buffer):
 				msg = self.left_img_buffer.pop()
 				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save left eye tf
 				if self.use_tf:
-					if self.record_cnt != self.left_eye_tf_df.last_valid_index():
-						print("Record size deviates from left eye dataframe index:", self.record_cnt, "!=", self.left_eye_tf_df.last_valid_index())
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.LEFT_EYE_SOURCE_FRAME)
 					if tf_dict:
 						self.left_eye_tf_df = self.left_eye_tf_df.append(tf_dict, ignore_index=True)
@@ -738,11 +733,27 @@ class KeypointDetect(DetectBase):
 				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save right eye tf
 				if self.use_tf:
-					if self.record_cnt != self.right_eye_tf_df.last_valid_index():
-						print("Record size deviates from right eye dataframe index:", self.record_cnt, "!=", self.right_eye_tf_df.last_valid_index())
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RIGHT_EYE_SOURCE_FRAME)
 					if tf_dict:
 						self.right_eye_tf_df = self.right_eye_tf_df.append(tf_dict, ignore_index=True)
+
+		# check df lengths
+		if self.record_cnt != self.js_df.last_valid_index():
+			print("Record size deviates js dataframe index:", self.record_cnt, "!=", self.js_df.last_valid_index())
+		if self.use_tf:
+			if self.record_cnt != self.rh8d_tf_df.last_valid_index():
+				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tf_df.last_valid_index())
+			if self.use_eye_cameras:
+				if self.record_cnt != self.right_eye_tf_df.last_valid_index():
+					print("Record size deviates from right eye dataframe index:", self.record_cnt, "!=", self.right_eye_tf_df.last_valid_index())
+				if self.record_cnt != self.left_eye_tf_df.last_valid_index():
+					print("Record size deviates from left eye dataframe index:", self.record_cnt, "!=", self.left_eye_tf_df.last_valid_index())
+			if self.use_head_camera:
+				if self.record_cnt != self.head_rs_tf_df.last_valid_index():
+					print("Record size deviates from head rs dataframe index:", self.record_cnt, "!=", self.head_rs_tf_df.last_valid_index())
+		
+		if num_saved > 0:
+			self.record_cnt += 1
 
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
@@ -949,8 +960,7 @@ class KeypointDetect(DetectBase):
 					self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4) # write data
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
 					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
-					self.saveImgs() # save additional resources
-					self.record_cnt += 1
+					# self.saveImgs() # save additional resources
 					if self.df.last_valid_index() != str(self.record_cnt):
 						print("RECORD DEVIATION data index: ", self.df.last_valid_index(), " img index:", str(self.record_cnt))
 				except Exception as e:
@@ -972,7 +982,6 @@ class KeypointDetect(DetectBase):
 					# success = self.detectionRoutine(init, pos_cmd, e, direction)
 					with self.buf_lock:
 						self.saveRecord()
-						self.record_cnt += 1
 
 					if cv2.waitKey(1) == ord("q"):
 						return

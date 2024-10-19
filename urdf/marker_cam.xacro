@@ -3,6 +3,7 @@
 
     <xacro:include filename="$(find realsense2_description)/urdf/_d415.urdf.xacro" />
     
+    <!-- TODO: connect world -> holder -> cam base -> bottom screw -->
     <link name="$(arg world_name)"/>
     <gazebo reference="$(arg world_name)"/>
 
@@ -11,34 +12,6 @@
         <parent link="$(arg world_name)"/>
         <child link="$(arg tf_name)_base_link"/>
     </joint>
-
-    <!-- <joint name="box_joint" type="fixed">
-        <origin rpy="-1.57 0 -1.57" xyz="0 0 0.185"/>
-        <parent link="$(arg world_name)"/>
-        <child link="box_link"/>
-    </joint>
-    <link name="box_link">
-        <visual>
-            <origin rpy="0 0 0" xyz="0 0 0"/>
-            <geometry>
-                <box size="0.075 0.1 0.005"/>
-            </geometry>
-            <material name="cam_link_color">
-                <color rgba="0.5 0.5 0.5 1.0"/>
-            </material>
-        </visual>
-        <collision>
-            <origin rpy="0 0 0" xyz="0 0 0"/>
-            <geometry>
-                <box size="0 0 0"/>
-            </geometry>
-        </collision>
-        <inertial>
-            <origin rpy="0 0 0" xyz="0 0 0"/>
-            <mass value="0"/>
-            <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
-        </inertial>
-    </link> -->
 
     <link name="$(arg tf_name)_base_link">
         <visual>

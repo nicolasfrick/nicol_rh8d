@@ -6,7 +6,7 @@
     <arg name="launch_rviz"      default="true"/>
     <arg name="attached"      default="false"/>
     <arg name="tf_name"      default="marker_realsense"/>
-    <arg if="$(arg attached)" name="world_name"      default="marker_cam_world"/>
+    <arg if="$(arg attached)" name="world_name"      default="$(arg tf_name)_world"/>
     <arg unless="$(arg attached)" name="world_name"      default="world"/>
 
     <group ns="$(arg tf_name)">
