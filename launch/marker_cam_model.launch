@@ -9,7 +9,7 @@
     <arg if="$(arg attached)" name="world_name"      default="marker_cam_world"/>
     <arg unless="$(arg attached)" name="world_name"      default="world"/>
 
-    <group ns="marker_cam">
+    <group ns="$(arg tf_name)">
         <param name="robot_description" command="xacro '$(find nicol_rh8d)/urdf/marker_cam.xacro' theta:=$(arg theta) x_dist:=$(arg x_dist) y_dist:=$(arg y_dist) z_dist:=$(arg z_dist) tf_name:=$(arg tf_name) world_name:=$(arg world_name)" />
         <node if="$(arg attached)" name="marker_cam_static_transform_publisher" pkg="tf" type="static_transform_publisher" args="0 0 0 0 0 0 r_open_manipulator_p/link6 /$(arg world_name) 30"/>
         <node name="marker_cam_robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher"/>

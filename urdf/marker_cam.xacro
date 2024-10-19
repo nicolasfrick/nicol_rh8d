@@ -9,7 +9,7 @@
     <joint name="marker_cam_joint" type="fixed">
         <origin rpy="0 0 $(arg theta)" xyz="0 0 0"/>
         <parent link="$(arg world_name)"/>
-        <child link="marker_cam_link"/>
+        <child link="$(arg tf_name)_base_link"/>
     </joint>
 
     <!-- <joint name="box_joint" type="fixed">
@@ -40,7 +40,7 @@
         </inertial>
     </link> -->
 
-    <link name="marker_cam_link">
+    <link name="$(arg tf_name)_base_link">
         <visual>
             <origin rpy="0 0 0" xyz="0 0 0"/>
             <geometry>
@@ -62,11 +62,11 @@
             <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
         </inertial>
     </link>
-    <gazebo reference="marker_cam_link">
+    <gazebo reference="$(arg tf_name)_base_link">
         <material>Gazebo/Grey</material>
     </gazebo>
 
-    <xacro:sensor_d415 parent="marker_cam_link" 
+    <xacro:sensor_d415 parent="$(arg tf_name)_base_link" 
                   name="$(arg tf_name)" 
                   use_nominal_extrinsics="true" 
                   use_mesh="true" >

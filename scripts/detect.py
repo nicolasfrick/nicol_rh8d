@@ -12,6 +12,7 @@ import threading
 import numpy as np
 import sensor_msgs.msg
 from sensor_msgs.msg import Image
+from realsense2_camera.msg import Extrinsics
 from collections import deque
 from datetime import datetime
 import dynamic_reconfigure.server
@@ -103,6 +104,8 @@ class DetectBase():
 		@type float
 		@param test
 		@type bool
+		@param cv_window
+		@type bool
 
 	"""
 
@@ -114,7 +117,8 @@ class DetectBase():
 	def __init__(self,
 			  	marker_length: float=0.010,
 				camera_ns: Optional[str]='',
-				vis :Optional[bool]=True,
+				vis: Optional[bool]=True,
+				cv_window:Optional[bool]=True,
 				use_reconfigure: Optional[bool]=False,
 				filter_type: Optional[str]='none',
 				filter_iters: Optional[int]=10,
@@ -128,6 +132,7 @@ class DetectBase():
 				) -> None:
 		
 		self.vis = vis
+		self.cv_window = cv_window
 		self.test = test
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
@@ -149,7 +154,7 @@ class DetectBase():
 			self.bridge = cv_bridge.CvBridge()
 			self.img_topic = camera_ns + '/image_raw'
 			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
-			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo)
+			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
 			print("Camera height:", self.rgb_info.height, "width:", self.rgb_info.width)
 
 		# init detector
@@ -169,7 +174,7 @@ class DetectBase():
 									filter_type=filter_type)
 			
 		# init vis	
-		if vis:
+		if vis and cv_window:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
@@ -274,10 +279,11 @@ class DetectBase():
 				if self.vis:
 					# frame counter
 					cv2.putText(det_img, str(self.frame_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-					cv2.imshow('Processed', proc_img)
-					cv2.imshow('Detection', det_img)
-					if cv2.waitKey(1) == ord("q"):
-						break
+					if self.cv_window:
+						cv2.imshow('Processed', proc_img)
+						cv2.imshow('Detection', det_img)
+						if cv2.waitKey(1) == ord("q"):
+							break
 				try:
 					rate.sleep()
 				except:
@@ -344,6 +350,21 @@ class KeypointDetect(DetectBase):
 	X_EL_TXT_OFFSET = 0.95
 	Y_EL_TXT_OFFSET = 1
 
+	TF_TARGET_FRAME = 'world'
+	RH8D_SOURCE_FRAME = 'r_forearm'
+	TOP_RS_SOURCE_FRAME = 'realsense_link'
+	TOP_RS_OPTICAL_SOURCE_FRAME = 'realsense_color_optical_frame'
+	HEAD_RS_SOURCE_FRAME = 'head_realsense_link'
+	LEFT_EYE_SOURCE_FRAME = 'left_eye_cam'
+	RIGHT_EYE_SOURCE_FRAME = 'right_eye_cam'
+
+# world -> realsense_link -> optical_frame 1x
+# head_realsense_link -> optical frame 1 x
+# cam holder -> marker_cam_link -> markers_camera_color_optical_frame frame 1x
+
+	JS_COLS = ['name', 'position', 'velocity', 'effort', 'timestamp']
+	TF_COLS = ['frame_id', 'child_frame_id', 'trans', 'quat', 'timestamp']
+
 	def __init__(self,
 			  	marker_length: float=0.010,
 				camera_ns: Optional[str]='',
@@ -389,9 +410,12 @@ class KeypointDetect(DetectBase):
 						test=test,
 						vis=vis,
 						fps=fps,
+						cv_window=not attached,
 						)
 
 		self.epochs = epochs
+		self.use_tf = use_tf
+		self.attached = attached
 		self.step_div = step_div
 		self.save_imgs = save_imgs
 		self.use_eye_cameras = use_eye_cameras
@@ -407,7 +431,7 @@ class KeypointDetect(DetectBase):
 		self.record_cnt = 0
 		self.subs = []
 
-		# topic  buffers
+		# message buffers
 		self.det_img_buffer = deque(maxlen=self.filter_iters)
 		self.depth_img_buffer = deque(maxlen=1)
 		self.top_img_buffer = deque(maxlen=1)
@@ -419,9 +443,31 @@ class KeypointDetect(DetectBase):
 		self.joint_state_buffer = deque(maxlen=1)
 		self.buf_lock = threading.Lock()
 
-		# img topics
+		# data frames
+		self.js_df = pd.DataFrame(columns=self.JS_COLS)
+		self.rh8d_tf_df = pd.DataFrame(columns=self.TF_COLS)
+		self.head_rs_tf_df = pd.DataFrame(columns=self.TF_COLS)
+		self.left_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
+		self.right_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
+
+		# init ros
+		if use_tf:
+			self.buf = tf2_ros.Buffer()
+			self.listener = tf2_ros.TransformListener(self.buf)
+
+		# subscribe img topics
 		if not test and attached:
 			self.initSubscriber()
+
+		# init controller
+		if attached:
+			pass
+		else:
+			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
+
+		# init vis
+		if vis and not attached:
+			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
 		# load hand marker ids
 		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -433,23 +479,8 @@ class KeypointDetect(DetectBase):
 		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.start_angles = {}
 
-		# init controller
-		if attached:
-			pass
-		else:
-			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
 
-		# init ros
-		if use_tf:
-			self.buf = tf2_ros.Buffer()
-			self.listener = tf2_ros.TransformListener(self.buf)
-		self.use_tf = use_tf
-
-		# init vis
-		if vis:
-			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
-
-	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str) -> None:
+	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_imgs:
 			return
 		
@@ -471,17 +502,28 @@ class KeypointDetect(DetectBase):
 						"do_rectify": info.roi.do_rectify,
 					 	}, 
 					}
+
+		if extr is not None:
+			extr_dict = {extr.header.frame_id: {'rotation': list(extr.rotation), 'translation': list(extr.translation)}}
+			info_dict.update(extr_dict)
+
+		if tf is not None:
+			info_dict.update(tf)
+
 		with open(fn, "w") as fw:
 			yaml.dump(info_dict, fw, default_flow_style=None, sort_keys=False)
 
 	def initSubscriber(self) -> None:
+		rospy.wait_for_message(self.joint_state_topic, JointState, 5)
 		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
 		self.subs.append(self.joint_states_sub)
 
 		self.det_img_sub = Subscriber(self.img_topic, Image)
 		self.subs.append(self.det_img_sub)
 		# save camera info
-		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_rgb.yaml"))
+		if self.use_tf:
+			tf_dict = self.lookupTF(rospy.Time(0), 'marker_realsense', 'marker_realsense_optical_frame')
+		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"), tf=tf_dict)
 
 		if self.depth_enabled:
 			self.depth_topic = self.camera_ns.replace('color', 'depth')
@@ -491,7 +533,8 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.depth_topic + '/camera_info')
 			depth_info = rospy.wait_for_message(self.depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(depth_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_depth.yaml"))
+			extr_info = rospy.wait_for_message(self.camera_ns.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+			self.saveCamInfo(depth_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_depth.yaml"), extr_info)
 
 		if self.use_top_camera:
 			self.top_img_topic = self.top_camera_name + '/image_raw'
@@ -509,7 +552,8 @@ class KeypointDetect(DetectBase):
 				# save camera info
 				print("Waiting for camera_info from", self.top_depth_topic + '/camera_info')
 				depth_info = rospy.wait_for_message(self.top_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_depth.yaml"))
+				extr_info = rospy.wait_for_message(self.top_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_depth.yaml"), extr_info)
 
 		if self.use_head_camera:
 			self.head_img_topic = self.head_camera_name + '/image_raw'
@@ -527,7 +571,8 @@ class KeypointDetect(DetectBase):
 				# save camera info
 				print("Waiting for camera_info from", self.head_depth_topic + '/camera_info')
 				depth_info = rospy.wait_for_message(self.head_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-				self.saveCamInfo(depth_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_depth.yaml"))
+				extr_info = rospy.wait_for_message(self.head_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+				self.saveCamInfo(depth_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_depth.yaml"), extr_info)
 
 		if self.use_eye_cameras:
 			# right eye
@@ -598,35 +643,106 @@ class KeypointDetect(DetectBase):
 		finally:
 			self.buf_lock.release()
 
-	def saveRecord(self) -> None:		
+	def lookupTF(self, stamp: rospy.Time, target_frame: str, source_frame: str) -> dict:
+		try:
+			tf = self.buf.lookup_transform(target_frame, source_frame, stamp, rospy.Duration(1.0))
+			trans = tf.transform.translation
+			rot = tf.transform.rotation
+			print(tf)
+			tf_dict = { 'frame_id': tf.header.frame_id,
+			  			'child_frame_id': tf.child_frame_id,
+						'trans': np.array([trans.x, trans.y, trans.z]),
+						'quat': np.array([rot.x, rot.y, rot.z, rot.w]),
+						'timestamp': stamp.secs + stamp.nsecs*1e-9
+						}
+			return tf_dict
+		except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+			print(e)
+			return {}
+
+	def saveRecord(self) -> None:	
+		# check df lengths
+		if self.record_cnt != self.js_df.last_valid_index():
+			print("Record size deviates js dataframe index:", self.record_cnt, "!=", self.js_df.last_valid_index())
+		if self.use_tf:
+			if self.record_cnt != self.rh8d_tf_df.last_valid_index():
+				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tf_df.last_valid_index())
+
+		# joint states & tf
+		if len(self.joint_state_buffer):
+			msg = self.joint_state_buffer.pop()
+			state_dict = {'name': msg.name,
+							'position': msg.position,
+							'velocity': msg.velocity,
+							'effort': msg.effort,
+							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
+						 }
+			self.js_df = self.js_df.append(state_dict, ignore_index=True)
+			# save rh8d tf
+			if self.use_tf:
+				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_SOURCE_FRAME)
+				if tf_dict:
+					self.rh8d_tf_df = self.rh8d_tf_df.append(tf_dict, ignore_index=True)
+
+		# marker cam depth img
 		if self.depth_enabled and len(self.depth_img_buffer):
 			depth_img = self.bridge.imgmsg_to_cv2(self.depth_img_buffer.pop(), 'passthrough')
 			depth_img = (depth_img).astype('float32')
 			cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
+		# top realsense
 		if self.use_top_camera and len(self.top_img_buffer):
 			raw_img = self.bridge.imgmsg_to_cv2(self.top_img_buffer.pop(), 'bgr8')
 			cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			# depth
 			if self.depth_enabled and len(self.top_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
 				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
+		# head realsense imgs & tf
 		if self.use_head_camera and len(self.head_img_buffer):
-			raw_img = self.bridge.imgmsg_to_cv2(self.head_img_buffer.pop(), 'bgr8')
+			msg = self.head_img_buffer.pop()
+			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 			cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			# save head rs tf
+			if self.use_tf:
+				if self.record_cnt != self.head_rs_tf_df.last_valid_index():
+					print("Record size deviates from head rs dataframe index:", self.record_cnt, "!=", self.head_rs_tf_df.last_valid_index())
+				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
+				if tf_dict:
+					self.head_rs_tf_df = self.head_rs_tf_df.append(tf_dict, ignore_index=True)
+			# depth
 			if self.depth_enabled and len(self.head_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
 				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
+		# eyes imgs & tf
 		if self.use_eye_cameras:
 			if len(self.left_img_buffer):
-				raw_img = self.bridge.imgmsg_to_cv2(self.left_img_buffer.pop(), 'bgr8')
+				msg = self.left_img_buffer.pop()
+				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				# save left eye tf
+				if self.use_tf:
+					if self.record_cnt != self.left_eye_tf_df.last_valid_index():
+						print("Record size deviates from left eye dataframe index:", self.record_cnt, "!=", self.left_eye_tf_df.last_valid_index())
+					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.LEFT_EYE_SOURCE_FRAME)
+					if tf_dict:
+						self.left_eye_tf_df = self.left_eye_tf_df.append(tf_dict, ignore_index=True)
+
 			if len(self.right_img_buffer):
-				raw_img = self.bridge.imgmsg_to_cv2(self.right_img_buffer.pop(), 'bgr8')
+				msg = self.right_img_buffer.pop()
+				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				# save right eye tf
+				if self.use_tf:
+					if self.record_cnt != self.right_eye_tf_df.last_valid_index():
+						print("Record size deviates from right eye dataframe index:", self.record_cnt, "!=", self.right_eye_tf_df.last_valid_index())
+					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RIGHT_EYE_SOURCE_FRAME)
+					if tf_dict:
+						self.right_eye_tf_df = self.right_eye_tf_df.append(tf_dict, ignore_index=True)
 
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
@@ -822,10 +938,11 @@ class KeypointDetect(DetectBase):
 				self.det._drawMarkers(id, detection['corners'], out_img) # square
 				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
 				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
-				
-			cv2.imshow('Processed', proc_img)
-			cv2.imshow('Detection', det_img)
-			cv2.imshow('Output', out_img)
+			
+			if self.cv_window:
+				cv2.imshow('Processed', proc_img)
+				cv2.imshow('Detection', det_img)
+				cv2.imshow('Output', out_img)
 			if self.save_imgs and not self.test and res:
 				try:
 					self.df = self.df.append(entry, ignore_index=True) # save data entry
@@ -865,10 +982,19 @@ class KeypointDetect(DetectBase):
 					except:
 						pass
 
-		except Exception as e:
+		except None as e:
 			rospy.logerr(e)
 		finally:
-			cv2.destroyAllWindows()
+			self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+			if self.use_tf:
+				self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+				if self.use_head_camera:
+					self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+				if self.use_eye_cameras:
+					self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+					self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+			if self.vis and not self.attached:
+				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
 
 class HybridDetect(KeypointDetect):
@@ -1017,10 +1143,11 @@ class HybridDetect(KeypointDetect):
 				self.det._drawMarkers(id, detection['corners'], out_img) # square
 				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
 				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
-				
-			cv2.imshow('Processed', proc_img)
-			cv2.imshow('Detection', det_img)
-			cv2.imshow('Output', out_img)
+			
+			if self.cv_window:
+				cv2.imshow('Processed', proc_img)
+				cv2.imshow('Detection', det_img)
+				cv2.imshow('Output', out_img)
 			if self.save_imgs:
 				cv2.imwrite(os.path.join(QDEC_ORIG_REC_DIR, str(self.frame_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				cv2.imwrite(os.path.join(QDEC_DET_REC_DIR, str(self.frame_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
@@ -1365,7 +1492,7 @@ class CameraPoseDetect(DetectBase):
 						marker_det[id]['frot'] = getRotation(rvec, RotTypes.RVEC, RotTypes.EULER)
 
 					# initially show 
-					if self.vis:
+					if self.vis and self.cv_window:
 						cv2.imshow('Processed', proc_img)
 						cv2.imshow('Detection', det_img)
 						if cv2.waitKey(10000 if init else 1) == ord("q"):
@@ -1393,13 +1520,14 @@ class CameraPoseDetect(DetectBase):
 							# label marker pose
 							self.labelDetection(det_img, id, det['ftrans'], det['frot'])
 							# plot pose by id
-							if id == self.plt_id:
+							if id == self.plt_id and self.cv_window:
 								cv2.imshow('Plot', cv2.cvtColor(visPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.MAT), det['frot'], self.frame_cnt, cla=True), cv2.COLOR_RGBA2BGR))
 
-						cv2.imshow('Processed', proc_img)
-						cv2.imshow('Detection', det_img)
-						if cv2.waitKey(100000 if success else 1) == ord("q"):
-							break
+						if self.cv_window:
+							cv2.imshow('Processed', proc_img)
+							cv2.imshow('Detection', det_img)
+							if cv2.waitKey(100000 if success else 1) == ord("q"):
+								break
 					
 					if success:
 						break
