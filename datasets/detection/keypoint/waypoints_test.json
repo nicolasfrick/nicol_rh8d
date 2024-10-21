@@ -12,7 +12,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"home"
  },
  "1":{
   "joint1":1.91,
@@ -27,7 +28,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"start"
  },
  "2":{
   "joint1":1.91,
@@ -42,7 +44,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"wrist abduction"
  },
  "3":{
   "joint1":1.91,
@@ -57,7 +60,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"wrist flexion"
  },
  "4":{
   "joint1":1.91,
@@ -72,7 +76,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":0.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"thumb abduction"
  },
  "5":{
   "joint1":1.91,
@@ -87,7 +92,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":3.142,
-  "jointT1":0.142
+  "jointT1":0.142,
+  "description":"thumb flexion"
  },
  "6":{
   "joint1":1.91,
@@ -102,7 +108,8 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":3.142,
-  "jointT1":0.142
+  "jointT1":0.142,
+  "description":"thumb flexion"
  },
  "7":{
   "joint1":1.91,
@@ -117,141 +124,103 @@
   "jointL1R1":-3.142,
   "jointM1":-3.142,
   "jointT0":0.142,
-  "jointT1":-3.142
+  "jointT1":-3.142,
+  "description":"thumb abduction"
  },
  "8":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
-  "jointI1":-3.142,
+  "jointI1":0.142,
   "jointL1R1":-3.142,
   "jointM1":-3.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  },
  "9":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
   "jointI1":0.142,
   "jointL1R1":-3.142,
-  "jointM1":-3.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointM1":0.142,
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  },
  "10":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
   "jointI1":0.142,
-  "jointL1R1":-3.142,
+  "jointL1R1":0.142,
   "jointM1":0.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  },
  "11":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
   "jointI1":0.142,
   "jointL1R1":0.142,
   "jointM1":0.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  },
  "12":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
   "jointI1":0.142,
-  "jointL1R1":0.142,
+  "jointL1R1":-3.142,
   "jointM1":0.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  },
  "13":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
-  "joint7":0.0,
-  "joint8":0.0,
-  "jointI1":0.142,
-  "jointL1R1":-3.142,
-  "jointM1":0.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
- },
- "14":{
-  "joint1":1.91,
-  "joint2":0.471,
-  "joint3":-1.131,
-  "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
+  "joint5":-3.0,
+  "joint6":-3.0,
   "joint7":0.0,
   "joint8":0.0,
   "jointI1":0.142,
   "jointL1R1":-3.142,
   "jointM1":-3.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
- },
- "15":{
-  "joint1":1.91,
-  "joint2":0.471,
-  "joint3":-1.131,
-  "joint4":-1.571,
-  "joint5":1.571,
-  "joint6":-3.142,
-  "joint7":0.0,
-  "joint8":0.0,
-  "jointI1":-3.142,
-  "jointL1R1":-3.142,
-  "jointM1":-3.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
- },
- "16":{
-  "joint1":1.571,
-  "joint2":0.0,
-  "joint3":0.0,
-  "joint4":0.0,
-  "joint5":0.0,
-  "joint6":0.0,
-  "joint7":0.0,
-  "joint8":0.0,
-  "jointI1":-3.142,
-  "jointL1R1":-3.142,
-  "jointM1":-3.142,
-  "jointT0":-3.142,
-  "jointT1":-3.142
+  "jointT0":0.142,
+  "jointT1":-3.142,
+  "description":"finger flexion"
  }
 }
