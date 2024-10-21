@@ -336,6 +336,8 @@ class KeypointDetect(DetectBase):
 		@type bool
 		@param head_camera_name
 		@type str
+		@param waypoint_set
+		@type str
 
 	"""
 
@@ -394,6 +396,7 @@ class KeypointDetect(DetectBase):
 				right_eye_camera_name: Optional[str]='right_eye_camera',
 				head_camera_name: Optional[str]='head_camera',
 				joint_state_topic: Optional[str]='joint_states',
+				waypoint_set: Optional[str]='waypoints.json',
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -478,6 +481,9 @@ class KeypointDetect(DetectBase):
 		self.df = pd.DataFrame(columns=self.group_ids) # dataset
 		self.start_angles = {}
 
+		# load waypoints
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint", waypoint_set)
+		self.waypoint_df = pd.read_json(fl, orient='index')
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_imgs:
@@ -979,23 +985,27 @@ class KeypointDetect(DetectBase):
 		
 		try:
 			# epoch
-			# for e in range(self.epochs):
-					
-				while not rospy.is_shutdown():
+			for e in range(self.epochs):
+				
+				for idx in range(len(self.waypoint_df)):
+					if not rospy.is_shutdown():
 
-					# detect angles
-					# success = self.detectionRoutine(init, pos_cmd, e, direction)
-					with self.buf_lock:
-						self.saveRecord()
+						waypoint = self.waypoint_df.iloc[idx]
+						self.rh8d_ctrl.reachPositionBlocking(waypoint, 1.0, 0.0)
 
-					if self.vis and not self.attached:
-						if cv2.waitKey(1) == ord("q"):
-							return
-					
-					try:
-						rate.sleep()
-					except:
-						pass
+						# detect angles
+						# success = self.detectionRoutine(init, pos_cmd, e, direction)
+						# with self.buf_lock:
+						# 	self.saveRecord()
+
+						if self.vis and not self.attached:
+							if cv2.waitKey(1) == ord("q"):
+								return
+						
+						try:
+							rate.sleep()
+						except:
+							pass
 
 		except None as e:
 			rospy.logerr(e)
@@ -1638,6 +1648,7 @@ def main() -> None:
 						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
 						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
 						joint_state_topic=rospy.get_param('~joint_state_topic', 'joint_states'),
+						waypoint_set=joint_state_topic=rospy.get_param('~waypoint_set', 'waypoints.json'),
 						).run()
 	
 if __name__ == "__main__":

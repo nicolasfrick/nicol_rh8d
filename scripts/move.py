@@ -78,7 +78,7 @@ class MoveRobot():
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
 		return self.reachPositionBlocking(cmd, t_path)
 
-	def reachPositionBlocking(self, cmd: dict, t_path: float) -> bool:
+	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> bool:
 		if not self.moveArmJointSpace(cmd, t_path):
 			return False
 		
@@ -95,6 +95,7 @@ class MoveRobot():
 				print("Position reach timeout, goal: ", list(goal), "current", list(crnt))
 				return False
 
+		time.sleep(t_settle)
 		return True
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:
