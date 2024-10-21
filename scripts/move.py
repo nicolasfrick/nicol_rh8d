@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 
 import os
+import sys
 import time
 import rospy
 import numpy as np
 import pandas as pd
+from typing import Tuple, Union
 from collections import deque
 from sensor_pkg.msg import AllSensors
 from sensor_msgs.msg  import JointState
 from open_manipulator_msgs.srv import SetJointPosition, SetJointPositionRequest, SetKinematicsPose, SetKinematicsPoseRequest
+np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 WAYPOINT_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint')
 
@@ -21,7 +24,7 @@ class MoveRobot():
 	ROBOT_NAME = "/right/open_manipulator_p"
 	JOINT_GOAL_SERVICE = '/goal_joint_space_path'
 	TASK_GOAL_SERVICE = '/goal_task_space_path'
-	SENSOR_TOPIC = ' /right/AllSensors'
+	SENSOR_TOPIC = '/right/AllSensors'
 	ACTUATOR_STATES = '/actuator_states'
 
 	HEAD_JOINTS = ['joint_head_y', 'joint_head_z']
@@ -49,11 +52,13 @@ class MoveRobot():
 	JOINT5_MIN = ROBOT_LOW_LIM[JOINT5_IDX]
 	JOINT6_MAX = ROBOT_UP_LIM[JOINT6_IDX]
 	JOINT6_MIN = ROBOT_LOW_LIM[JOINT6_IDX]
-	RH8D_ACTUATOR_MAX = M_PI
-	RH8D_ACTUATOR_MIN = -M_PI
+	RH8D_ACTUATOR_MAX = 3
+	RH8D_ACTUATOR_MIN = -3
 
 	def __init__(self) -> None:
 
+		self.states = deque(maxlen=1) # np.ndarray
+		
 		self.head_joint_goal_client = rospy.ServiceProxy(self.HEAD_NAME + self.JOINT_GOAL_SERVICE, SetJointPosition)
 		self.head_joint_goal_client.wait_for_service(5)
 		self.head_task_goal_client = rospy.ServiceProxy(self.HEAD_NAME + self.TASK_GOAL_SERVICE, SetKinematicsPose)
@@ -68,8 +73,6 @@ class MoveRobot():
 		rospy.wait_for_message(self.SENSOR_TOPIC, AllSensors, 5)
 		self.right_finger_sensor_sub = rospy.Subscriber(self.SENSOR_TOPIC, AllSensors, self.rightSensorsCB)
 
-		self.states = deque(maxlen=1)
-
 	def reachInitBlocking(self, t_path: float) -> bool:
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_INIT))
 		return self.reachPositionBlocking(cmd, t_path)
@@ -78,25 +81,43 @@ class MoveRobot():
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
 		return self.reachPositionBlocking(cmd, t_path)
 
-	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> bool:
+	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> Tuple[bool, Union[dict, None]]:
+		# send position
 		if not self.moveArmJointSpace(cmd, t_path):
-			return False
+			if len(self.states):
+				crnt = self.states.pop()
+				return False, dict(zip(self.ROBOT_JOINTS, list(crnt)))
+			else:
+				return False, None
 		
-		cnt = 0
+		stuck_cnt = 0
+		states_cnt = 0
 		vals = list(cmd.values())
 		goal = np.array(vals)
 		crnt = np.ones(len(vals)) * np.inf
-		while not np.isclose(goal, crnt):
+		# wait for reach or abort
+		while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ):
 			time.sleep(0.1)
+			
+			# abort condition
 			if len(self.states):
+				last_crnt = crnt.copy()
 				crnt = self.states.pop()
-			cnt += 1
-			if cnt > 500:
-				print("Position reach timeout, goal: ", list(goal), "current", list(crnt))
-				return False
+				# position delta < threshold
+				if all(np.abs(crnt - last_crnt) < 0.01):
+					stuck_cnt += 1
+				else:
+					stuck_cnt = 0
+			else:
+				states_cnt += 1
+			
+			# abort
+			if states_cnt > 10 or stuck_cnt > 10:
+				print("Position reach timeout, goal:\n", list(goal), "\ncurrent:\n", list(crnt), "\nstuck:", stuck_cnt > 10, "no update:", states_cnt > 10)
+				return False, dict(zip(self.ROBOT_JOINTS, list(crnt)))
 
 		time.sleep(t_settle)
-		return True
+		return True, dict(zip(self.ROBOT_JOINTS, list(crnt)))
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:
 		names = list(cmd.keys())

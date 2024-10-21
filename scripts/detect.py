@@ -991,7 +991,13 @@ class KeypointDetect(DetectBase):
 					if not rospy.is_shutdown():
 
 						waypoint = self.waypoint_df.iloc[idx]
-						self.rh8d_ctrl.reachPositionBlocking(waypoint, 1.0, 0.0)
+						print("Reaching waypoint number", idx, end="...")
+						print(waypoint.to_dict())
+						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint.to_dict(), 0.25, 0.1)
+						if success:
+							print("done")
+						else:
+							print("fail")
 
 						# detect angles
 						# success = self.detectionRoutine(init, pos_cmd, e, direction)
@@ -1648,7 +1654,7 @@ def main() -> None:
 						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
 						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
 						joint_state_topic=rospy.get_param('~joint_state_topic', 'joint_states'),
-						waypoint_set=joint_state_topic=rospy.get_param('~waypoint_set', 'waypoints.json'),
+						waypoint_set=rospy.get_param('~waypoint_set', 'waypoints.json'),
 						).run()
 	
 if __name__ == "__main__":
