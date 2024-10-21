@@ -26,6 +26,7 @@ from scipy.spatial.transform import Rotation as R
 import open_manipulator_msgs.msg
 import open_manipulator_msgs.srv
 from util import *
+from move import *
 from plot_record import *
 from pose_filter import *
 from qdec_serial import *
@@ -459,7 +460,7 @@ class KeypointDetect(DetectBase):
 
 		# init controller
 		if attached:
-			pass
+			self.rh8d_ctrl = MoveRobot()
 		else:
 			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
 
