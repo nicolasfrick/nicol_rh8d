@@ -683,12 +683,12 @@ class KeypointDetect(DetectBase):
 							'effort': msg.effort,
 							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
 						 }
-			self.js_df = self.js_df.append(state_dict, ignore_index=True)
+			self.js_df = pd.concat([self.js_df, pd.DataFrame([state_dict])], ignore_index=True)
 			# save rh8d tf
 			if self.use_tf:
 				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_SOURCE_FRAME)
 				if tf_dict:
-					self.rh8d_tf_df = self.rh8d_tf_df.append(tf_dict, ignore_index=True)
+					self.rh8d_tf_df = pd.concat([self.rh8d_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 		# marker cam depth img
 		if self.depth_enabled and len(self.depth_img_buffer):
@@ -718,7 +718,7 @@ class KeypointDetect(DetectBase):
 			if self.use_tf:
 				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
 				if tf_dict:
-					self.head_rs_tf_df = self.head_rs_tf_df.append(tf_dict, ignore_index=True)
+					self.head_rs_tf_df = pd.concat([self.head_rs_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 			# depth
 			if self.depth_enabled and len(self.head_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
@@ -736,7 +736,7 @@ class KeypointDetect(DetectBase):
 				if self.use_tf:
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.LEFT_EYE_SOURCE_FRAME)
 					if tf_dict:
-						self.left_eye_tf_df = self.left_eye_tf_df.append(tf_dict, ignore_index=True)
+						self.left_eye_tf_df = pd.concat([self.left_eye_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 			if len(self.right_img_buffer):
 				msg = self.right_img_buffer.pop()
@@ -746,7 +746,7 @@ class KeypointDetect(DetectBase):
 				if self.use_tf:
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RIGHT_EYE_SOURCE_FRAME)
 					if tf_dict:
-						self.right_eye_tf_df = self.right_eye_tf_df.append(tf_dict, ignore_index=True)
+						self.right_eye_tf_df = pd.concat([self.right_eye_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 		# check df lengths
 		if self.record_cnt != self.js_df.last_valid_index() and self.record_cnt:
@@ -967,7 +967,7 @@ class KeypointDetect(DetectBase):
 				cv2.imshow('Output', out_img)
 			if self.save_imgs and not self.test and res:
 				try:
-					self.df = self.df.append(entry, ignore_index=True) # save data entry
+					self.df = pd.concat([self.df, pd.DataFrame([entry])], ignore_index=True) # save data entry
 					self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4) # write data
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
 					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
@@ -986,6 +986,7 @@ class KeypointDetect(DetectBase):
 		try:
 			# epoch
 			for e in range(self.epochs):
+				print("Epoch", e)
 				
 				for idx in range(len(self.waypoint_df)):
 					if not rospy.is_shutdown():
@@ -1154,7 +1155,7 @@ class HybridDetect(KeypointDetect):
 					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
 
 				res = True
-				self.df = self.df.append(entry, ignore_index=True)
+				self.df = pd.concat([self.df, pd.DataFrame([entry])], ignore_index=True)
 			else:
 				print("Cannot detect all required ids, missing: ", end=" ")
 				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
