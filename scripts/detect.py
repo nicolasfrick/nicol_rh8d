@@ -11,20 +11,16 @@ import cv_bridge
 import threading
 import numpy as np
 import sensor_msgs.msg
-from sensor_msgs.msg import Image
-from realsense2_camera.msg import Extrinsics
 from collections import deque
 from datetime import datetime
 import dynamic_reconfigure.server
+from sensor_msgs.msg import Image
 from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
-from geometry_msgs.msg import PoseStamped
-from tf2_geometry_msgs import PointStamped
 from sensor_msgs.msg import JointState
-from message_filters import Subscriber, ApproximateTimeSynchronizer
+from realsense2_camera.msg import Extrinsics
 from scipy.spatial.transform import Rotation as R
-import open_manipulator_msgs.msg
-import open_manipulator_msgs.srv
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 from util import *
 from move import *
 from plot_record import *
@@ -357,6 +353,7 @@ class KeypointDetect(DetectBase):
 
 	TF_TARGET_FRAME = 'world'
 	RH8D_SOURCE_FRAME = 'r_forearm' # dynamic
+	RH8D_TCP_SOURCE_FRAME = 'r_laser'
 	MARKER_CAM_SOURCE_FRAME = 'markers_camera_base_link' # TODO: use camera base frame
 	MARKER_CAM_OPTICAL_SOURCE_FRAME = 'markers_camera_color_optical_frame'
 	TOP_RS_SOURCE_FRAME = 'realsense_link'
@@ -489,6 +486,7 @@ class KeypointDetect(DetectBase):
 		self.waypoint_df = pd.read_json(fl, orient='index')
 		if waypoint_start_idx > 0:
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
+			self.record_cnt = waypoint_start_idx
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_imgs:
@@ -973,7 +971,6 @@ class KeypointDetect(DetectBase):
 			if self.save_imgs and not self.test and res:
 				try:
 					self.df = pd.concat([self.df, pd.DataFrame([entry])], ignore_index=True) # save data entry
-					self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4) # write data
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
 					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
 					# self.saveImgs() # save additional resources
@@ -992,27 +989,43 @@ class KeypointDetect(DetectBase):
 			# epoch
 			for e in range(self.epochs):
 				print("Epoch", e)
+				self.rh8d_ctrl.moveHeadHome(2.0)
+				head_home = True
 				
-				for idx in range(len(self.waypoint_df)):
+				for idx in self.waypoint_df.index.tolist():
 					if not rospy.is_shutdown():
-						
-						self.rh8d_ctrl.moveHeadHome(2.0)
-
+						# get waypoint
 						waypoint = self.waypoint_df.iloc[idx]
-						description = waypoint[-1]
-						print(f"Reaching waypoint number {idx}: {description}", end=" ... ")
-						print(waypoint[: -1].to_dict())
-						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint[: -1].to_dict(), 0.25, 0.1)
-						if success:
-							print("done\n")
-							if idx > 2:
-								self.rh8d_ctrl.moveHeadJointSpace(self.rh8d_ctrl.HEAD_START[0], self.rh8d_ctrl.HEAD_START[1], 2.0)
-						else:
-							print("fail\n")
+						description = waypoint[-2]
+						move_time = waypoint[-1]
+						waypoint = waypoint[: -2].to_dict()
 
+						# get head out of range if arm moves
+						states = self.rh8d_ctrl.jointStates()
+						if states is not None:
+							if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(states, waypoint.values), 0.0) ):
+								self.rh8d_ctrl.moveHeadHome(1.5)
+								time.sleep(1.5)
+								head_home = True
+						else:
+							self.rh8d_ctrl.moveHeadHome(1.5)
+							time.sleep(1.5)
+							head_home = True
+
+						# move arm and hand
+						print(f"Reaching waypoint number {idx}: {description} in {move_time}s", end=" ... ")
+						print(waypoint.values)
+						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
+						print("done\n") if success else print("fail\n")
+
+						# look towards hand
+						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
+						self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
+						time.sleep(2.0 if head_home else 1.0)
+						head_home = False
 
 						# detect angles
-						# success = self.detectionRoutine(init, pos_cmd, e, direction)
+						success = self.detectionRoutine(init, pos_cmd, e, direction)
 						# with self.buf_lock:
 						# 	self.saveRecord()
 
@@ -1028,6 +1041,7 @@ class KeypointDetect(DetectBase):
 		except None as e:
 			rospy.logerr(e)
 		finally:
+			self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 			self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
 			if self.use_tf:
 				self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)

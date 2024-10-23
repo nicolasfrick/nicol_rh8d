@@ -83,6 +83,11 @@ class MoveRobot():
 			rospy.wait_for_message(self.SENSOR_TOPIC, AllSensors, 5)
 			self.right_finger_sensor_sub = rospy.Subscriber(self.SENSOR_TOPIC, AllSensors, self.rightSensorsCB)
 
+	def jointStates(self) -> Union[list, None]:
+		if len(self.states):
+			return self.states.pop()
+		return None
+
 	def reachInitBlocking(self, t_path: float) -> bool:
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_INIT))
 		return self.reachPositionBlocking(cmd, t_path)
@@ -111,10 +116,10 @@ class MoveRobot():
 			# abort
 			if (time.time() - t_start) > t_path:
 				print("Position reach timeout, goal:\n", list(goal), "\ncurrent:\n", list(crnt))
-				return False, dict(zip(self.ROBOT_JOINTS, list(crnt)))
+				return False, dict(zip(list(cmd.keys()), list(crnt)))
 
 		time.sleep(t_settle)
-		return True, dict(zip(self.ROBOT_JOINTS, list(crnt)))
+		return True, dict(zip(list(cmd.keys()), list(crnt)))
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:
 		names = list(cmd.keys())
@@ -195,9 +200,19 @@ class MoveRobot():
 		pass
 
 	@classmethod
+	def angularDistanceOMP(self, current: list, goal: list) -> np.ndarray:
+		assert(len(current) == len(self.ROBOT_JOINTS) and len(goal) == len(self.ROBOT_JOINTS))
+		return	np.abs( np.array(current[ : self.JOINT6_IDX]) - np.array(goal[ : self.JOINT6_IDX]) ) 
+	
+	@classmethod
+	def angularDistanceRH8D(self, current: list, goal: list) -> np.ndarray:
+		assert(len(current) == len(self.ROBOT_JOINTS) and len(goal) == len(self.ROBOT_JOINTS))
+		return np.abs( np.array(current[self.JOINT6_IDX :]) - np.array(goal[self.JOINT6_IDX :]) )
+
+	@classmethod
 	def estimateMoveTime(self, current: list, goal: list) -> float:
-		omp_distance =	np.abs(np.array(current[ : self.JOINT6_IDX]) - np.array(goal[ : self.JOINT6_IDX])) 
-		rh8d_distance = np.abs(np.array(current[self.JOINT6_IDX :]) - np.array(goal[self.JOINT6_IDX :])) 
+		omp_distance =	self.angularDistanceOMP(current, goal)
+		rh8d_distance = self.angularDistanceRH8D(current, goal)
 		t_move_omp = np.max(omp_distance / self.ACTUATOR_VEL) + (self.ACTUATOR_VEL / self.ACTUATOR_ACCEL)
 		t_move_rh8d = np.max(rh8d_distance / self.RH8D_VEL)
 		return max(t_move_omp, t_move_rh8d)
