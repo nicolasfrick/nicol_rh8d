@@ -339,6 +339,7 @@ class KeypointDetect(DetectBase):
 
 	"""
 
+	# cv stuff
 	FIRST_LINE_INTERPOL_FACTOR = 0.5 # arc points interpolation
 	SEC_LINE_INTERPOL_FACTOR = 0.85 # arc points interpolation
 	ARC_SHIFT = 10 # ellipse param
@@ -351,19 +352,18 @@ class KeypointDetect(DetectBase):
 	X_EL_TXT_OFFSET = 0.95
 	Y_EL_TXT_OFFSET = 1
 
+	# tf rames to track
 	TF_TARGET_FRAME = 'world'
-	RH8D_SOURCE_FRAME = 'r_forearm' # dynamic
-	RH8D_TCP_SOURCE_FRAME = 'r_laser'
-	MARKER_CAM_SOURCE_FRAME = 'markers_camera_base_link' # TODO: use camera base frame
-	MARKER_CAM_OPTICAL_SOURCE_FRAME = 'markers_camera_color_optical_frame'
-	TOP_RS_SOURCE_FRAME = 'realsense_link'
-	TOP_RS_OPTICAL_SOURCE_FRAME = 'realsense_color_optical_frame'
-	HEAD_RS_SOURCE_FRAME = 'head_realsense_link' # dynamic
-	LEFT_EYE_SOURCE_FRAME = 'left_eye_cam' # dynamic
-	RIGHT_EYE_SOURCE_FRAME = 'right_eye_cam' # dynamic
+	RH8D_SOURCE_FRAME = 'r_forearm' 
+	RH8D_TCP_SOURCE_FRAME = 'r_laser' 
+	HEAD_RS_SOURCE_FRAME = 'head_realsense_link' # optical frame?
+	LEFT_EYE_SOURCE_FRAME = 'left_eye_cam'
+	RIGHT_EYE_SOURCE_FRAME = 'right_eye_cam'
 
+	# dataframe columns
 	JS_COLS = ['name', 'position', 'velocity', 'effort', 'timestamp']
 	TF_COLS = ['frame_id', 'child_frame_id', 'trans', 'quat', 'timestamp']
+	DET_COLS = []
 
 	def __init__(self,
 			  	marker_length: float=0.010,
@@ -417,9 +417,10 @@ class KeypointDetect(DetectBase):
 
 		self.epochs = epochs
 		self.use_tf = use_tf
+		self.fps = fps
 		self.attached = attached
 		self.step_div = step_div
-		self.save_imgs = save_imgs
+		self.save_record = save_imgs
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
 		self.use_head_camera = use_head_camera
@@ -448,6 +449,7 @@ class KeypointDetect(DetectBase):
 		# data frames
 		self.js_df = pd.DataFrame(columns=self.JS_COLS)
 		self.rh8d_tf_df = pd.DataFrame(columns=self.TF_COLS)
+		self.rh8d_tcp_tf_df = pd.DataFrame(columns=self.TF_COLS)
 		self.head_rs_tf_df = pd.DataFrame(columns=self.TF_COLS)
 		self.left_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
 		self.right_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
@@ -471,16 +473,6 @@ class KeypointDetect(DetectBase):
 		if vis and not attached:
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
-		# load hand marker ids
-		self.fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
-		with open(self.fl, 'r') as fr:
-			self.hand_ids = yaml.safe_load(fr)
-
-		self.group_ids = self.hand_ids['names']['index'] # joint names
-		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
-		self.df = pd.DataFrame(columns=self.group_ids) # dataset
-		self.start_angles = {}
-
 		# load waypoints
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint", waypoint_set)
 		self.waypoint_df = pd.read_json(fl, orient='index')
@@ -488,8 +480,21 @@ class KeypointDetect(DetectBase):
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
 			self.record_cnt = waypoint_start_idx
 
+		# load marker ids
+		self.loadIDs()
+
+	def loadIDs(self):
+		# load hand marker ids
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
+		with open(fl, 'r') as fr:
+			self.hand_ids = yaml.safe_load(fr)
+			self.marker_config = self.hand_ids['marker_config'] # target marker ids
+
+		self.det_df = pd.DataFrame(columns=self.DET_COLS) # dataset
+		self.start_angles = {}
+
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
-		if not self.save_imgs:
+		if not self.save_record:
 			return
 		
 		info_dict = {"frame_id": info.header.frame_id,
@@ -529,10 +534,7 @@ class KeypointDetect(DetectBase):
 		self.det_img_sub = Subscriber(self.img_topic, Image)
 		self.subs.append(self.det_img_sub)
 		# save camera info
-		tf_dict = {}
-		if self.use_tf:
-			tf_dict = self.lookupTF(rospy.Time(0), self.MARKER_CAM_SOURCE_FRAME, self.MARKER_CAM_OPTICAL_SOURCE_FRAME)
-		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"), tf={'optical_extrinsics': tf_dict})
+		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"))
 
 		if self.depth_enabled:
 			self.depth_topic = self.camera_ns.replace('color', 'depth')
@@ -552,12 +554,7 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			tf_dict = {}
-			if self.use_tf:
-				world_rs_tf_dict = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.TOP_RS_SOURCE_FRAME)
-				opt_tf_dict = self.lookupTF(rospy.Time(0), self.TOP_RS_SOURCE_FRAME, self.TOP_RS_OPTICAL_SOURCE_FRAME)
-				tf_dict = {'world_realsense': world_rs_tf_dict, 'realsense_color_optical': opt_tf_dict}
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"), tf={'optical_extrinsics': tf_dict})
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"))
 			if self.depth_enabled:
 				self.top_depth_topic = self.top_camera_name.replace('color', 'depth')
 				top_depth_img_topic = self.top_depth_topic + '/image_rect_raw'	
@@ -673,10 +670,11 @@ class KeypointDetect(DetectBase):
 			print(e)
 			return {}
 
-	def saveRecord(self) -> None:	
+	def saveRecord(self) -> dict:	
 		num_saved = 0
+		tf_rh8d_dict = {}
 
-		# joint states 
+		# joint states and rh8d tf
 		if len(self.joint_state_buffer):
 			num_saved += 1
 			msg = self.joint_state_buffer.pop()
@@ -687,11 +685,17 @@ class KeypointDetect(DetectBase):
 							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
 						 }
 			self.js_df = pd.concat([self.js_df, pd.DataFrame([state_dict])], ignore_index=True)
+			
 			# save rh8d tf
 			if self.use_tf:
-				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_SOURCE_FRAME)
-				if tf_dict:
-					self.rh8d_tf_df = pd.concat([self.rh8d_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
+				# forearm tf
+				tf_rh8d_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_SOURCE_FRAME)
+				if tf_rh8d_dict:
+					self.rh8d_tf_df = pd.concat([self.rh8d_tf_df, pd.DataFrame([tf_rh8d_dict])], ignore_index=True)
+				# tcp tf
+				tf_rh8d_tcp_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
+				if tf_rh8d_tcp_dict:
+					self.rh8d_tcp_tf_df = pd.concat([self.rh8d_tcp_tf_df, pd.DataFrame([tf_rh8d_tcp_dict])], ignore_index=True)
 
 		# marker cam depth img
 		if self.depth_enabled and len(self.depth_img_buffer):
@@ -710,6 +714,7 @@ class KeypointDetect(DetectBase):
 				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
 				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+			# static tf
 
 		# head realsense imgs & tf
 		if self.use_head_camera and len(self.head_img_buffer):
@@ -717,16 +722,16 @@ class KeypointDetect(DetectBase):
 			msg = self.head_img_buffer.pop()
 			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
 			cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
-			# save head rs tf
-			if self.use_tf:
-				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
-				if tf_dict:
-					self.head_rs_tf_df = pd.concat([self.head_rs_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 			# depth
 			if self.depth_enabled and len(self.head_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
 				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+			# save head rs tf
+			if self.use_tf:
+				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
+				if tf_dict:
+					self.head_rs_tf_df = pd.concat([self.head_rs_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 		# eyes imgs & tf
 		if self.use_eye_cameras:
@@ -757,6 +762,8 @@ class KeypointDetect(DetectBase):
 		if self.use_tf:
 			if self.record_cnt != self.rh8d_tf_df.last_valid_index() and self.record_cnt:
 				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tf_df.last_valid_index())
+			if self.record_cnt != self.rh8d_tcp_tf_df.last_valid_index() and self.record_cnt:
+				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tcp_tf_df.last_valid_index())
 			if self.use_eye_cameras:
 				if self.record_cnt != self.right_eye_tf_df.last_valid_index() and self.record_cnt:
 					print("Record size deviates from right eye dataframe index:", self.record_cnt, "!=", self.right_eye_tf_df.last_valid_index())
@@ -769,36 +776,44 @@ class KeypointDetect(DetectBase):
 		if num_saved > 0:
 			self.record_cnt += 1
 
-	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike]:
+		return tf_rh8d_dict
+
+	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
 
-		with self.buf_lock:
-			
-			if len(self.det_img_buffer) != self.filter_iters:
-				print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
+		tf_dict = {}
 
+		if self.test:
+			return super().preProcImage(vis), tf_dict
+
+		# wait for buffer to be filled
+		while len(self.det_img_buffer) != self.filter_iters:
+			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
+			time.sleep(1/self.fps)
+
+		with self.buf_lock:
+
+			# process images
 			self.det.resetFilters()
 			while len(self.det_img_buffer):
 				self.frame_cnt += 1
 				raw_img = self.bridge.imgmsg_to_cv2(self.det_img_buffer.pop(), 'bgr8')
 				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
-			# dummy img
-			if self.test:
-				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(self.img.copy(), vis and self.vis)
 
 			# align rotations by consens
 			if self.flip_outliers:
 				if not self.flipOutliers(marker_det):
 					beep()
+
 			# improve detection
 			if self.refine_pose:
 				self.refineDetection(marker_det)
 
 			# save additional resources
-			if not self.test and self.save_imgs:
-				self.saveRecord()
+			if self.save_record:
+				tf_dict = self.saveRecord()
 
-			return marker_det, det_img, proc_img, raw_img
+			return marker_det, det_img, proc_img, raw_img, tf_dict
 
 	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XZ plane in the markee frame.
@@ -912,51 +927,45 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
-	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
-		res = False
-		entry = {} # data entry
+	def detectionRoutine(self, init: bool, pos_cmd: list, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
-		(marker_det, det_img, proc_img, img) = self.preProcImage()
+		(marker_det, det_img, proc_img, img, tf) = self.preProcImage()
 		out_img = img.copy()
 
+		entry = {}
 		if marker_det:
-			# check all ids detected
-			if all([id in marker_det.keys() for id in self.target_ids]):
-				
-				for idx in range(1, len(self.target_ids)):
-					base_idx = idx-1 # predecessor index
-					base_id = self.target_ids[base_idx] # predecessor marker
-					target_id = self.target_ids[idx] # target marker
+			detected_ids = marker_det.keys()
+
+			for joint, config in self.marker_config.items():
+				if all( [id in detected_ids for id in  config['marker_ids']] ):
+					base_id = config['marker_ids'][0]
+					target_id = config['marker_ids'][1]
 					base_marker = marker_det[base_id] # predecessor detection
 					target_marker = marker_det[target_id] # target detection
-
 					# detected angle in rad
 					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
 					# save initially detected angle
 					if init:
-						self.start_angles.update({base_idx: angle})
+						self.start_angles.update({joint: angle})
 					# substract initial angle
-					angle = angle - self.start_angles[base_idx]
+					angle = angle - self.start_angles[joint]
 
 					# data entry
-					data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'rec_cnt': self.record_cnt,  'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
-					marker_det[target_id].update(data)
-					entry.update({self.group_ids[base_idx]: data})
-					# print(f"angle: {np.rad2deg(angle)}, qdec_angle: {np.rad2deg(qdec_angle)}, error: {np.rad2deg(error)}, base_id: {base_id}")
+					# data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'rec_cnt': self.record_cnt,  'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
+					# marker_det[target_id].update(data)
+					# entry.update({self.group_ids[base_idx]: data})
 
-				res = True
-			else:
-				print("Cannot detect all required ids, missing: ", end=" ")
-				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
-				beep()
+					res = True
+				else:
+					print("Cannot detect all required ids, missing: ", end=" ")
+					[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
+					beep()
 		else:
 			print("No detection")
 			
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
-			# actuator position
-			cv2.putText(out_img, f"actuator position: {pos_cmd}", (self.TXT_OFFSET, self.TXT_OFFSET), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw angle labels and possibly fixed detections 
 			for id, detection in marker_det.items():
 				self.labelDetection(out_img, id, marker_det) # cv angle
@@ -968,21 +977,83 @@ class KeypointDetect(DetectBase):
 				cv2.imshow('Processed', proc_img)
 				cv2.imshow('Detection', det_img)
 				cv2.imshow('Output', out_img)
-			if self.save_imgs and not self.test and res:
-				try:
-					self.df = pd.concat([self.df, pd.DataFrame([entry])], ignore_index=True) # save data entry
-					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
-					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
-					# self.saveImgs() # save additional resources
-					if self.df.last_valid_index() != str(self.record_cnt):
-						print("RECORD DEVIATION data index: ", self.df.last_valid_index(), " img index:", str(self.record_cnt))
-				except Exception as e:
-					print(e)
-					return False
+			# if self.save_record and not self.test and res:
+			# 	try:
+			# 		# incremented in saveImgs()
+			# 		if self.record_cnt > 0:
+			# 			record_cnt = self.record_cnt-1
+			# 		else: 
+			# 			record_cnt = self.record_cnt
+			# 			print("No images saved yet!", self.record_cnt)
+
+			# 		self.det_df = pd.concat([self.det_df, pd.DataFrame([entry])], ignore_index=True) # save data entry
+			# 		if self.det_df.last_valid_index() != record_cnt:
+			# 			print("RECORD DEVIATION data index: ", self.det_df.last_valid_index(), " img index:", str(self.record_cnt))
+			# 		cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
+			# 		cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
+				# except Exception as e:
+				# 	print(e)
+				# 	return False
 
 		return res
-		
+	
 	def run(self) -> None:
+		if self.attached:
+			self.runAttached()
+		else:
+			self.runDetached()
+	
+	def runDetached(self) -> None:
+		rate = rospy.Rate(self.f_loop)
+		
+		try:
+			# epoch
+			for e in range(self.epochs):
+				print("Epoch", e)
+				init = True
+				
+				for idx in self.waypoint_df.index.tolist():
+					if not rospy.is_shutdown():
+						# get waypoint
+						waypoint = self.waypoint_df.iloc[idx]
+						direction = waypoint[-3]
+						description = waypoint[-2]
+						move_time = waypoint[-1]
+						waypoint = waypoint[: -3].to_dict()
+
+						# move arm and hand
+						print(f"Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end=" ... ")
+						print(waypoint.values)
+						success = True
+						for id, val in zip(RH8D_IDS, waypoint.values[MoveRobot.ROBOT_JOINTS_INDEX['joint7'] :]):
+							cmd = ((val + np.pi) / (2 * np.pi)) * RH8D_MAX_POS
+							success, _ = self.rh8d_ctrl.setPos(id, cmd) and success
+						print("done\n") if success else print("fail\n")
+
+						# detect angles
+						success = self.detectionRoutine(init, waypoint.values, e, direction, description)
+						init = False
+
+						if self.vis and not self.attached:
+							if cv2.waitKey(1) == ord("q"):
+								return
+						
+						try:
+							rate.sleep()
+						except:
+							pass
+
+		except None as e:
+			rospy.logerr(e)
+		finally:
+			if self.save_record:
+				self.det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+			if self.vis and not self.attached:
+				cv2.destroyAllWindows()
+			rospy.signal_shutdown(0)
+		
+	def runAttached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
 		
 		try:
@@ -991,6 +1062,7 @@ class KeypointDetect(DetectBase):
 				print("Epoch", e)
 				self.rh8d_ctrl.moveHeadHome(2.0)
 				head_home = True
+				init = True
 				
 				for idx in self.waypoint_df.index.tolist():
 					if not rospy.is_shutdown():
@@ -1014,7 +1086,7 @@ class KeypointDetect(DetectBase):
 							head_home = True
 
 						# move arm and hand
-						print(f"Reaching waypoint number {idx}: {description} in {move_time}s", end=" ... ")
+						print(f"Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end=" ... ")
 						print(waypoint.values)
 						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
 						print("done\n") if success else print("fail\n")
@@ -1026,9 +1098,8 @@ class KeypointDetect(DetectBase):
 						head_home = False
 
 						# detect angles
-						success = self.detectionRoutine(init, pos_cmd, e, direction)
-						# with self.buf_lock:
-						# 	self.saveRecord()
+						success = self.detectionRoutine(init, waypoint.values, e, direction, description)
+						init = False
 
 						if self.vis and not self.attached:
 							if cv2.waitKey(1) == ord("q"):
@@ -1042,15 +1113,17 @@ class KeypointDetect(DetectBase):
 		except None as e:
 			rospy.logerr(e)
 		finally:
-			self.df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-			self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-			if self.use_tf:
-				self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-				if self.use_head_camera:
-					self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-				if self.use_eye_cameras:
-					self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-					self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+			if self.save_record:
+				self.det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+				if self.use_tf:
+					self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+					self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+					if self.use_head_camera:
+						self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+					if self.use_eye_cameras:
+						self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+						self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
@@ -1206,7 +1279,7 @@ class HybridDetect(KeypointDetect):
 				cv2.imshow('Processed', proc_img)
 				cv2.imshow('Detection', det_img)
 				cv2.imshow('Output', out_img)
-			if self.save_imgs:
+			if self.save_record:
 				cv2.imwrite(os.path.join(QDEC_ORIG_REC_DIR, str(self.frame_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				cv2.imwrite(os.path.join(QDEC_DET_REC_DIR, str(self.frame_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 

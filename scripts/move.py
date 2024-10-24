@@ -37,7 +37,7 @@ class MoveRobot():
 	INTERLEAVED_JOINTS = [ "jointI1", "jointM1", "jointL1R1"]
 
 	ROBOT_JOINTS = ["joint1", "joint2", "joint3", "joint4", "joint5", "joint6", "joint7", "joint8", "jointI1", "jointL1R1", "jointM1", "jointT0", "jointT1"]
-	RH8D_JOINTS    = ["joint8", "jointI1", "jointI2", "jointI3", "jointL1", "jointL2", "jointL3", "jointM1", "jointM2", "jointM3", "jointR1", "jointR2", "jointR3", "jointT0", "jointT1", "jointT2", "jointT3"]
+	RH8D_JOINTS    = [ "joint7", "joint8", "jointI1", "jointI2", "jointI3", "jointL1", "jointL2", "jointL3", "jointM1", "jointM2", "jointM3", "jointR1", "jointR2", "jointR3", "jointT0", "jointT1", "jointT2", "jointT3"]
 	ROBOT_JOINTS_INDEX = dict(zip(ROBOT_JOINTS, range(len(ROBOT_JOINTS))))
 
 	HEAD_LOW_LIM = [-0.584, -1.57]

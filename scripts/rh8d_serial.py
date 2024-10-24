@@ -7,7 +7,7 @@ from dynamixel_sdk import PortHandler, PacketHandler
 
 RH8D_MIN_POS   = 0
 RH8D_MAX_POS = 4095
-RH8D_IDS               = {'palm_flex': 32, 'palm_abd': 33, 'thumb_abd': 34, 'thumb_flex': 35, 'index_flex': 36, 'middle_flex': 37, 'ring_flex': 38}
+RH8D_IDS               = {'palm_flex': 32, 'palm_abd': 33, 'index_flex': 36, 'ring_flex': 38,  'middle_flex': 37, 'thumb_abd': 34, 'thumb_flex': 35}
 
 class RH8DSerialStub():
     def setMinPos(self, id: int, t_sleep: float=0.0) -> None:
