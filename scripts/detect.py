@@ -996,9 +996,10 @@ class KeypointDetect(DetectBase):
 					if not rospy.is_shutdown():
 						# get waypoint
 						waypoint = self.waypoint_df.iloc[idx]
+						direction = waypoint[-3]
 						description = waypoint[-2]
 						move_time = waypoint[-1]
-						waypoint = waypoint[: -2].to_dict()
+						waypoint = waypoint[: -3].to_dict()
 
 						# get head out of range if arm moves
 						states = self.rh8d_ctrl.jointStates()
