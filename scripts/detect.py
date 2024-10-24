@@ -459,9 +459,12 @@ class KeypointDetect(DetectBase):
 			self.buf = tf2_ros.Buffer()
 			self.listener = tf2_ros.TransformListener(self.buf)
 
-		# subscribe img topics
+		# img topics
 		if not test and attached:
 			self.initSubscriber()
+			self.proc_pub = rospy.Publisher('processed', Image)
+			self.det_pub = rospy.Publisher('marker_detection', Image)
+			self.out_pub = rospy.Publisher('angle_detection', Image)
 
 		# init controller
 		if attached:
@@ -480,10 +483,6 @@ class KeypointDetect(DetectBase):
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
 			self.record_cnt = waypoint_start_idx
 
-		# load marker ids
-		self.loadIDs()
-
-	def loadIDs(self):
 		# load hand marker ids
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
 		with open(fl, 'r') as fr:
@@ -491,7 +490,7 @@ class KeypointDetect(DetectBase):
 			self.marker_config = self.hand_ids['marker_config'] # target marker ids
 
 		self.det_df = pd.DataFrame(columns=self.DET_COLS) # dataset
-		self.start_angles = {}
+		self.start_angles = {} # initial angles
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_record:
@@ -927,15 +926,17 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
-	def detectionRoutine(self, init: bool, pos_cmd: list, epoch: int, direction: int, description: str) -> bool:
+	def detectionRoutine(self, init: bool, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
 		(marker_det, det_img, proc_img, img, tf) = self.preProcImage()
 		out_img = img.copy()
 
 		entry = {}
+		res = False
 		if marker_det:
 			detected_ids = marker_det.keys()
 
+			# iter joint markers
 			for joint, config in self.marker_config.items():
 				if all( [id in detected_ids for id in  config['marker_ids']] ):
 					base_id = config['marker_ids'][0]
@@ -951,15 +952,27 @@ class KeypointDetect(DetectBase):
 					angle = angle - self.start_angles[joint]
 
 					# data entry
-					# data = {'angle': angle, 'base_id': base_id, 'target_id': target_id, 'frame':self.frame_cnt, 'rec_cnt': self.record_cnt,  'cmd': pos_cmd, 'epoch': epoch, 'direction': direction}
-					# marker_det[target_id].update(data)
-					# entry.update({self.group_ids[base_idx]: data})
-
+					data = {'angle': angle, 
+			 					'base_id': base_id, 
+								'target_id': target_id, 
+								'frame':self.frame_cnt, 
+								'rec_cnt': self.record_cnt,  
+								'cmd': pos_cmd[config['actuator']], 
+								'epoch': epoch, 
+								'direction': direction, 
+								'description': description, 
+								'target_trans': target_marker['ftrans'],
+								'target_rot': target_marker['frot'],
+								'base_trans':  base_marker['ftrans'],
+								'base_rot':  base_marker['frot'],
+								}
+					marker_det[target_id].update(data)
+					entry.update({joint : data})
 					res = True
 				else:
-					print("Cannot detect all required ids, missing: ", end=" ")
-					[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
 					beep()
+					entry.update({joint: {}})
+					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }")
 		else:
 			print("No detection")
 			
@@ -977,23 +990,28 @@ class KeypointDetect(DetectBase):
 				cv2.imshow('Processed', proc_img)
 				cv2.imshow('Detection', det_img)
 				cv2.imshow('Output', out_img)
-			# if self.save_record and not self.test and res:
-			# 	try:
-			# 		# incremented in saveImgs()
-			# 		if self.record_cnt > 0:
-			# 			record_cnt = self.record_cnt-1
-			# 		else: 
-			# 			record_cnt = self.record_cnt
-			# 			print("No images saved yet!", self.record_cnt)
+			elif self.attached:
+				self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="bgr8"))
+				self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
+				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 
-			# 		self.det_df = pd.concat([self.det_df, pd.DataFrame([entry])], ignore_index=True) # save data entry
-			# 		if self.det_df.last_valid_index() != record_cnt:
-			# 			print("RECORD DEVIATION data index: ", self.det_df.last_valid_index(), " img index:", str(self.record_cnt))
-			# 		cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
-			# 		cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
-				# except Exception as e:
-				# 	print(e)
-				# 	return False
+			if self.save_record and res:
+				try:
+					# incremented in saveImgs()
+					if self.record_cnt > 0:
+						record_cnt = self.record_cnt-1
+					else: 
+						record_cnt = self.record_cnt
+						print("No images saved yet!", self.record_cnt)
+
+					self.det_df = pd.concat([self.det_df, pd.DataFrame([entry])], ignore_index=True) # save data entry
+					if self.det_df.last_valid_index() != record_cnt:
+						print("RECORD DEVIATION data index: ", self.det_df.last_valid_index(), " img index:", str(self.record_cnt))
+					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(record_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
+					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(record_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
+				except Exception as e:
+					print(e)
+					return False
 
 		return res
 	
@@ -1048,7 +1066,6 @@ class KeypointDetect(DetectBase):
 		finally:
 			if self.save_record:
 				self.det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-				self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
@@ -1098,7 +1115,7 @@ class KeypointDetect(DetectBase):
 						head_home = False
 
 						# detect angles
-						success = self.detectionRoutine(init, waypoint.values, e, direction, description)
+						success = self.detectionRoutine(init, waypoint, e, direction, description)
 						init = False
 
 						if self.vis and not self.attached:
@@ -1115,15 +1132,16 @@ class KeypointDetect(DetectBase):
 		finally:
 			if self.save_record:
 				self.det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-				self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-				if self.use_tf:
-					self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-					self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
-					if self.use_head_camera:
-						self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-					if self.use_eye_cameras:
-						self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-						self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+				if not self.test and self.attached:
+					self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+					if self.use_tf:
+						self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+						self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+						if self.use_head_camera:
+							self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+						if self.use_eye_cameras:
+							self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+							self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
