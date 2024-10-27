@@ -15,7 +15,11 @@ class FilterTypes(Enum):
 	MEDIAN='median'
 	KALMAN_SIMPLE='kalman_simple'
 	KALMAN='kalman'
-FILTER_TYPES_MAP={ 'none':FilterTypes.NONE, 'mean':FilterTypes.MEAN, 'median':FilterTypes.MEDIAN, 'kalman_simple':FilterTypes.KALMAN_SIMPLE, 'kalman':FilterTypes.KALMAN }
+FILTER_TYPES_MAP={ FilterTypes.NONE.value : FilterTypes.NONE,
+				                            FilterTypes.MEAN.value : FilterTypes.MEAN, 
+											FilterTypes.MEDIAN.value : FilterTypes.MEDIAN, 
+											FilterTypes.KALMAN_SIMPLE.value : FilterTypes.KALMAN_SIMPLE, 
+											FilterTypes.KALMAN.value : FilterTypes.KALMAN }
 
 class PoseFilterBase():
 	""" Filter base class.

@@ -341,6 +341,11 @@ class KeypointDetect(DetectBase):
 
 	"""
 
+	# angle comp.
+	UNIT_AXIS_X = np.array([1, 0, 0], dtype=np.float32)
+	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
+	UNIT_AXIS_Z = np.array([0, 0, 1], dtype=np.float32)
+
 	# cv stuff
 	FIRST_LINE_INTERPOL_FACTOR = 0.5 # arc points interpolation
 	SEC_LINE_INTERPOL_FACTOR = 0.85 # arc points interpolation
@@ -348,7 +353,6 @@ class KeypointDetect(DetectBase):
 	SAGITTA = 20 # radius size
 	AXES_LEN = 0.015 # meter
 	X_AXIS = np.array([[-AXES_LEN,0,0], [AXES_LEN, 0, 0]], dtype=np.float32)
-	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
 	ELIPSE_COLOR = (255,255,255)
 	ELIPSE_THKNS = 2
 	X_EL_TXT_OFFSET = 0.95
@@ -840,23 +844,43 @@ class KeypointDetect(DetectBase):
 				tf_dict = self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img, tf_dict, timestamp
-
-	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
-		""" Get the normal to the XZ plane in the markee frame.
+		
+	def normalXY(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
+		""" Get the normal to the XY plane in the marker frame.
 		"""
 		mat = getRotation(rot, rot_t, RotTypes.MAT)
-		normal_xz = mat @ self.UNIT_AXIS_Y
-		return normal_xz
+		normal = mat @ self.UNIT_AXIS_Z
+		return normal
 
-	def normalXZAngularDispl(self, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER) -> float:
+	def normalXZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
+		""" Get the normal to the XZ plane in the marker frame.
+		"""
+		mat = getRotation(rot, rot_t, RotTypes.MAT)
+		normal = mat @ self.UNIT_AXIS_Y
+		return normal
+	
+	def normalYZ(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
+		""" Get the normal to the YZ plane in the marker frame.
+		"""
+		mat = getRotation(rot, rot_t, RotTypes.MAT)
+		normal = mat @ self.UNIT_AXIS_X
+		return normal
+
+	def normalAngularDispl(self, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER, normal_type: NormalTypes=NormalTypes.XY) -> float:
 		""" Calculate the angle between normal vectors.
 		"""
-		# get normal vectors for the XZ planes
-		base_normal = self.normalXZ(base_rot, rot_t)
-		target_normal = self.normalXZ(target_rot, rot_t)
+		# get normal vectors for the axis planes
+		base_normal = self.normalXZ(base_rot, rot_t) if normal_type == NormalTypes.XZ else \
+			self.normalYZ(base_rot, rot_t) if normal_type == NormalTypes.YZ else \
+				self.normalXY(base_rot, rot_t)
+		target_normal = self.normalXZ(target_rot, rot_t) if normal_type == NormalTypes.XZ else \
+			self.normalYZ(target_rot, rot_t) if normal_type == NormalTypes.YZ else \
+				self.normalXY(target_rot, rot_t)
+
 		# normalize vectors to make sure they are unit vectors
 		base_normal = base_normal / np.linalg.norm(base_normal)
 		target_normal = target_normal / np.linalg.norm(target_normal)
+
 		# get angle
 		dot_product = base_normal @ target_normal
 		# ensure the dot product is within the valid range for arccos due to numerical precision
@@ -973,7 +997,7 @@ class KeypointDetect(DetectBase):
 					base_marker = marker_det[base_id] # base marker detection
 					target_marker = marker_det[target_id] # target marker detection
 					# detected angle in rad
-					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					# save initially detected angle
 					if self.start_angles.get(joint) is None:
 						self.start_angles.update({joint: angle})
@@ -1312,7 +1336,7 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 					target_marker = marker_det[target_id] # target detection
 
 					# detected angle in rad
-					angle = self.normalXZAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER)
+					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					# save initially detected angle
 					if init:
 						self.start_angles.update({base_idx: angle})

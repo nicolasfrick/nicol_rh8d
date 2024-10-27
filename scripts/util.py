@@ -7,6 +7,15 @@ from typing import Tuple
 from cv2 import Rodrigues
 from scipy.spatial.transform import Rotation as R
 
+class NormalTypes(Enum):
+	XY='xy'
+	XZ='xz'
+	YZ='yz'
+NORMAL_TYPES_MAP={  NormalTypes.XY.value : NormalTypes.XY, 
+				                                    NormalTypes.XZ.value : NormalTypes.XZ, 
+													NormalTypes.YZ.value : NormalTypes.YZ 
+												}
+
 class RotTypes(Enum):
 	RVEC='rvec'
 	EULER='xyz_euler'
