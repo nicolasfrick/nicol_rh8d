@@ -336,6 +336,8 @@ class KeypointDetect(DetectBase):
 		@type str
 		@param waypoint_start_idx
 		@type int
+		@param sync_slop
+		@type float
 
 	"""
 
@@ -414,6 +416,7 @@ class KeypointDetect(DetectBase):
 				joint_state_topic: Optional[str]='joint_states',
 				waypoint_set: Optional[str]='waypoints.json',
 				waypoint_start_idx: Optional[int]=0,
+				sync_slop: Optional[float]=0.1,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -432,11 +435,12 @@ class KeypointDetect(DetectBase):
 						cv_window=not attached,
 						)
 
-		self.epochs = epochs
-		self.use_tf = use_tf
 		self.fps = fps
-		self.attached = attached
+		self.use_tf = use_tf
+		self.epochs = epochs
 		self.step_div = step_div
+		self.attached = attached
+		self.sync_slop = sync_slop
 		self.save_record = save_imgs
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
@@ -480,9 +484,10 @@ class KeypointDetect(DetectBase):
 		# img topics
 		if not test and attached:
 			self.initSubscriber()
-			self.proc_pub = rospy.Publisher('processed', Image)
-			self.det_pub = rospy.Publisher('marker_detection', Image)
-			self.out_pub = rospy.Publisher('angle_detection', Image)
+			if vis:
+				self.proc_pub = rospy.Publisher('processed', Image)
+				self.det_pub = rospy.Publisher('marker_detection', Image)
+				self.out_pub = rospy.Publisher('angle_detection', Image)
 		# init vis
 		if vis and not attached:
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
@@ -628,7 +633,7 @@ class KeypointDetect(DetectBase):
 		self.head_depth_frame_id = self.head_camera_name.replace('color', 'depth').replace('/', '_')
 
 		# sync callback
-		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=1000, slop=1)
+		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=1000, slop=self.sync_slop)
 		self.sync.registerCallback(self.recCB)
 		for s in self.subs:
 			print("Subscribed to topic", s.topic)
@@ -995,7 +1000,7 @@ class KeypointDetect(DetectBase):
 									'child_frame_id': config['child'],
 									'timestamp': timestamp,
 									}
-					marker_det[target_id].update(data) # add to detection
+					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add to detection
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
 					beep()
@@ -1197,7 +1202,7 @@ class KeypointDetect(DetectBase):
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
 
-class HybridDetect(KeypointDetect):
+class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 	"""
 		Detect keypoints from marker poses and quadrature encoders 
 		while moving the hand.
