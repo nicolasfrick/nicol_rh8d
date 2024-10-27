@@ -1226,7 +1226,7 @@ class KeypointDetect(DetectBase):
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
 
-class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
+class HybridDetect(KeypointDetect):
 	"""
 		Detect keypoints from marker poses and quadrature encoders 
 		while moving the hand.
@@ -1241,6 +1241,8 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 		@type int
 		@param actuator
 		@type int
+		@param joint_list
+		@type list
 
 	"""
 
@@ -1268,6 +1270,7 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 				flip_outliers: Optional[bool]=True,
 				refine_pose: Optional[bool]=True,
 				fps: Optional[float]=30.0,
+				joint_list: Optional[list]=["jointI1", "jointI2", "jointI3"],
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -1289,14 +1292,32 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 						test=test,
 						vis=vis,
 						fps=fps,
+						attached=False,
 						)
 		
 		# actuator control
 		self.actuator = actuator
-		# index finger data
-		self.group_ids = self.hand_ids['names']['index'] # joint names
+
+		# finger data
+		self.group_ids = joint_list # joint names
 		self.df = pd.DataFrame(columns=self.group_ids) # dataset
-		self.target_ids = self.hand_ids['ids']['index'] # target marker ids
+
+		# target marker ids
+		self.target_ids = [] 
+		self.normal_plane = []
+		# assume ordered marker ids per joint
+		# -> 1st id is base marker and 
+		# 2nd id is target marker for angle computation
+		for joint, config in self.marker_config.items():
+			if joint in self.group_ids:
+				self.target_ids.append(config['marker_ids'])
+				self.normal_plane.append(config['plane'])
+		self.target_ids = np.unique(self.target_ids) # rm duplicates
+		# all planes are equal?
+		assert(all(plane == self.normal_plane[0] for plane in self.normal_plane))
+		self.normal_plane = self.normal_plane[0]
+
+		# establish serial com
 		self.qdec = QdecSerial(qdec_port, qdec_baud, qdec_tout, qdec_filter_iters) if not self.test else QdecSerialStub()
 
 	def labelQdecAngles(self, img: cv2.typing.MatLike, id: int, marker_det: dict) -> None:
@@ -1312,7 +1333,7 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 	def detectionRoutine(self, init: bool, pos_cmd: int, epoch: int, direction: int) -> bool:
 		res = False
 		# get filtered detection
-		(marker_det, det_img, proc_img, img) = self.preProcImage()
+		(marker_det, det_img, proc_img, img) = DetectBase.preProcImage(self)
 		out_img = img.copy()
 
 		if marker_det:
@@ -1336,7 +1357,7 @@ class HybridDetect(KeypointDetect): # TODO: adapt to new base layout
 					target_marker = marker_det[target_id] # target detection
 
 					# detected angle in rad
-					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
+					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[self.normal_plane])
 					# save initially detected angle
 					if init:
 						self.start_angles.update({base_idx: angle})
