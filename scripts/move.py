@@ -408,8 +408,9 @@ class MoveRobot():
 		t_total = t_travel_sum+t_exp_sum
 		t_total = str(datetime.timedelta(seconds=t_total))
 		t_str = t_total.split('.')[0].replace(':','_')
-		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints_{int(robot_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{t_str}.json'), orient="index", indent=1, double_precision=3)		
+		h_str = t_str.split('_')[0]
+		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints_{int(robot_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{h_str}h.json'), orient="index", indent=1, double_precision=3)		
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential(20,20,10,5)
+	MoveRobot.generateWaypointsSequential(30,30,10,5)
