@@ -1,98 +1,135 @@
 marker_config:
   joint7:  
-    marker_ids: [[6,7],8]
+    marker_ids: [6,8]
+    alt_marker_ids: [7,8]
     axis: &axis_block 
       axis: 'y' 
     parent: 'r_forearm'
     child: 'r_palm_axis'
+    actuator: 'joint7'
   joint8:
-    marker_ids: [[6,7],8]
+    marker_ids: [6,8]
+    alt_marker_ids: [7,8]
     axis: 'x'
     parent: 'r_palm_axis'
     child: &palm 'r_palm'
+    actuator: 'joint8'
   jointI1:
-    marker_ids:  [[0, 1], 2]
+    marker_ids:  [0, 2]
+    alt_marker_ids: [1,2]
     <<: *axis_block
     parent: *palm
     child: 'r_Iproximal'
+    actuator: 'jointI1'
   jointI2:
     marker_ids:  [2, 3]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Iproximal'
     child: 'r_Imiddle'
+    actuator: 'jointI1'
   jointI3:
     marker_ids:  [3, 4]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Imiddle'
     child: 'r_Itip'
+    actuator: 'jointI1'
   jointM1:
     marker_ids:  [14, 15]
+    alt_marker_ids: []
     <<: *axis_block
     parent: *palm
     child: 'r_Mproximal'
+    actuator: 'jointM1'
   jointM2:
     marker_ids:  [15, 16]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Mproximal'
     child: 'r_Mmiddle'
+    actuator: 'jointM1'
   jointM3:
     marker_ids:  [16, 17]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Mmiddle'
     child: 'r_Mtip'
+    actuator: 'jointM1'
   jointR1:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
+    alt_marker_ids: []
     <<: *axis_block
     parent: *palm
     child: 'r_Rproximal'
+    actuator: 'jointL1R1'
   jointR2:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Rproximal'
     child: 'r_Rmiddle'
+    actuator: 'jointL1R1'
   jointR3:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Rmiddle'
     child: 'r_Rtip'
+    actuator: 'jointL1R1'
   jointL1:
     marker_ids:  [25, 26]
+    alt_marker_ids: []
     <<: *axis_block
     parent: *palm
     child: 'r_Lproximal'
+    actuator: 'jointL1R1'
   jointL2:
     marker_ids:  [26, 27]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Lproximal'
     child: 'r_Lmiddle'
+    actuator: 'jointL1R1'
   jointL3:
     marker_ids:  [27, 28]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Lmiddle'
     child: 'r_Ltip'
+    actuator: 'jointL1R1'
   jointT0:
     marker_ids: [8, 10]
+    alt_marker_ids: []
     <<: *axis_block
     parent: *palm
     child: 'r_thumb_base'
+    actuator: 'jointT0'
   jointT1:
     marker_ids: [10, 11]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_thumb_base'
     child: 'r_Tproximal'
+    actuator: 'jointT1'
   jointT2:
     marker_ids: [11, 12]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Tproximal'
     child: 'r_Tmiddle'
+    actuator: 'jointT1'
   jointT3:
     marker_ids: [12, 13]
+    alt_marker_ids: []
     <<: *axis_block
     parent: 'r_Tmiddle'
     child: 'r_Ttip'
-  tf_marker_ids:
-    forearm: [5]
-    palm: [9]
+    actuator: 'jointT1'
+
+tf_marker_ids:
+  forearm: [5]
+  palm: [9]
 
 marker_poses:
   0: 

@@ -219,10 +219,10 @@ class MoveRobot():
 
 	@classmethod
 	def generateWaypointsSequential(self, 
-					   								robot_resolution_deg: float=25.0, 
-					   								wrist_resolution_deg: float=30.0, 
-													finger_resolution_deg: float=20.0, 
-													interleaving_offset_deg: float=10.0,
+					   								robot_resolution_deg: float=90.0, 
+					   								wrist_resolution_deg: float=170.0, 
+													finger_resolution_deg: float=170.0, 
+													interleaving_offset_deg: float=60.0,
 													t_exp: float=2.0,
 													) -> None:
 		"""	   	  1. move home position
@@ -237,18 +237,6 @@ class MoveRobot():
 		"""
 
 		assert(interleaving_offset_deg <= finger_resolution_deg/2)
-
-		t_move_home_start = self.estimateMoveTime(self.ROBOT_HOME, self.ROBOT_EXP_START)
-		cols = self.ROBOT_JOINTS.copy()
-		cols.extend(["direction", "description", "t_travel"])
-		home = self.ROBOT_HOME.copy()
-		home.extend([0, "home", t_move_home_start])
-		start = self.ROBOT_EXP_START.copy()
-		start.extend([0, "start", t_move_home_start])
-
-		wps_df = pd.DataFrame(columns=cols)
-		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, home))])], ignore_index=True) # 1st waypoint is home
-		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, start))])], ignore_index=True) # 2nd waypoint is experiment start
 		interleaving_offset = np.deg2rad(interleaving_offset_deg)
 		
 		# joint5
@@ -266,10 +254,35 @@ class MoveRobot():
 		# jointI1-T1
 		steps4 = int( (abs(self.RH8D_FINGER_MIN) + abs(self.RH8D_FINGER_MAX)) / np.deg2rad(finger_resolution_deg) )
 		finger_waypoints = np.linspace(self.RH8D_FINGER_MIN + np.deg2rad(finger_resolution_deg), self.RH8D_FINGER_MAX, steps4)
+		assert(steps4 > 1)
+		
+        # exp start
+		t_move_home_start = self.estimateMoveTime(self.ROBOT_HOME, self.ROBOT_EXP_START)
+		cols = self.ROBOT_JOINTS.copy()
+		cols.extend(["reset_angle", "direction", "description", "t_travel"])
+		home = self.ROBOT_HOME.copy()
+		home.extend([True, 0, "home", t_move_home_start])
+		start = self.ROBOT_EXP_START.copy()
+		start.extend([True, 0, "start", t_move_home_start])
+        # append
+		wps_df = pd.DataFrame(columns=cols)
+		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, home))])], ignore_index=True) # 1st waypoint is home
+		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, start))])], ignore_index=True) # 2nd waypoint is experiment start
 
 		for joint5_wp in joint5_waypoints:
 			for joint6_wp in joint6_waypoints:
 				print("new sequence")
+				
+				# reset angles
+				last_waypoint =  wps_df.loc[wps_df.last_valid_index()].copy()
+				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint5'] : self.ROBOT_JOINTS_INDEX['joint7'] ] = [joint5_wp, joint6_wp]
+				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -4] = self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] :]
+				t_travel = self.estimateMoveTime(wps_df.loc[wps_df.last_valid_index()][:-4].values, last_waypoint[: -4].values)
+				last_waypoint[-4] = True
+				last_waypoint[-3] = 0
+				last_waypoint[-2] = 'new sequence'
+				last_waypoint[-1] = t_travel
+				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 				# wrist abduction
 				for rh8d_wp in wrist_waypoints:
@@ -278,11 +291,21 @@ class MoveRobot():
 					wrist_only = [joint5_wp, joint6_wp, rh8d_wp] # joint7 moving
 					waypoint.extend(wrist_only)
 					waypoint.extend(self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint8'] : ]) # joint8 - jointT1 fixed
-					last_wp = wps_df.loc[wps_df.last_valid_index()][:-3].values
+					last_wp = wps_df.loc[wps_df.last_valid_index()][:-4].values
 					t_travel = self.estimateMoveTime(last_wp, waypoint)
-					waypoint.extend([1, "wrist abduction", t_travel])
+					waypoint.extend([False, 1, "wrist abduction", t_travel])
 					waypoint = dict(zip(cols, waypoint))
 					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)
+					
+				# reset angles
+				last_waypoint =  wps_df.loc[wps_df.last_valid_index()].copy()
+				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -4] = self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] :]
+				t_travel = self.estimateMoveTime(wps_df.loc[wps_df.last_valid_index()][:-4].values, last_waypoint[: -4].values)
+				last_waypoint[-4] = True
+				last_waypoint[-3] = 0
+				last_waypoint[-2] = 'reset angle'
+				last_waypoint[-1] = t_travel
+				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 				# wrist flexion
 				for rh8d_wp in wrist_waypoints:
@@ -291,11 +314,21 @@ class MoveRobot():
 					wrist_only = [joint5_wp, joint6_wp, self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7']], rh8d_wp] # joint8 moving
 					waypoint.extend(wrist_only)
 					waypoint.extend(self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['jointI1'] : ]) # jointI1 - jointT1 fixed
-					last_wp = wps_df.loc[wps_df.last_valid_index()][:-3].values
+					last_wp = wps_df.loc[wps_df.last_valid_index()][:-4].values
 					t_travel = self.estimateMoveTime(last_wp, waypoint)
-					waypoint.extend([1, "wrist flexion", t_travel])
+					waypoint.extend([False, 1, "wrist flexion", t_travel])
 					waypoint = dict(zip(cols, waypoint))
 					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)
+					
+				# reset angles
+				last_waypoint =  wps_df.loc[wps_df.last_valid_index()].copy()
+				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -4] = self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] :]
+				t_travel = self.estimateMoveTime(wps_df.loc[wps_df.last_valid_index()][:-4].values, last_waypoint[: -4].values)
+				last_waypoint[-4] = True
+				last_waypoint[-3] = 0
+				last_waypoint[-2] = 'reset angle'
+				last_waypoint[-1] = t_travel
+				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 				# thumb abduction
 				for rh8d_wp in finger_waypoints:
@@ -304,9 +337,9 @@ class MoveRobot():
 					thumb_only = [joint5_wp, joint6_wp, *self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] : self.ROBOT_JOINTS_INDEX['jointT0']], rh8d_wp] # jointT0 moving
 					waypoint.extend(thumb_only)
 					waypoint.extend(self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['jointT1'] : ]) # jointT1 fixed
-					last_wp = wps_df.loc[wps_df.last_valid_index()][:-3].values
+					last_wp = wps_df.loc[wps_df.last_valid_index()][:-4].values
 					t_travel = self.estimateMoveTime(last_wp, waypoint)
-					waypoint.extend([1, "thumb abduction", t_travel])
+					waypoint.extend([False, 1, "thumb abduction", t_travel])
 					waypoint = dict(zip(cols, waypoint))
 					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)
 
@@ -316,9 +349,9 @@ class MoveRobot():
 					waypoint = self.ROBOT_EXP_START[ : self.JOINT5_IDX] # joint 1,2,3,4 fixed
 					thumb_only = [joint5_wp, joint6_wp, *self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] : self.ROBOT_JOINTS_INDEX['jointT0']], self.ROBOT_UP_LIM[self.ROBOT_JOINTS_INDEX['jointT0']], rh8d_wp] # jointT1 moving
 					waypoint.extend(thumb_only)
-					last_wp = wps_df.loc[wps_df.last_valid_index()][:-3].values
+					last_wp = wps_df.loc[wps_df.last_valid_index()][:-4].values
 					t_travel = self.estimateMoveTime(last_wp, waypoint)
-					waypoint.extend([1, "thumb flexion", t_travel])
+					waypoint.extend([False, 1, "thumb flexion", t_travel])
 					waypoint = dict(zip(cols, waypoint))
 					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)
 
@@ -327,9 +360,14 @@ class MoveRobot():
 				inverted_seq = inverted_seq.iloc[::-1]
 				inverted_seq['direction'] = inverted_seq['direction'].replace(1, -1)
 				wps_df = pd.concat([wps_df, inverted_seq], ignore_index=True)
-				# reset 
+				# reset angles
 				last_waypoint =  wps_df.loc[wps_df.last_valid_index()].copy()
-				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -3] = self.ROBOT_HOME[self.ROBOT_JOINTS_INDEX['joint7'] :]
+				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -4] = self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] :]
+				t_travel = self.estimateMoveTime(wps_df.loc[wps_df.last_valid_index()][:-4].values, last_waypoint[: -4].values)
+				last_waypoint[-4] = True
+				last_waypoint[-3] = 0
+				last_waypoint[-2] = 'reset angle'
+				last_waypoint[-1] = t_travel
 				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 				# fingers interleaved
@@ -349,11 +387,11 @@ class MoveRobot():
 							else:
 								waypoint[joint] = finger_waypoints[-1]
 
-					t_travel = self.estimateMoveTime(last_waypoint[:-3].values, waypoint[:-3].values)
+					t_travel = self.estimateMoveTime(last_waypoint[:-4].values, waypoint[:-4].values)
+					waypoint[-4] = False
 					waypoint[-3] = 1
 					waypoint[-2] = "finger flexion"
 					waypoint[-1] = t_travel
-
 					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)		
 
 				# reverse
@@ -361,13 +399,8 @@ class MoveRobot():
 				inverted_seq = inverted_seq.iloc[::-1]
 				inverted_seq['direction'] = inverted_seq['direction'].replace(1, -1)
 				wps_df = pd.concat([wps_df, inverted_seq], ignore_index=True)
-				# reset 
-				last_waypoint =  wps_df.loc[wps_df.last_valid_index()].copy()
-				last_waypoint.iloc[self.ROBOT_JOINTS_INDEX['joint7'] : -3] = self.ROBOT_HOME[self.ROBOT_JOINTS_INDEX['joint7'] :]
-				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 		# last waypoint is home
-		home[-3] = -1
 		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, home))])], ignore_index=True) 
 
 		t_exp_sum = len(wps_df)*t_exp
@@ -379,4 +412,4 @@ class MoveRobot():
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential(40, 30, 40, 20)
+	MoveRobot.generateWaypointsSequential(20,20,10,5)

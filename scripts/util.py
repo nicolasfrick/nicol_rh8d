@@ -1,6 +1,7 @@
 import os, cv2
-import subprocess	
+import subprocess
 import numpy as np
+import pandas as pd	
 from enum import Enum
 from typing import Tuple
 from cv2 import Rodrigues
@@ -187,6 +188,11 @@ def refinePose(tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_poin
 																							criteria=criteria,
 																							)
 	return out_tvec.flatten(), out_rvec.flatten()
+
+def readDataset(filepth: str) -> dict:
+	pth = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint')
+	df = pd.read_json(os.path.join(pth, filepth), orient='index')
+	return {joint: pd.DataFrame.from_dict(data, orient='index') for joint, data in df.iloc[0].items()}
 
 def beep() -> None:
 	subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
