@@ -10,6 +10,7 @@ import tf2_ros
 import cv_bridge
 import threading
 import numpy as np
+import pybullet as pb
 import sensor_msgs.msg
 from collections import deque
 from datetime import datetime
@@ -38,6 +39,7 @@ dt_now = '' # dt_now.strftime("%H_%M_%S")
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
 QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')
 KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection_' + dt_now + '.json')
+KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
 REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
@@ -338,6 +340,8 @@ class KeypointDetect(DetectBase):
 		@type int
 		@param sync_slop
 		@type float
+		@param urdf_pth
+		@type str
 
 	"""
 
@@ -369,6 +373,7 @@ class KeypointDetect(DetectBase):
 	# dataframe columns
 	JS_COLS = ['name', 'position', 'velocity', 'effort', 'timestamp']
 	TF_COLS = ['frame_id', 'child_frame_id', 'trans', 'quat', 'timestamp']
+	KEYPT_COLS = ['timestamp', 'trans', 'quat']
 	DET_COLS = [ 'angle', 
 			 					'start_angle',
 								'base_id', 
@@ -421,6 +426,7 @@ class KeypointDetect(DetectBase):
 				waypoint_set: Optional[str]='waypoints.json',
 				waypoint_start_idx: Optional[int]=0,
 				sync_slop: Optional[float]=0.1,
+				urdf_pth: Optional[str]='rh8d.urdf',
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -481,7 +487,7 @@ class KeypointDetect(DetectBase):
 		self.right_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
 
 		# init ros
-		if use_tf:
+		if use_tf and not test:
 			self.buf = tf2_ros.Buffer()
 			self.listener = tf2_ros.TransformListener(self.buf)
 
@@ -489,18 +495,20 @@ class KeypointDetect(DetectBase):
 		if not test and attached:
 			self.initSubscriber()
 			if vis:
-				self.proc_pub = rospy.Publisher('processed', Image)
+				self.proc_pub = rospy.Publisher('processed_image', Image)
 				self.det_pub = rospy.Publisher('marker_detection', Image)
 				self.out_pub = rospy.Publisher('angle_detection', Image)
+				self.plot_pub = rospy.Publisher('keypoint_plot', Image)
 		# init vis
 		if vis and not attached:
+			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
 		# init controller
 		if attached:
 			self.rh8d_ctrl = MoveRobot()
 		else:
-			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not self.test else RH8DSerialStub()
+			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
 
 		# load waypoints
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint", waypoint_set)
@@ -516,8 +524,16 @@ class KeypointDetect(DetectBase):
 			self.hand_ids = yaml.safe_load(fr)
 			self.marker_config = self.hand_ids['marker_config'] # target marker ids
 
-		self.det_df_dict = {joint:  pd.DataFrame(columns=self.DET_COLS) for joint in self.marker_config.keys()} # dataset
 		self.start_angles = {} # initial angles
+		self.root_joint = list(self.marker_config.keys())[0] # first joint
+		self.det_df_dict = {joint:  pd.DataFrame(columns=self.DET_COLS) for joint in self.marker_config.keys()} # angles dataset
+		
+		if not test:
+			# init 3D keypoints dataset
+			self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
+			self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
+			self.keypt_keys.extend(self.initRH8DFK(urdf_pth)) # end links
+			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys} 
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_record:
@@ -551,6 +567,48 @@ class KeypointDetect(DetectBase):
 
 		with open(fn, "w") as fw:
 			yaml.dump(info_dict, fw, default_flow_style=None, sort_keys=False)
+
+	def initRH8DFK(self, urdf_pth: str) -> list:
+		# init pybullet
+		self.physicsClient = pb.connect(pb.DIRECT)
+		self.robot_id = pb.loadURDF(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'urdf/' + urdf_pth), useFixedBase=True)
+
+		# get all present chains
+		self.kinematic_chains = [[]]
+		self.dfsKinematicChain(self.root_joint)
+		self.chain_complete = [False for _ in range(len(self.kinematic_chains))]
+		# revolute end joints to fixed end joint mapping
+		end_joints = [chain[-1] for chain in self.kinematic_chains]
+		fixed_end_joints = [self.marker_config[joint]['fixed_end'] for joint in end_joints]
+
+		# get joint index aka link index
+		self.link_info_dict = {}
+		self.joint_info_dict = {}
+		for idx in range(pb.getNumJoints(self.robot_id)):
+			joint_info = pb.getJointInfo(self.robot_id, idx)
+
+			if joint_info[2] == pb.JOINT_REVOLUTE:
+				joint_name = joint_info[1].decode('utf-8')
+				# revolute joint index
+				self.joint_info_dict.update( {joint_name: idx} )
+			elif joint_info[2] == pb.JOINT_FIXED:
+				joint_name = joint_info[1].decode('utf-8')
+				if joint_name in fixed_end_joints:
+					# fixed joint index matches very last link
+					self.link_info_dict.update( {end_joints[fixed_end_joints.index(joint_name)]: {'index': idx, 'fixed_end': joint_name}} )
+		
+		return fixed_end_joints
+		
+	def dfsKinematicChain(self, joint_name, branched: bool=False):
+		self.kinematic_chains[-1].append(joint_name)
+		joint_children = self.marker_config[joint_name]['joint_children']
+		if len(joint_children) > 1:
+			assert(not branched)
+			branched = True
+		for child in joint_children:
+			if len(joint_children) > 1:
+				self.kinematic_chains.append(self.kinematic_chains[0].copy())
+			self.dfsKinematicChain(child, branched)
 
 	def initSubscriber(self) -> None:
 		rospy.wait_for_message(self.joint_state_topic, JointState, 5)
@@ -977,12 +1035,54 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
+	def rh8dFK(self, joint_angles: dict, base_tf: dict, timestamp: float) -> dict:
+		# reset flag
+		self.chain_complete = [True for _ in range(len(self.chain_complete))]
+
+		fk_dict = {}
+		if base_tf:
+			# applied to link's com
+			pb.resetBasePositionAndOrientation(self.robot_id, base_tf['trans'], base_tf['quat'])
+			fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': base_tf['trans'], 'quat': base_tf['quat']}})
+		else:
+			fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}})
+
+		# set detected angles
+		for joint, angle in joint_angles.items():
+			if angle is not None:
+				# revolute joint index
+				pb.resetJointState(self.robot_id, self.joint_info_dict[joint], angle)
+
+		# get fk
+		for joint, angle in joint_angles.items():
+			if angle is not None:
+				# revolute joint's attached link
+				(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.joint_info_dict[joint], computeForwardKinematics=True)
+				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+				# additional fk for tip frame
+				if joint in self.link_info_dict.keys():
+					# end link attached to last fixed joint 
+					(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.link_info_dict[joint]['index'], computeForwardKinematics=True)
+					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+			else:
+				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+				if joint in self.link_info_dict.keys():
+					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+				# disable chain
+				for idx, chain in enumerate(self.kinematic_chains):
+					if joint in chain:
+						self.chain_complete[idx] = False
+
+		return fk_dict
+
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
-		(marker_det, det_img, proc_img, img, tf, timestamp) = self.preProcImage()
+		(marker_det, det_img, proc_img, img, base_tf, timestamp) = self.preProcImage()
 		out_img = img.copy()
 
 		res = True
+		fk_dict = {}
+		joint_angles = {joint: {'angle': None} for joint in self.marker_config.keys()}
 		if marker_det:
 			detected_ids = marker_det.keys()
 
@@ -1024,7 +1124,8 @@ class KeypointDetect(DetectBase):
 									'child_frame_id': config['child'],
 									'timestamp': timestamp,
 									}
-					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add to detection
+					joint_angles[joint].update({'angle': angle})
+					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add angle to detection
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
 					beep()
@@ -1036,6 +1137,12 @@ class KeypointDetect(DetectBase):
 				if self.det_df_dict[joint].last_valid_index() != self.data_cnt:
 					print("DATA RECORD DEVIATION, data index: ", str(self.det_df_dict[joint].last_valid_index()), " record index:", str(self.data_cnt), "for joint", joint)
 
+			# compute 3D keypoints
+			if not self.test:
+				fk_dict = self.rh8dFK(joint_angles, base_tf, timestamp)
+				for link, fk in fk_dict.items():
+					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
+
 		else:
 			beep()
 			res = False
@@ -1043,6 +1150,9 @@ class KeypointDetect(DetectBase):
 			# add nan entry
 			for joint in self.marker_config.keys():
 				self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([{key: np.nan for key in self.DET_COLS}])], ignore_index=True)
+			if not self.test:
+				for link in self.keypt_keys:
+					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([{key: np.nan for key in self.KEYPT_COLS}])], ignore_index=True)
 			
 		if self.vis:
 			# frame counter
@@ -1137,6 +1247,10 @@ class KeypointDetect(DetectBase):
 			if self.save_record:
 				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				if not self.test:
+					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
+					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+					pb.disconnect()
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
@@ -1212,16 +1326,20 @@ class KeypointDetect(DetectBase):
 				# join all dataframes
 				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-				if not self.test and self.attached:
-					self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-					if self.use_tf:
-						self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-						self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
-						if self.use_head_camera:
-							self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-						if self.use_eye_cameras:
-							self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-							self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+				if not self.test:
+					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
+					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+					pb.disconnect()
+					if self.attached:
+						self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+						if self.use_tf:
+							self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+							self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+							if self.use_head_camera:
+								self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+							if self.use_eye_cameras:
+								self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+								self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)

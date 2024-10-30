@@ -6,126 +6,180 @@ marker_config:
       plane: 'xz'
     parent: 'r_forearm'
     child: 'r_palm_axis'
+    fixed_end: 'joint_r_laser'
     actuator: 'joint7'
+    joint_children: ['joint8']
+    name: 'wrist abduction'
   joint8:
     marker_ids: [6, 8]
     alt_marker_ids: [7, 8]
     plane: 'xy'
     parent: 'r_palm_axis'
     child: &palm 'r_palm'
+    fixed_end: 'joint_r_laser'
     actuator: 'joint8'
+    joint_children: ['jointI1', 'jointM1', 'jointR1', 'jointL1', 'jointT0']
+    name: 'wrist flexion'
   jointI1:
     marker_ids:  [1, 2]
     alt_marker_ids: [0, 2]
     <<: *plane_block
     parent: *palm
     child: 'r_Iproximal'
+    fixed_end: 'joint_Ibumper'
     actuator: 'jointI1'
+    joint_children: ['jointI2']
+    name: 'index flexion'
   jointI2:
     marker_ids:  [2, 3]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Iproximal'
     child: 'r_Imiddle'
+    fixed_end: 'joint_Ibumper'
     actuator: 'jointI1'
+    joint_children: ['jointI3']
+    name: 'index flexion'
   jointI3:
     marker_ids:  [3, 4]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Imiddle'
     child: 'r_Itip'
+    fixed_end: 'joint_Ibumper'
     actuator: 'jointI1'
+    joint_children: []
+    name: 'index flexion'
   jointM1:
     marker_ids:  [14, 15]
     alt_marker_ids: []
     <<: *plane_block
     parent: *palm
     child: 'r_Mproximal'
+    fixed_end: 'joint_Mbumper'
     actuator: 'jointM1'
+    joint_children: ['jointM2']
+    name: 'middle flexion'
   jointM2:
     marker_ids:  [15, 16]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Mproximal'
     child: 'r_Mmiddle'
+    fixed_end: 'joint_Mbumper'
     actuator: 'jointM1'
+    joint_children: ['jointM3']
+    name: 'middle flexion'
   jointM3:
     marker_ids:  [16, 17]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Mmiddle'
     child: 'r_Mtip'
+    fixed_end: 'joint_Mbumper'
     actuator: 'jointM1'
+    joint_children: []
+    name: 'middle flexion'
   jointR1:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
     alt_marker_ids: []
     <<: *plane_block
     parent: *palm
     child: 'r_Rproximal'
+    fixed_end: 'joint_Rbumper'
     actuator: 'jointL1R1'
+    joint_children: ['jointR2']
+    name: 'ring flexion'
   jointR2:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Rproximal'
     child: 'r_Rmiddle'
+    fixed_end: 'joint_Rbumper'
     actuator: 'jointL1R1'
+    joint_children: ['jointR3']
+    name: 'ring flexion'
   jointR3:
     marker_ids: [18, 19, 20, 21, 22, 23, 24]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Rmiddle'
     child: 'r_Rtip'
+    fixed_end: 'joint_Rbumper'
     actuator: 'jointL1R1'
+    joint_children: []
+    name: 'ring flexion'
   jointL1:
     marker_ids:  [25, 26]
     alt_marker_ids: []
     <<: *plane_block
     parent: *palm
     child: 'r_Lproximal'
+    fixed_end: 'joint_Lbumper'
     actuator: 'jointL1R1'
+    joint_children: ['jointL2']
+    name: 'little flexion'
   jointL2:
     marker_ids:  [26, 27]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Lproximal'
     child: 'r_Lmiddle'
+    fixed_end: 'joint_Lbumper'
     actuator: 'jointL1R1'
+    joint_children: ['jointL3']
+    name: 'little flexion'
   jointL3:
     marker_ids:  [27, 28]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Lmiddle'
     child: 'r_Ltip'
+    fixed_end: 'joint_Lbumper'
     actuator: 'jointL1R1'
+    joint_children: []
+    name: 'little flexion'
   jointT0:
     marker_ids: [8, 10]
     alt_marker_ids: []
     <<: *plane_block
     parent: *palm
     child: 'r_thumb_base'
+    fixed_end: 'joint_Tbumper'
     actuator: 'jointT0'
+    joint_children: ['jointT1']
+    name: 'thumb abduction'
   jointT1:
     marker_ids: [10, 11]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_thumb_base'
     child: 'r_Tproximal'
+    fixed_end: 'joint_Tbumper'
     actuator: 'jointT1'
+    joint_children: ['jointT2']
+    name: 'thumb flexion'
   jointT2:
     marker_ids: [11, 12]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Tproximal'
     child: 'r_Tmiddle'
+    fixed_end: 'joint_Tbumper'
     actuator: 'jointT1'
+    joint_children: ['jointT3']
+    name: 'thumb flexion'
   jointT3:
     marker_ids: [12, 13]
     alt_marker_ids: []
     <<: *plane_block
     parent: 'r_Tmiddle'
     child: 'r_Ttip'
+    fixed_end: 'joint_Tbumper'
     actuator: 'jointT1'
+    joint_children: []
+    name: 'thumb flexion'
 
 tf_marker_ids:
   forearm: [5]

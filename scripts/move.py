@@ -256,7 +256,7 @@ class MoveRobot():
 		finger_waypoints = np.linspace(self.RH8D_FINGER_MIN + np.deg2rad(finger_resolution_deg), self.RH8D_FINGER_MAX, steps4)
 		assert(steps4 > 1)
 		
-        # exp start
+		# exp start
 		t_move_home_start = self.estimateMoveTime(self.ROBOT_HOME, self.ROBOT_EXP_START)
 		cols = self.ROBOT_JOINTS.copy()
 		cols.extend(["reset_angle", "direction", "description", "t_travel"])
@@ -264,7 +264,7 @@ class MoveRobot():
 		home.extend([True, 0, "home", t_move_home_start])
 		start = self.ROBOT_EXP_START.copy()
 		start.extend([True, 0, "start", t_move_home_start])
-        # append
+		# append
 		wps_df = pd.DataFrame(columns=cols)
 		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, home))])], ignore_index=True) # 1st waypoint is home
 		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, start))])], ignore_index=True) # 2nd waypoint is experiment start
@@ -414,3 +414,4 @@ class MoveRobot():
 		
 if __name__ == '__main__':
 	MoveRobot.generateWaypointsSequential(30,30,10,5)
+	
