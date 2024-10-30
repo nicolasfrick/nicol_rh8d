@@ -306,8 +306,6 @@ class KeypointDetect(DetectBase):
 		@type str
 		@param rh8d_baud
 		@type int
-		@param step_div
-		@type int
 		@param epochs
 		@type int
 		@param use_tf
@@ -409,7 +407,6 @@ class KeypointDetect(DetectBase):
 				plt_id: Optional[int]=-1,
 				rh8d_port: Optional[str]="/dev/ttyUSB1",
 				rh8d_baud: Optional[int]=1000000,
-				step_div: Optional[int]=100,
 				epochs: Optional[int]=10,
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
@@ -452,7 +449,6 @@ class KeypointDetect(DetectBase):
 		self.fps = fps
 		self.use_tf = use_tf
 		self.epochs = epochs
-		self.step_div = step_div
 		self.attached = attached
 		self.sync_slop = sync_slop
 		self.save_record = save_imgs
@@ -1084,7 +1080,7 @@ class KeypointDetect(DetectBase):
 		for plot_dict in plot_dicts:
 			plot_img = self.keypt_plot.plotKeypoints(plot_dict, parent_joint)
 
-		return  cv2.cvtColor(plot_img, cv2.COLOR_RGBA2BGR)
+		return cv2.cvtColor(plot_img, cv2.COLOR_RGBA2BGR)
 
 	def rh8dFK(self, joint_angles: dict, base_tf: dict, timestamp: float) -> dict:
 		# reset flag
@@ -1417,6 +1413,8 @@ class HybridDetect(KeypointDetect):
 		@type int
 		@param joint_list
 		@type list
+		@param step_div
+		@type int
 
 	"""
 
@@ -1458,7 +1456,6 @@ class HybridDetect(KeypointDetect):
 						use_aruco=use_aruco,
 						rh8d_port=rh8d_port,
 						rh8d_baud=rh8d_baud,
-						step_div=step_div,
 						plt_id=plt_id,
 						use_tf=False,
 						f_ctrl=f_ctrl,
@@ -1471,6 +1468,7 @@ class HybridDetect(KeypointDetect):
 		
 		# actuator control
 		self.actuator = actuator
+		self.step_div = step_div
 
 		# finger data
 		self.group_ids = joint_list # joint names
@@ -2027,10 +2025,7 @@ def main() -> None:
 						filter_type=rospy.get_param('~filter', 'none'),
 						filter_iters=rospy.get_param('~filter_iters', 10),
 						f_ctrl=rospy.get_param('~f_ctrl', 30),
-						use_aruco=rospy.get_param('~use_aruco', False),
-						plt_id=rospy.get_param('~plot_id', -1),
 						use_tf=rospy.get_param('~use_tf', False),
-						step_div=rospy.get_param('~step_div', 100),
 					 	epochs=rospy.get_param('~epochs', 100),
 						rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB1"),
 					 	rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),

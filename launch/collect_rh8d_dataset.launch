@@ -27,10 +27,8 @@
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
 	<arg name="use_tf" default="true" /> 
-	<arg name="plot_id" default="-1" />
 	<arg name="rh8d_port" default="/dev/ttyUSB1" />
 	<arg name="rh8d_baud" default="1000000" />
-	<arg name="step_div" default="200" />
 	<arg name="epochs" default="1" /> 
 
 	<!-- detector params -->
@@ -38,7 +36,6 @@
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
 	<arg name="filter_iters" default="10" />
-	<arg name="use_aruco" default="false" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
@@ -179,11 +176,8 @@
 		<param name="filter" value="$(arg filter)" />
 		<param name="filter_iters" value="$(arg filter_iters)" /> 
 		<param name="f_ctrl" value="$(arg f_ctrl)" />
-		<param name="use_aruco" value="$(arg use_aruco)" />
-		<param name="plot_id" value="$(arg plot_id)" />
 		<param name="rh8d_port" value="$(arg rh8d_port)" />
 		<param name="rh8d_baud" value="$(arg rh8d_baud)" />
-		<param name="step_div" value="$(arg step_div)" /> 
 		<param name="epochs" value="$(arg epochs)" /> 
 		<param name="debug" value="$(arg debug)" /> 
 		<param name="test" value="$(eval test or not use_markers_camera)" /> 
