@@ -51,6 +51,7 @@ dependencies:
   - pybind11-global=2.12.0=py39hdb19cb5_0
   - pysocks=1.7.1=py39h06a4308_0
   - python=3.9.19=h955ad1f_1
+  - pip=24.3.1=pypi_0
   - pytorch=1.12.1=py3.9_cpu_0
   - pytorch-mutex=1.0=cpu
   - readline=8.2=h5eee18b_0
@@ -101,6 +102,4 @@ dependencies:
       - xtcocotools==1.14.3
       - zipp==3.19.2
       - rospkg==1.5.1
-      - catkin==0.8.10
-      - catkin-pkg==1.0.0
       - scipy==1.13.1
