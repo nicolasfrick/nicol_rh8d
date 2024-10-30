@@ -1,5 +1,6 @@
 name: nicol_rh8d
 channels:
+  - pypi
   - pytorch
   - defaults
 dependencies:
