@@ -1,4 +1,8 @@
 marker_camera_optical_frame: # wrt. marker camera holder
-  xyz: [-0.23833245, -0.07489504,  0.17535377]
-  rpy: [1.21068814, 1.14997418, 1.54508797] 
-  # mean reprojection error: 1.4921883423
+  xyz: [-0.23630064, -0.11393958,  0.11857452]
+  rpy: [1.23529705, 0.80019383, 1.53231089] 
+  # mean reprojection error: 1.9535933634995941
+  
+top_camera_optical_frame: # wrt. world
+  xyz: []
+  rpy: [] 

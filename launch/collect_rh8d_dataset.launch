@@ -27,7 +27,7 @@
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
 	<arg name="use_tf" default="true" /> 
-	<arg name="rh8d_port" default="/dev/ttyUSB1" />
+	<arg name="rh8d_port" default="/dev/ttyUSB0" />
 	<arg name="rh8d_baud" default="1000000" />
 	<arg name="epochs" default="1" /> 
 

@@ -32,7 +32,7 @@ from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-dt_now = datetime.now()
+dt_now = datetime.datetime.now()
 dt_now = '' # dt_now.strftime("%H_%M_%S")
 
 # data records
@@ -153,7 +153,7 @@ class DetectBase():
 			self.bridge = cv_bridge.CvBridge()
 			self.img_topic = camera_ns + '/image_raw'
 			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
-			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo, 10)
 			print("Camera height:", self.rgb_info.height, "width:", self.rgb_info.width)
 
 		# init detector
@@ -491,19 +491,6 @@ class KeypointDetect(DetectBase):
 			self.buf = tf2_ros.Buffer()
 			self.listener = tf2_ros.TransformListener(self.buf)
 
-		# img topics
-		if not test and attached:
-			self.initSubscriber()
-			if vis:
-				self.proc_pub = rospy.Publisher('processed_image', Image)
-				self.det_pub = rospy.Publisher('marker_detection', Image)
-				self.out_pub = rospy.Publisher('angle_detection', Image)
-				self.plot_pub = rospy.Publisher('keypoint_plot', Image)
-		# init vis
-		if vis and not attached:
-			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
-			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
-
 		# init controller
 		if attached:
 			self.rh8d_ctrl = MoveRobot()
@@ -517,6 +504,26 @@ class KeypointDetect(DetectBase):
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
 			self.record_cnt = waypoint_start_idx
 			self.data_cnt = waypoint_start_idx
+			
+		# load camera extrinsics
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camera_poses.yaml")
+		with open(fl, 'r') as fr:
+			extrinsics = yaml.safe_load(fr)
+			# marker cam
+			marker_cam_holder_to_cam_extr = extrinsics['marker_camera_optical_frame']
+			self.marker_cam_extr = Extrinsics()
+			self.marker_cam_extr.header.stamp = rospy.Time.now()
+			self.marker_cam_extr.header.frame_id = 'marker_camera_optical_frame'
+			self.marker_cam_extr.translation = np.array(marker_cam_holder_to_cam_extr['xyz'], dtype=np.float64)
+			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
+			# top cam
+			if use_top_camera:
+				world_to_top_cam_extr = extrinsics['top_camera_optical_frame']
+				self.top_cam_extr = Extrinsics()
+				self.top_cam_extr.header.stamp = rospy.Time.now()
+				self.top_cam_extr.header.frame_id = 'top_camera_optical_frame'
+				self.top_cam_extr.translation = np.array(world_to_top_cam_extr['xyz'], dtype=np.float64)
+				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
 
 		# load hand marker ids
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -528,13 +535,26 @@ class KeypointDetect(DetectBase):
 		self.root_joint = list(self.marker_config.keys())[0] # first joint
 		self.det_df_dict = {joint:  pd.DataFrame(columns=self.DET_COLS) for joint in self.marker_config.keys()} # angles dataset
 		
+		# init 3D keypoints dataset
 		if not test:
-			# init 3D keypoints dataset
 			self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
 			self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
 			self.keypt_keys.extend(self.initRH8DFK(urdf_pth)) # end links
 			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys} 
 			self.keypt_plot = KeypointPlot()
+			
+		# img topics
+		if not test and attached:
+			self.initSubscriber()
+			if vis:
+				self.proc_pub = rospy.Publisher('processed_image', Image)
+				self.det_pub = rospy.Publisher('marker_detection', Image)
+				self.out_pub = rospy.Publisher('angle_detection', Image)
+				self.plot_pub = rospy.Publisher('keypoint_plot', Image)
+		# init vis
+		if vis and not attached:
+			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
 	def saveCamInfo(self, info: sensor_msgs.msg.CameraInfo, fn: str, extr: Extrinsics=None, tf: dict=None) -> None:
 		if not self.save_record:
@@ -619,7 +639,7 @@ class KeypointDetect(DetectBase):
 		self.det_img_sub = Subscriber(self.img_topic, Image)
 		self.subs.append(self.det_img_sub)
 		# save camera info
-		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"))
+		self.saveCamInfo(self.rgb_info, os.path.join(KEYPT_DET_REC_DIR, "rs_d415_info_rgb.yaml"), self.marker_cam_extr)
 
 		if self.depth_enabled:
 			self.depth_topic = self.camera_ns.replace('color', 'depth')
@@ -639,7 +659,7 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"))
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"), self.top_cam_extr)
 			if self.depth_enabled:
 				self.top_depth_topic = self.top_camera_name.replace('color', 'depth')
 				top_depth_img_topic = self.top_depth_topic + '/image_rect_raw'	
@@ -658,7 +678,7 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.head_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.head_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_rgb.yaml"))
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_rgb.yaml")) # dynamic extrinsics
 			if self.depth_enabled:
 				self.head_depth_topic = self.head_camera_name.replace('color', 'depth')
 				head_depth_img_topic = self.head_depth_topic + '/image_rect_raw'	
@@ -678,7 +698,7 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.right_eye_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_R_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_R_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml")) # dynamic extrinsics
 			# left eye
 			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
 			self.left_img_sub = Subscriber(self.left_img_topic, Image)
@@ -686,7 +706,7 @@ class KeypointDetect(DetectBase):
 			# save camera info
 			print("Waiting for camera_info from", self.left_eye_camera_name + '/camera_info')
 			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			self.saveCamInfo(rgb_info, os.path.join(KEYPT_L_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml"))
+			self.saveCamInfo(rgb_info, os.path.join(KEYPT_L_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml")) # dynamic extrinsics
 		
 		# trigger condition
 		self.depth_frame_id = self.camera_ns.replace('color', 'depth').replace('/', '_')
@@ -1062,7 +1082,7 @@ class KeypointDetect(DetectBase):
 						transformed_point = rot_mat @ center_point + trans
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
-						projected_point, _ = cv2.projectPoints(transformed_point, rot_mat, trans, self.det.cmx, self.det.dist)
+						projected_point, _ = cv2.projectPoints(transformed_point, self.marker_cam_extr.rotation, self.marker_cam_extr.translation, self.det.cmx, self.det.dist)
 						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
 						# connect points
 						if last_projected_point is not None:
@@ -1656,6 +1676,8 @@ class CameraPoseDetect(DetectBase):
 
 	"""
 
+	CAM_LABEL_YPOS = 20
+
 	def __init__(self,
 			  	marker_length: float=0.010,
 				camera_ns: Optional[str]='',
@@ -1690,7 +1712,6 @@ class CameraPoseDetect(DetectBase):
 						fps=fps,
 						)
 		
-		self.CAM_LABEL_YPOS = 20
 		self.err_term = err_term
 		self.reprojection_errors = {}
 		self.lower_bounds = [cart_bound_low, cart_bound_low, cart_bound_low, -np.pi, -np.pi, -np.pi]
@@ -1837,7 +1858,7 @@ class CameraPoseDetect(DetectBase):
 				error.append(orientation_error)		
 
 				# reprojection_error
-				repr_err = self.projectSingleMarker(det, id, T_camera_world)
+				# repr_err = self.projectSingleMarker(det, id, T_camera_world)
 				# error.append(repr_err)
 
 		return np.hstack(error) if len(error) else np.array(error)
@@ -1907,11 +1928,6 @@ class CameraPoseDetect(DetectBase):
 					
 					# detect markers 
 					(marker_det, det_img, proc_img, _) = self.preProcImage()
-
-					for id, det in marker_det.items():
-						success, tvec, rvec, _ = ransacPose(det['ftrans'], getRotation(det['frot'], RotTypes.EULER, RotTypes.RVEC), det['corners'], det['points'], self.det.cmx, self.det.dist)
-						marker_det[id]['ftrans'] = tvec
-						marker_det[id]['frot'] = getRotation(rvec, RotTypes.RVEC, RotTypes.EULER)
 
 					# initially show 
 					if self.vis and self.cv_window:
