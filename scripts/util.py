@@ -5,8 +5,57 @@ import pandas as pd
 from enum import Enum
 from typing import Tuple
 from cv2 import Rodrigues
+from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
+dt_now = datetime.datetime.now()
+dt_now = dt_now.strftime("%H_%M_%S")
+# data records
+DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
+QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')
+KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection_' + dt_now + '.json')
+KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
+# image records
+JPG_QUALITY = 60
+REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+# quadrature encoder
+QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
+QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
+QDEC_DET_REC_DIR = os.path.join(QDEC_REC_DIR, 'det')
+# keypoints
+KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint_'+ dt_now)
+KEYPT_ORIG_REC_DIR = os.path.join(KEYPT_REC_DIR, 'orig')
+KEYPT_DET_REC_DIR = os.path.join(KEYPT_REC_DIR, 'det')
+KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
+KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'left_eye')
+KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
+KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
+	
+def mkDirs() -> None:
+    if not os.path.exists(REC_DIR):
+        os.mkdir(REC_DIR)
+    print("Writing images to", REC_DIR)
+    if not os.path.exists(QDEC_REC_DIR):
+        os.mkdir(QDEC_REC_DIR)
+    if not os.path.exists(QDEC_ORIG_REC_DIR):
+        os.mkdir(QDEC_ORIG_REC_DIR)
+    if not os.path.exists(QDEC_DET_REC_DIR):
+        os.mkdir(QDEC_DET_REC_DIR)
+    if not os.path.exists(KEYPT_REC_DIR):
+        os.mkdir(KEYPT_REC_DIR)
+    if not os.path.exists(KEYPT_ORIG_REC_DIR):
+        os.mkdir(KEYPT_ORIG_REC_DIR)
+    if not os.path.exists(KEYPT_DET_REC_DIR):
+        os.mkdir(KEYPT_DET_REC_DIR)
+    if not os.path.exists(KEYPT_R_EYE_REC_DIR):
+        os.mkdir(KEYPT_R_EYE_REC_DIR)
+    if not os.path.exists(KEYPT_L_EYE_REC_DIR):
+        os.mkdir(KEYPT_L_EYE_REC_DIR)
+    if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
+        os.mkdir(KEYPT_TOP_CAM_REC_DIR)
+    if not os.path.exists(KEYPT_HEAD_CAM_REC_DIR):
+        os.mkdir(KEYPT_HEAD_CAM_REC_DIR)
+	
 class NormalTypes(Enum):
 	XY='xy'
 	XZ='xz'

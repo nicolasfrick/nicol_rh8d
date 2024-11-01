@@ -34,57 +34,10 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 # TODO:
 # check record size deviation
-# remove crosshair
 # sub R joint 
-# check keypt plot
-
-
-dt_now = datetime.datetime.now()
-dt_now = '' # dt_now.strftime("%H_%M_%S")
-
-# data records
-DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
-QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')
-KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection_' + dt_now + '.json')
-KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
-# image records
-JPG_QUALITY = 60
-REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
-if not os.path.exists(REC_DIR):
-	os.mkdir(REC_DIR)
-print("Writing images to", REC_DIR)
-
-QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
-QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
-QDEC_DET_REC_DIR = os.path.join(QDEC_REC_DIR, 'det')
-if not os.path.exists(QDEC_REC_DIR):
-	os.mkdir(QDEC_REC_DIR)
-if not os.path.exists(QDEC_ORIG_REC_DIR):
-	os.mkdir(QDEC_ORIG_REC_DIR)
-if not os.path.exists(QDEC_DET_REC_DIR):
-	os.mkdir(QDEC_DET_REC_DIR)
-
-KEYPT_REC_DIR = os.path.join(REC_DIR, 'keypoint_'+ dt_now)
-KEYPT_ORIG_REC_DIR = os.path.join(KEYPT_REC_DIR, 'orig')
-KEYPT_DET_REC_DIR = os.path.join(KEYPT_REC_DIR, 'det')
-KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
-KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'left_eye')
-KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
-KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
-if not os.path.exists(KEYPT_REC_DIR):
-	os.mkdir(KEYPT_REC_DIR)
-if not os.path.exists(KEYPT_ORIG_REC_DIR):
-	os.mkdir(KEYPT_ORIG_REC_DIR)
-if not os.path.exists(KEYPT_DET_REC_DIR):
-	os.mkdir(KEYPT_DET_REC_DIR)
-if not os.path.exists(KEYPT_R_EYE_REC_DIR):
-	os.mkdir(KEYPT_R_EYE_REC_DIR)
-if not os.path.exists(KEYPT_L_EYE_REC_DIR):
-	os.mkdir(KEYPT_L_EYE_REC_DIR)
-if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
-	os.mkdir(KEYPT_TOP_CAM_REC_DIR)
-if not os.path.exists(KEYPT_HEAD_CAM_REC_DIR):
-	os.mkdir(KEYPT_HEAD_CAM_REC_DIR)
+# check keypt plot + tf proj
+# recompute travel time 
+# check jointT0 angle
 
 class DetectBase():
 	"""
@@ -505,6 +458,10 @@ class KeypointDetect(DetectBase):
 			self.rh8d_ctrl = MoveRobot()
 		else:
 			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
+		
+		# record directories
+		if save_imgs:
+			mkDirs()
 
 		# load waypoints
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint", waypoint_set)
@@ -2038,6 +1995,7 @@ def main() -> None:
 					 f_ctrl=rospy.get_param('~f_ctrl', 30),
 					 use_aruco=rospy.get_param('~use_aruco', False),
 					 plt_id=rospy.get_param('~plot_id', -1),
+					 save_imgs=rospy.get_param('~save_imgs', False),
 					 rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB1"),
 					 rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
  					 qdec_port=rospy.get_param('~qdec_port', '/dev/ttyUSB0'),

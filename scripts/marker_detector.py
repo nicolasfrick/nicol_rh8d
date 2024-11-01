@@ -48,6 +48,8 @@ class MarkerDetectorBase():
 		@type bool
 		@param refine_detection
 		@type bool
+		@param crosshair Draw camera coordinate system.
+		@type bool
 	"""
 
 	RED = (0,0,255)
@@ -66,6 +68,7 @@ class MarkerDetectorBase():
 							marker_length: float,
 							dt: Optional[float]=0.1,
 							bbox: Optional[Tuple]=None,
+							crosshair: Optional[bool]=False,
 							print_stats: Optional[bool]=True,
 							invert_pose: Optional[bool]=False,
 							filter_type: Optional[Union[FilterTypes, str]]=FilterTypes.NONE,
@@ -85,6 +88,7 @@ class MarkerDetectorBase():
 		self.marker_length = marker_length
 		self.filter_type = filter_type 
 		self.invert_perspective = invert_pose		
+		self.crosshair = crosshair
 		self.dt = dt
 		self.bbox = bbox
 		self.filters = {}
@@ -208,7 +212,8 @@ class MarkerDetectorBase():
 			(marker_poses, out_img, gray) = subroutine(img, gray, vis)
 
 			if vis:
-				self._drawCamCS(out_img)
+				if self.crosshair:
+					self._drawCamCS(out_img)
 				for _, pose in marker_poses.items():
 					out_img = cv2.drawFrameAxes(out_img, self.cmx, self.dist, pose['rvec'], pose['tvec'], self.marker_length*self.AXIS_LENGTH, self.AXIS_THICKNESS)
 					out_img = self._projPoints(out_img, pose['points'], pose['rvec'], pose['tvec'])

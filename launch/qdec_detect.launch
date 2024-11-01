@@ -11,6 +11,7 @@
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
 	<arg name="epochs" default="15" /> 
+	<arg name="save_imgs" default="true" />
 
 	<!-- detector params -->
 	<arg name="marker_length" default="0.01" />
@@ -105,6 +106,7 @@
 		<param name="test" value="$(arg test)" /> 
 		<param name="fps"     value="$(arg fps)" />
 		<param name="qdec_detect" value="true" />
+		<param name="save_imgs"     value="$(arg save_imgs)" />
 	</node>
 
 </launch>
