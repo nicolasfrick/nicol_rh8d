@@ -73,15 +73,15 @@ class KeypointPlot():
                             ax_scale: float=0.1,
                             linewidth: float=2.0,
                             grid_shape: Tuple=(1, 1),
-                            width_ratios: list=[1, 1], 
-                            height_ratios: list=[1, 1],
+                            width_ratios: list=[1], 
+                            height_ratios: list=[1],
                             ) -> None:
         
         self.shape = (shape[0], shape[1], 4) # rgba
         figsize = (shape[0] / dpi, shape[1] / dpi)
         self.fig = plt.figure(figsize=figsize)
         self.gs = gridspec.GridSpec(grid_shape[0], grid_shape[1], width_ratios=width_ratios, height_ratios=height_ratios)
-        self.ax_3d = fig.add_subplot(self.gs[0, 0], projection='3d')
+        self.ax_3d = self.fig.add_subplot(self.gs[0, 0], projection='3d')
         self.ax_3d.set_xlim([llim, hlim])
         self.ax_3d.set_ylim([llim, hlim])
         self.ax_3d.set_zlim([llim, hlim])

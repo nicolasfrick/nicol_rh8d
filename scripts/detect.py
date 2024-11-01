@@ -547,10 +547,10 @@ class KeypointDetect(DetectBase):
 		if not test and attached:
 			self.initSubscriber()
 			if vis:
-				self.proc_pub = rospy.Publisher('processed_image', Image)
-				self.det_pub = rospy.Publisher('marker_detection', Image)
-				self.out_pub = rospy.Publisher('angle_detection', Image)
-				self.plot_pub = rospy.Publisher('keypoint_plot', Image)
+				self.proc_pub = rospy.Publisher('processed_image', Image, queue_size=10)
+				self.det_pub = rospy.Publisher('marker_detection', Image, queue_size=10)
+				self.out_pub = rospy.Publisher('angle_detection', Image, queue_size=10)
+				self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
 		# init vis
 		if vis and not attached:
 			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
@@ -1365,7 +1365,8 @@ class KeypointDetect(DetectBase):
 						# move arm and hand
 						print(f"Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end=" ... ")
 						print(waypoint)
-						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
+						# success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
+						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, move_time)
 						print("done\n") if success else print("fail\n")
 
 						# look towards hand

@@ -2,10 +2,11 @@
 <!-- 
 	run robot alongside with:
 	$ $HOME/test_ws/src/nicol_ros/nicol_vision/config/configure_cameras.sh
-	$ roslaunch nicol_controller NICOL_launch_all.launch use_platform:=true launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false compat_mode:=false
+	$ roslaunch nicol_controller NICOL_launch_all.launch use_platform:=true launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false use_hand_sensors:=false 
  -->
 
 	<!-- glob params -->
+    <arg name="attached"      default="false"/>
 	<arg name="use_markers_camera"  default="true" />
 	<arg name="use_realsense"  default="true" />
 	<arg name="use_eye_cameras" default="false" />
@@ -35,7 +36,7 @@
 	<arg name="marker_length" default="0.01" />
 	<arg name="use_reconfigure" default="false" />
 	<arg name="filter" default="none" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
-	<arg name="filter_iters" default="10" />
+	<arg name="filter_iters" default="5" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>
@@ -62,14 +63,14 @@
     <arg name="camera_info_url"                          default="file:///$(find nicol_rh8d)/cfg/camcalib_$(arg width)x$(arg height).yaml"  doc=" camera info loading"/>
 
 	<!-- model args -->
+	<arg name="load_marker_cam_model" default="false"/>
 	<arg name="theta"      default="0" doc="Angle of wrist part wrt. z axis of link6"/>
     <arg name="x_dist"      default="-0.3527" doc="Distance along x axis"/>
 	<arg name="y_dist"      default="0.01245" doc="Distance along y axis"/>
     <arg name="z_dist"      default="0.2406" doc="Distance along z axis"/>
-    <arg name="attached"      default="false"/>
 	<arg name="launch_rviz"      default="false"/>
 
-	<include file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+	<include if="$(arg load_marker_cam_model)" file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
 		<arg name="theta"      value="$(arg theta)"/>
 		<arg name="x_dist"      value="$(arg x_dist)" />
 		<arg name="y_dist"      value="$(arg y_dist)" />

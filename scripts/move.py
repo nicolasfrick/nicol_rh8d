@@ -110,13 +110,15 @@ class MoveRobot():
 		crnt = np.ones(len(vals)) * np.inf
 		t_start = time.time()
 		# wait for reach or abort
-		while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ):
-			time.sleep(0.1)
+		# while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ):
+		# 	time.sleep(0.1)
+		# 	if len(self.states):
+		# 		crnt = self.states.pop()
 			
-			# abort
-			if (time.time() - t_start) > t_path:
-				print("Position reach timeout, goal:\n", list(goal), "\ncurrent:\n", list(crnt))
-				return False, dict(zip(list(cmd.keys()), list(crnt)))
+		# 	# abort
+		# 	if (time.time() - t_start) > t_path:
+		# 		print("Position reach timeout, goal:\n", list(goal), "\ncurrent:\n", list(crnt))
+		# 		return False, dict(zip(list(cmd.keys()), list(crnt)))
 
 		time.sleep(t_settle)
 		return True, dict(zip(list(cmd.keys()), list(crnt)))
@@ -180,9 +182,10 @@ class MoveRobot():
 
 	def moveHeadTaskSpace(self, x: float, y: float, z: float, t_path: float) -> bool:
 		req = SetKinematicsPoseRequest()
+		req.end_effector_name = 'left_eye_link'
 		req.kinematics_pose.pose.position.x = x
-		req.kinematics_pose.pose.position.x = y
-		req.kinematics_pose.pose.position.x = z
+		req.kinematics_pose.pose.position.y = y
+		req.kinematics_pose.pose.position.z = z
 		req.path_time = t_path
 		try:
 			return self.head_task_goal_client.call(req)
