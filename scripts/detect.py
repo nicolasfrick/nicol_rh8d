@@ -32,6 +32,13 @@ from nicol_rh8d.cfg import ArucoDetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
+# TODO:
+# check record size deviation
+# remove crosshair
+# sub R joint 
+# check keypt plot
+
+
 dt_now = datetime.datetime.now()
 dt_now = '' # dt_now.strftime("%H_%M_%S")
 
@@ -362,7 +369,8 @@ class KeypointDetect(DetectBase):
 
 	KEYPT_THKNS = 5
 	KEYPT_LINE_THKNS = 2
-	CHAIN_COLORS = [(255,255,255), (0,0,255), (0,255,0), (255,0,0), (255,255,0), (255,0,255)]
+	CHAIN_COLORS = [(255,255,255), (0,0,255), (0,255,0), (255,0,0), (0,255,255), (255,255,0)]
+	PLOT_COLORS = ['w', 'r', 'g', 'b', 'y', 'c']
 
 	# tf rames to track
 	TF_TARGET_FRAME = 'world'
@@ -383,6 +391,7 @@ class KeypointDetect(DetectBase):
 								'frame_cnt', 
 								'rec_cnt', 
 								'cmd', 
+								'state',
 								'epoch', 
 								'direction', 
 								'description', 
@@ -410,7 +419,7 @@ class KeypointDetect(DetectBase):
 				epochs: Optional[int]=10,
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
-				flip_outliers: Optional[bool]=True,
+				flip_outliers: Optional[bool]=False,
 				refine_pose: Optional[bool]=True,
 				fps: Optional[float]=30.0,
 				save_imgs: Optional[bool]=True,
@@ -502,8 +511,6 @@ class KeypointDetect(DetectBase):
 		self.waypoint_df = pd.read_json(fl, orient='index')
 		if waypoint_start_idx > 0:
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
-			self.record_cnt = waypoint_start_idx
-			self.data_cnt = waypoint_start_idx
 			
 		# load camera extrinsics
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camera_poses.yaml")
@@ -775,9 +782,10 @@ class KeypointDetect(DetectBase):
 			print(e)
 			return {}
 
-	def saveRecord(self) -> dict:	
+	def saveRecord(self) -> Tuple[dict, dict]:	
 		num_saved = 0
 		tf_rh8d_dict = {}
+		joint_states_dict = {}
 
 		# joint states and rh8d tf
 		if len(self.joint_state_buffer):
@@ -790,6 +798,7 @@ class KeypointDetect(DetectBase):
 							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
 						 }
 			self.js_df = pd.concat([self.js_df, pd.DataFrame([state_dict])], ignore_index=True)
+			joint_states_dict = dict(zip(msg.name, msg.position))
 			
 			# save rh8d tf
 			if self.use_tf:
@@ -862,36 +871,37 @@ class KeypointDetect(DetectBase):
 						self.right_eye_tf_df = pd.concat([self.right_eye_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 		# check df lengths
-		if self.record_cnt != self.js_df.last_valid_index() and self.record_cnt:
+		if self.record_cnt != self.js_df.last_valid_index():
 			print("Record size deviates js dataframe index:", self.record_cnt, "!=", self.js_df.last_valid_index())
 		if self.use_tf:
-			if self.record_cnt != self.rh8d_tf_df.last_valid_index() and self.record_cnt:
+			if self.record_cnt != self.rh8d_tf_df.last_valid_index():
 				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tf_df.last_valid_index())
-			if self.record_cnt != self.rh8d_tcp_tf_df.last_valid_index() and self.record_cnt:
+			if self.record_cnt != self.rh8d_tcp_tf_df.last_valid_index():
 				print("Record size deviates from rh8d tf dataframe index:", self.record_cnt, "!=", self.rh8d_tcp_tf_df.last_valid_index())
 			if self.use_eye_cameras:
-				if self.record_cnt != self.right_eye_tf_df.last_valid_index() and self.record_cnt:
+				if self.record_cnt != self.right_eye_tf_df.last_valid_index():
 					print("Record size deviates from right eye dataframe index:", self.record_cnt, "!=", self.right_eye_tf_df.last_valid_index())
-				if self.record_cnt != self.left_eye_tf_df.last_valid_index() and self.record_cnt:
+				if self.record_cnt != self.left_eye_tf_df.last_valid_index():
 					print("Record size deviates from left eye dataframe index:", self.record_cnt, "!=", self.left_eye_tf_df.last_valid_index())
 			if self.use_head_camera:
-				if self.record_cnt != self.head_rs_tf_df.last_valid_index() and self.record_cnt:
+				if self.record_cnt != self.head_rs_tf_df.last_valid_index():
 					print("Record size deviates from head rs dataframe index:", self.record_cnt, "!=", self.head_rs_tf_df.last_valid_index())
 		
 		# increment image counter
 		if num_saved > 0:
 			self.record_cnt += 1
 
-		return tf_rh8d_dict
+		return tf_rh8d_dict, joint_states_dict
 
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict, float]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
 
 		tf_dict = {}
+		states_dict = {}
 		timestamp = 0.0
 
 		if self.test:
-			return super().preProcImage(vis), tf_dict, timestamp
+			return super().preProcImage(vis), tf_dict, states_dict, timestamp
 
 		# wait for buffer to be filled
 		while len(self.det_img_buffer) != self.filter_iters:
@@ -920,9 +930,9 @@ class KeypointDetect(DetectBase):
 
 			# save additional resources
 			if self.save_record:
-				tf_dict = self.saveRecord()
+				tf_dict, states_dict = self.saveRecord()
 
-			return marker_det, det_img, proc_img, raw_img, tf_dict, timestamp
+			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
 		
 	def normalXY(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XY plane in the marker frame.
@@ -1083,6 +1093,8 @@ class KeypointDetect(DetectBase):
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
 						projected_point, _ = cv2.projectPoints(transformed_point, self.marker_cam_extr.rotation, self.marker_cam_extr.translation, self.det.cmx, self.det.dist)
+						projected_point = np.int32(projected_point.flatten())
+						print(projected_point)
 						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
 						# connect points
 						if last_projected_point is not None:
@@ -1092,7 +1104,7 @@ class KeypointDetect(DetectBase):
 						if idx == 0:
 							projected_point_parent = projected_point
 						# 3D plot data
-						plot_dicts[-1].update({joint: {'trans': trans, 'rot_mat': rot_mat, 'color': color}})
+						plot_dicts[-1].update({joint: {'trans': trans, 'rot_mat': rot_mat, 'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]}})
 
 		# plot keypoints 3D
 		self.keypt_plot.clear()
@@ -1144,12 +1156,12 @@ class KeypointDetect(DetectBase):
 
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
-		(marker_det, det_img, proc_img, img, base_tf, timestamp) = self.preProcImage()
+		(marker_det, det_img, proc_img, img, base_tf, joint_states, timestamp) = self.preProcImage()
 		out_img = img.copy()
 
 		res = True
 		fk_dict = {}
-		joint_angles = {joint: {'angle': None} for joint in self.marker_config.keys()}
+		joint_angles = {joint: None for joint in self.marker_config.keys()}
 		if marker_det:
 			detected_ids = marker_det.keys()
 
@@ -1180,6 +1192,7 @@ class KeypointDetect(DetectBase):
 									'frame_cnt': self.frame_cnt, 
 									'rec_cnt': self.record_cnt, 
 									'cmd': pos_cmd[config['actuator']], 
+									'state': joint_states[config['actuator']],
 									'epoch': epoch,
 									'direction': direction,
 									'description': description,
@@ -1191,13 +1204,14 @@ class KeypointDetect(DetectBase):
 									'child_frame_id': config['child'],
 									'timestamp': timestamp,
 									}
-					joint_angles[joint].update({'angle': angle})
+					joint_angles[joint] = angle
 					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add angle to detection
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
-					beep()
+					# beep()
 					res = False
-					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([{key: np.nan for key in self.DET_COLS}])], ignore_index=True) # add nan to results
+					nan_entry = dict(zip(self.DET_COLS, [np.nan for _ in self.DET_COLS]))
+					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([nan_entry])], ignore_index=True) # add nan to results
 					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }, alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
 				
 				# check data counter
@@ -1211,7 +1225,7 @@ class KeypointDetect(DetectBase):
 					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
 
 		else:
-			beep()
+			# beep()
 			res = False
 			print("No detection")
 			# add nan entry
@@ -1238,7 +1252,7 @@ class KeypointDetect(DetectBase):
 				cv2.imshow('Output', out_img)
 				cv2.imshow('Plot', kpt_plt)
 			elif self.attached:
-				self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="bgr8"))
+				self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="mono8"))
 				self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
@@ -1376,12 +1390,13 @@ class KeypointDetect(DetectBase):
 						head_home = False
 
 						# detect angles
-						success = False
-						while not success:
-							success = self.detectionRoutine(waypoint, e, direction, description)
-							if not success:
-								beep()
-								success = input("Enter 'r' to repeat recording or other key to skip.") != 'r'
+						self.detectionRoutine(waypoint, e, direction, description)
+						# success = False
+						# while not success:
+						# 	success = self.detectionRoutine(waypoint, e, direction, description)
+						# 	if not success:
+						# 		beep()
+						# 		success = input("Enter 'r' to repeat recording or other key to skip.") != 'r'
 
 						if self.vis and not self.attached:
 							if cv2.waitKey(1) == ord("q"):
@@ -1997,7 +2012,7 @@ def main() -> None:
 				   test=rospy.get_param('~test', False),
 				   fps=rospy.get_param('~fps', 30.0),
 				   refine_pose=True,
-				   flip_outliers=True,
+				   flip_outliers=False,
 				   ).runDebug()
 	elif rospy.get_param('~camera_pose', False):
 		CameraPoseDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),

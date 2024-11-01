@@ -77,7 +77,7 @@ class KeypointPlot():
                             height_ratios: list=[1],
                             ) -> None:
         
-        self.shape = (shape[0], shape[1], 4) # rgba
+        self.shape = (shape[0], shape[1], 3) # rgb
         figsize = (shape[0] / dpi, shape[1] / dpi)
         self.fig = plt.figure(figsize=figsize)
         self.gs = gridspec.GridSpec(grid_shape[0], grid_shape[1], width_ratios=width_ratios, height_ratios=height_ratios)

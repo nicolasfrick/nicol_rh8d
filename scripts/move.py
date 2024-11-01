@@ -22,7 +22,7 @@ class MoveRobot():
 	M_PI_2 = np.pi*0.5
 
 	RH8D_VEL = 1.225 # rad/s # 0.13s/60°
-	ACTUATOR_VEL = 0.10472 # rad/s
+	ACTUATOR_VEL = 0.10472/2 # rad/s
 	ACTUATOR_ACCEL = 0.17453 # rad/s^2
 
 	HEAD_NAME = "/NICOL/head"
@@ -216,9 +216,67 @@ class MoveRobot():
 	def estimateMoveTime(self, current: list, goal: list) -> float:
 		omp_distance =	self.angularDistanceOMP(current, goal)
 		rh8d_distance = self.angularDistanceRH8D(current, goal)
-		t_move_omp = np.max(omp_distance / self.ACTUATOR_VEL) + (self.ACTUATOR_VEL / self.ACTUATOR_ACCEL)
-		t_move_rh8d = np.max(rh8d_distance / self.RH8D_VEL)
+		t_move_omp = max(np.max(omp_distance / self.ACTUATOR_VEL) + (self.ACTUATOR_VEL / self.ACTUATOR_ACCEL), 1.0)
+		t_move_rh8d = max(np.max(rh8d_distance / self.RH8D_VEL), 1.0)
 		return max(t_move_omp, t_move_rh8d)
+
+	@classmethod
+	def interleaveJoints(self, finger_waypoints: np.ndarray, interleaving_offset: float, wps_df: pd.DataFrame) -> pd.DataFrame:
+		finger_start_cnt = len(wps_df)
+		wp_cnt = len(self.INTERLEAVED_JOINTS)*[0]
+
+		while wps_df.loc[wps_df.last_valid_index(), self.INTERLEAVED_JOINTS[-1]] < finger_waypoints[-1]:
+			print("finger flexion", len(wps_df))
+			last_waypoint =  wps_df.loc[wps_df.last_valid_index()]
+			waypoint = last_waypoint.copy()
+
+			for idx, joint in enumerate(self.INTERLEAVED_JOINTS):
+				if (idx == 0 and last_waypoint[self.INTERLEAVED_JOINTS[0]]  < finger_waypoints[-1]) \
+					or (last_waypoint[self.INTERLEAVED_JOINTS[idx-1]] >= interleaving_offset):
+					if wp_cnt[idx] < len(finger_waypoints):
+						waypoint[joint] = finger_waypoints[wp_cnt[idx]]
+						wp_cnt[idx] += 1
+					else:
+						waypoint[joint] = finger_waypoints[-1]
+
+			t_travel = self.estimateMoveTime(last_waypoint[:-4].values, waypoint[:-4].values)
+			waypoint[-4] = False
+			waypoint[-3] = 1
+			waypoint[-2] = "finger flexion"
+			waypoint[-1] = t_travel
+			wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)	
+
+		# reverse
+		inverted_seq = wps_df.tail(len(wps_df) - finger_start_cnt)
+		inverted_seq = inverted_seq.iloc[::-1]
+		inverted_seq['direction'] = inverted_seq['direction'].replace(1, -1)
+		wps_df = pd.concat([wps_df, inverted_seq], ignore_index=True)
+
+		return wps_df
+	
+	@classmethod
+	def sequenceJoints(self, finger_waypoints: np.ndarray, wps_df: pd.DataFrame) -> pd.DataFrame:
+		for finger_joint in self.INTERLEAVED_JOINTS:
+			for rh8d_wp in finger_waypoints:
+				print(finger_joint, "flexion", len(wps_df))
+				last_wp = wps_df.loc[wps_df.last_valid_index()]
+				waypoint = last_wp.copy()
+				waypoint.loc[finger_joint] = rh8d_wp
+				t_travel = self.estimateMoveTime(last_wp[: -4].values, waypoint[: -4].values)
+				waypoint.loc["reset_angle"] = False
+				waypoint.loc["direction"] = 1
+				waypoint.loc["description"] = f"{finger_joint} flexion"
+				waypoint.loc["t_travel"] = t_travel
+				wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)
+
+			# reverse
+			inverted_seq = wps_df.tail(len(finger_waypoints)+1)
+			inverted_seq = inverted_seq.iloc[::-1]
+			inverted_seq['reset_angle'] = inverted_seq['reset_angle'].replace(True, False)
+			inverted_seq['direction'] = inverted_seq['direction'].replace(1, -1)
+			wps_df = pd.concat([wps_df, inverted_seq], ignore_index=True)
+
+		return wps_df
 
 	@classmethod
 	def generateWaypointsSequential(self, 
@@ -227,6 +285,7 @@ class MoveRobot():
 													finger_resolution_deg: float=170.0, 
 													interleaving_offset_deg: float=60.0,
 													t_exp: float=2.0,
+													interleave: bool=False,
 													) -> None:
 		"""	   	  1. move home position
 					2. move start position
@@ -373,35 +432,11 @@ class MoveRobot():
 				last_waypoint[-1] = t_travel
 				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
-				# fingers interleaved
-				finger_start_cnt = len(wps_df)
-				wp_cnt = len(self.INTERLEAVED_JOINTS)*[0]
-				while wps_df.loc[wps_df.last_valid_index(), self.INTERLEAVED_JOINTS[-1]] < finger_waypoints[-1]:
-					print("finger flexion", len(wps_df))
-					last_waypoint =  wps_df.loc[wps_df.last_valid_index()]
-					waypoint = last_waypoint.copy()
-
-					for idx, joint in enumerate(self.INTERLEAVED_JOINTS):
-						if (idx == 0 and last_waypoint[self.INTERLEAVED_JOINTS[0]]  < finger_waypoints[-1]) \
-							or (last_waypoint[self.INTERLEAVED_JOINTS[idx-1]] >= interleaving_offset):
-							if wp_cnt[idx] < len(finger_waypoints):
-								waypoint[joint] = finger_waypoints[wp_cnt[idx]]
-								wp_cnt[idx] += 1
-							else:
-								waypoint[joint] = finger_waypoints[-1]
-
-					t_travel = self.estimateMoveTime(last_waypoint[:-4].values, waypoint[:-4].values)
-					waypoint[-4] = False
-					waypoint[-3] = 1
-					waypoint[-2] = "finger flexion"
-					waypoint[-1] = t_travel
-					wps_df = pd.concat([wps_df, pd.DataFrame([waypoint])],  ignore_index=True)		
-
-				# reverse
-				inverted_seq = wps_df.tail(len(wps_df) - finger_start_cnt)
-				inverted_seq = inverted_seq.iloc[::-1]
-				inverted_seq['direction'] = inverted_seq['direction'].replace(1, -1)
-				wps_df = pd.concat([wps_df, inverted_seq], ignore_index=True)
+				# finger joints
+				if interleave:
+					wps_df = self.interleaveJoints(finger_waypoints, interleaving_offset, wps_df)
+				else:
+					wps_df = self.sequenceJoints(finger_waypoints, wps_df)
 
 		# last waypoint is home
 		wps_df = pd.concat([wps_df, pd.DataFrame([dict(zip(cols, home))])], ignore_index=True) 
@@ -412,9 +447,10 @@ class MoveRobot():
 		t_total = str(datetime.timedelta(seconds=t_total))
 		t_str = t_total.split('.')[0].replace(':','_')
 		h_str = t_str.split('_')[0]
-		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints_{int(robot_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{h_str}h.json'), orient="index", indent=1, double_precision=3)		
+		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints{"_interleaved" if interleave else ""}_{int(robot_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{h_str}h.json'), orient="index", indent=1, double_precision=3)		
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential(30,30,10,5)
+	# MoveRobot.generateWaypointsSequential(30,30,10,5)
+	MoveRobot.generateWaypointsSequential()
 	
