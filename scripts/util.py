@@ -252,8 +252,9 @@ def readDataset(filepth: str) -> dict:
 	df = pd.read_json(os.path.join(pth, filepth), orient='index')
 	return {joint: pd.DataFrame.from_dict(data, orient='index') for joint, data in df.iloc[0].items()}
 
-def beep() -> None:
-	subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
+def beep(do_beep: bool=True) -> None:
+	if do_beep:
+	    subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
 
 def greenScreen(img: cv2.typing.MatLike):
 	repl = np.ones(img.shape, dtype=np.float32) * 255

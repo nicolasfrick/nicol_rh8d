@@ -300,6 +300,8 @@ class KeypointDetect(DetectBase):
 		@type float
 		@param urdf_pth
 		@type str
+		@param make_noise
+		@type bool
 
 	"""
 
@@ -390,6 +392,7 @@ class KeypointDetect(DetectBase):
 				waypoint_start_idx: Optional[int]=0,
 				sync_slop: Optional[float]=0.1,
 				urdf_pth: Optional[str]='rh8d.urdf',
+				make_noise: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -414,6 +417,7 @@ class KeypointDetect(DetectBase):
 		self.attached = attached
 		self.sync_slop = sync_slop
 		self.save_record = save_imgs
+		self.make_noise = make_noise
 		self.use_eye_cameras = use_eye_cameras
 		self.use_top_camera = use_top_camera
 		self.use_head_camera = use_head_camera
@@ -850,7 +854,7 @@ class KeypointDetect(DetectBase):
 
 		return tf_rh8d_dict, joint_states_dict
 
-	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict, float]:
+	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict, dict, float]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
 
 		tf_dict = {}
@@ -865,6 +869,7 @@ class KeypointDetect(DetectBase):
 			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
 			time.sleep(1/self.fps)
 
+        # lock updates on img queues
 		with self.buf_lock:
 
 			# process images
@@ -879,14 +884,14 @@ class KeypointDetect(DetectBase):
 			# align rotations by consens
 			if self.flip_outliers:
 				if not self.flipOutliers(marker_det):
-					beep()
+					beep(self.make_noise)
 
 			# improve detection
 			if self.refine_pose:
 				self.refineDetection(marker_det)
 
 			# save additional resources
-			if self.save_record:
+			if self.save_record and marker_det:
 				tf_dict, states_dict = self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
@@ -1027,7 +1032,7 @@ class KeypointDetect(DetectBase):
 		plot_img = np.ones(self.keypt_plot.img_shape, dtype=np.uint8) * 255
 		
 		# root joints not detected
-		if not self.chain_complete[0]:
+		if not self.chain_complete[0] or not keypt_dict:
 			return plot_img
 		
 		plot_dicts = []
@@ -1119,6 +1124,8 @@ class KeypointDetect(DetectBase):
 		res = True
 		fk_dict = {}
 		joint_angles = {joint: None for joint in self.marker_config.keys()}
+		
+        # at least one detection
 		if marker_det:
 			detected_ids = marker_det.keys()
 
@@ -1161,12 +1168,12 @@ class KeypointDetect(DetectBase):
 									'child_frame_id': config['child'],
 									'timestamp': timestamp,
 									}
-					joint_angles[joint] = angle
-					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add angle to detection
+					joint_angles[joint] = angle # add angle for keypoint vis
+					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add to detection for drawings
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
-					# beep()
 					res = False
+					beep(self.make_noise)
 					nan_entry = dict(zip(self.DET_COLS, [np.nan for _ in self.DET_COLS]))
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([nan_entry])], ignore_index=True) # add nan to results
 					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }, alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
@@ -1181,17 +1188,13 @@ class KeypointDetect(DetectBase):
 				for link, fk in fk_dict.items():
 					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
 
+        # no marker detected
 		else:
-			# beep()
+			beep(self.make_noise)
 			res = False
 			print("No detection")
-			# add nan entry
-			for joint in self.marker_config.keys():
-				self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([{key: np.nan for key in self.DET_COLS}])], ignore_index=True)
-			if not self.test:
-				for link in self.keypt_keys:
-					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([{key: np.nan for key in self.KEYPT_COLS}])], ignore_index=True)
-			
+		
+        # draw detections
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
@@ -1214,7 +1217,8 @@ class KeypointDetect(DetectBase):
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 
-			if self.save_record:
+            # save drawings and original
+			if self.save_record and marker_det:
 				try:
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.data_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
 					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.data_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
@@ -1224,7 +1228,7 @@ class KeypointDetect(DetectBase):
 					return False
 				
 		# increment data counter 
-		if self.save_record:
+		if self.save_record and marker_det:
 			self.data_cnt += 1
 			if self.data_cnt != self.record_cnt:
 				print("IMAGE RECORD DEVIATION, record index: ", str(self.data_cnt), " img index:", str(self.record_cnt))
@@ -1272,7 +1276,7 @@ class KeypointDetect(DetectBase):
 						while not success:
 							success = self.detectionRoutine(waypoint, e, direction, description)
 							if not success:
-								beep()
+								beep(self.make_noise)
 								success = input("Enter 'r' to repeat recording or other key to skip.") != 'r'
 
 						if self.vis and not self.attached:
@@ -1352,7 +1356,7 @@ class KeypointDetect(DetectBase):
 						# while not success:
 						# 	success = self.detectionRoutine(waypoint, e, direction, description)
 						# 	if not success:
-						# 		beep()
+						# 		beep(self.make_noise)
 						# 		success = input("Enter 'r' to repeat recording or other key to skip.") != 'r'
 
 						if self.vis and not self.attached:
@@ -1509,7 +1513,7 @@ class HybridDetect(KeypointDetect):
 				qdec_angles = self.qdec.readMedianAnglesRad()
 				if not qdec_angles:
 					print("No qdec angles")
-					beep()
+					beep(self.make_noise)
 					return False
 				
 				# cv angles
@@ -1542,7 +1546,7 @@ class HybridDetect(KeypointDetect):
 			else:
 				print("Cannot detect all required ids, missing: ", end=" ")
 				[print(id, end=" ") if id not in marker_det.keys() else None for id in self.target_ids]
-				beep()
+				beep(self.make_noise)
 		else:
 			print("No detection")
 			
