@@ -40,7 +40,7 @@ find_package(OpenCV)
 ################################################################################
 # Generate dynamic reconfigure parameters in the 'cfg' folder
 generate_dynamic_reconfigure_options(
-  cfg/ArucoDetectorConfig.cfg
+  cfg/DetectorConfig.cfg
   cfg/VideoStream.cfg
 )
 

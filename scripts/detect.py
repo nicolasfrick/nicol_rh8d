@@ -28,7 +28,7 @@ from plot_record import *
 from pose_filter import *
 from qdec_serial import *
 from rh8d_serial import *
-from nicol_rh8d.cfg import ArucoDetectorConfig
+from nicol_rh8d.cfg import DetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
@@ -143,7 +143,7 @@ class DetectBase():
 		# init dynamic reconfigure
 		if use_reconfigure:
 			print("Using reconfigure server")
-			self.det_config_server = dynamic_reconfigure.server.Server(ArucoDetectorConfig, self.det.setDetectorParams)
+			self.det_config_server = dynamic_reconfigure.server.Server(DetectorConfig, self.det.setDetectorParams)
 
 	def flipOutliers(self, detections: dict, tolerance: float=0.5) -> bool:
 		"""Check if all Z axes are oriented similarly and 
