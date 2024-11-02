@@ -33,7 +33,6 @@ from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
 # TODO:
-# check record size deviation
 # sub R joint 
 # check keypt plot + tf proj
 # check jointT0 angle
@@ -867,7 +866,7 @@ class KeypointDetect(DetectBase):
 		# wait for buffer to be filled
 		while len(self.det_img_buffer) != self.filter_iters:
 			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
-			time.sleep(1/self.fps)
+			rospy.sleep(1/self.fps)
 
 		# lock updates on img queues
 		with self.buf_lock:
@@ -1330,30 +1329,35 @@ class KeypointDetect(DetectBase):
 						if positions is not None:
 							if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(positions, 3), np.round(list(waypoint.values()), 3)), 0.0) ):
 								self.rh8d_ctrl.moveHeadHome(1.5)
-								time.sleep(1.5)
+								rospy.sleep(1.5)
 								head_home = True
 						else:
 							self.rh8d_ctrl.moveHeadHome(1.5)
-							time.sleep(1.5)
+							rospy.sleep(1.5)
 							head_home = True
 
 						# move arm and hand
 						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s")
-						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
+						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
 						print("done\n") if success else print("fail\n")
 						# wait for zero velocities
-						while not all( np.isclose(self.rh8d_ctrl.jointVelocities(), 0.0) ):
-							print("Waiting")
-							time.sleep(0.1)
+						velocities = np.ones(self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7'], dtype=np.float32) * np.inf
+						while not all( np.isclose(np.round(velocities, 1), 0.0) ):
+							rospy.sleep(0.1)
+							velocities = self.rh8d_ctrl.jointVelocities()
+							if velocities is None:
+								velocities = np.ones(self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7'], dtype=np.float32) * np.inf
+							velocities = velocities[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']]
+							print(np.round(velocities, 1))
 
 						# settle and record images
 						for _ in range(self.filter_iters*2):
-							time.sleep(1/self.fps)
+							rospy.sleep(1/self.fps)
 
 						# look towards hand
 						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
 						self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
-						time.sleep(2.0 if head_home else 1.0)
+						rospy.sleep(2.0 if head_home else 1.0)
 						head_home = False
 
 						# detect angles

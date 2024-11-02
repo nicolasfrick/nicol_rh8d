@@ -102,12 +102,13 @@ class MoveRobot():
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
 		return self.reachPositionBlocking(cmd, t_path)
 
-	def reachPositionBlocking(self, cmd: dict, t_path: float, t_block: float=0.0) -> bool:
+	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> bool:
 		# send position
 		if not self.moveArmJointSpace(cmd, t_path):
 			return False
 		# wait
-		time.sleep(t_block)
+		time.sleep(t_path)
+		time.sleep(t_settle)
 		return True
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:
@@ -120,7 +121,8 @@ class MoveRobot():
 		req.joint_position.position = pos
 		req.path_time = t_path
 		try:
-			return self.right_joint_goal_client.call(req)
+			res = self.right_joint_goal_client.call(req)
+			return res.is_planned
 		except rospy.ServiceException as e:
 			print(e)
 			return False
@@ -138,7 +140,8 @@ class MoveRobot():
 		req.joint_position.position = self.HEAD_INIT
 		req.path_time = t_path
 		try:
-			return self.head_joint_goal_client.call(req)
+			res = self.head_joint_goal_client.call(req)
+			return res.is_planned
 		except rospy.ServiceException as e:
 			print(e)
 			return False
@@ -149,7 +152,8 @@ class MoveRobot():
 		req.joint_position.position = self.HEAD_HOME
 		req.path_time = t_path
 		try:
-			return self.head_joint_goal_client.call(req)
+			res = self.head_joint_goal_client.call(req)
+			return res.is_planned
 		except rospy.ServiceException as e:
 			print(e)
 			return False
@@ -162,7 +166,8 @@ class MoveRobot():
 		req.joint_position.position = [joint_y, joint_z]
 		req.path_time = t_path
 		try:
-			return self.head_joint_goal_client.call(req)
+			res = self.head_joint_goal_client.call(req)
+			return res.is_planned
 		except rospy.ServiceException as e:
 			print(e)
 			return False
@@ -175,14 +180,15 @@ class MoveRobot():
 		req.kinematics_pose.pose.position.z = z
 		req.path_time = t_path
 		try:
-			return self.head_task_goal_client.call(req)
+			res = self.head_task_goal_client.call(req)
+			return res.is_planned
 		except rospy.ServiceException as e:
 			print(e)
 			return False
 
 	def rightJointStatesCB(self, msg: JointState) -> None:
-		self.positions.append(np.array(msg.position))
-		self.velocities.append(np.array(msg.velocity))
+		self.positions.append(np.array(msg.position, dtype=np.float32))
+		self.velocities.append(np.array(msg.velocity, dtype=np.float32))
 			
 	def headJointStatesCB(self, msg: JointState) -> None:
 		pass

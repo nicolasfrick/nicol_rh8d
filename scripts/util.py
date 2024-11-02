@@ -8,7 +8,7 @@ from cv2 import Rodrigues
 from datetime import datetime
 from scipy.spatial.transform import Rotation as R
 
-dt_now = datetime.datetime.now()
+dt_now = datetime.now()
 dt_now = dt_now.strftime("%H_%M_%S")
 # data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
