@@ -65,7 +65,8 @@ class MoveRobot():
 
 	def __init__(self, sensors: bool=False) -> None:
 
-		self.states = deque(maxlen=1) # np.ndarray
+		self.positions = deque(maxlen=1) # np.ndarray
+		self.velocities = deque(maxlen=1) # np.ndarray
 		
 		self.head_joint_goal_client = rospy.ServiceProxy(self.HEAD_NAME + self.JOINT_GOAL_SERVICE, SetJointPosition)
 		self.head_joint_goal_client.wait_for_service(5)
@@ -83,9 +84,14 @@ class MoveRobot():
 			rospy.wait_for_message(self.SENSOR_TOPIC, AllSensors, 5)
 			self.right_finger_sensor_sub = rospy.Subscriber(self.SENSOR_TOPIC, AllSensors, self.rightSensorsCB)
 
-	def jointStates(self) -> Union[list, None]:
-		if len(self.states):
-			return self.states.pop()
+	def jointPositions(self) -> Union[np.ndarray, None]:
+		if len(self.positions):
+			return self.positions.pop()
+		return None
+	
+	def jointVelocities(self) -> Union[np.ndarray, None]:
+		if len(self.velocities):
+			return self.velocities.pop()
 		return None
 
 	def reachInitBlocking(self, t_path: float) -> bool:
@@ -96,32 +102,13 @@ class MoveRobot():
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
 		return self.reachPositionBlocking(cmd, t_path)
 
-	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> Tuple[bool, Union[dict, None]]:
+	def reachPositionBlocking(self, cmd: dict, t_path: float, t_block: float=0.0) -> bool:
 		# send position
 		if not self.moveArmJointSpace(cmd, t_path):
-			if len(self.states):
-				crnt = self.states.pop()
-				return False, dict(zip(list(cmd.keys()), list(crnt)))
-			else:
-				return False, None
-		
-		vals = list(cmd.values())
-		goal = np.array(vals)
-		crnt = np.ones(len(vals)) * np.inf
-		t_start = time.time()
-		# wait for reach or abort
-		# while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ):
-		# 	time.sleep(0.1)
-		# 	if len(self.states):
-		# 		crnt = self.states.pop()
-			
-		# 	# abort
-		# 	if (time.time() - t_start) > t_path:
-		# 		print("Position reach timeout, goal:\n", list(goal), "\ncurrent:\n", list(crnt))
-		# 		return False, dict(zip(list(cmd.keys()), list(crnt)))
-
-		time.sleep(t_settle)
-		return True, dict(zip(list(cmd.keys()), list(crnt)))
+			return False
+		# wait
+		time.sleep(t_block)
+		return True
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:
 		names = list(cmd.keys())
@@ -194,7 +181,8 @@ class MoveRobot():
 			return False
 
 	def rightJointStatesCB(self, msg: JointState) -> None:
-		self.states.append(np.array(msg.position))
+		self.positions.append(np.array(msg.position))
+		self.velocities.append(np.array(msg.velocity))
 			
 	def headJointStatesCB(self, msg: JointState) -> None:
 		pass
@@ -453,4 +441,3 @@ class MoveRobot():
 if __name__ == '__main__':
 	# MoveRobot.generateWaypointsSequential(30,30,10,5)
 	MoveRobot.generateWaypointsSequential()
-	

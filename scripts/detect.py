@@ -36,7 +36,6 @@ np.set_printoptions(threshold=sys.maxsize, suppress=True)
 # check record size deviation
 # sub R joint 
 # check keypt plot + tf proj
-# recompute travel time 
 # check jointT0 angle
 
 class DetectBase():
@@ -91,7 +90,7 @@ class DetectBase():
 				) -> None:
 		
 		self.vis = vis
-		self.cv_window = cv_window
+		self.cv_window = cv_window and vis
 		self.test = test
 		self.plt_id = plt_id
 		self.f_loop = f_ctrl
@@ -133,7 +132,7 @@ class DetectBase():
 									filter_type=filter_type)
 			
 		# init vis	
-		if vis and cv_window:
+		if cv_window:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
@@ -511,16 +510,17 @@ class KeypointDetect(DetectBase):
 			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys} 
 			self.keypt_plot = KeypointPlot()
 			
-		# img topics
+		# ros topics
 		if not test and attached:
 			self.initSubscriber()
+			# init ros vis
 			if vis:
 				self.proc_pub = rospy.Publisher('processed_image', Image, queue_size=10)
 				self.det_pub = rospy.Publisher('marker_detection', Image, queue_size=10)
 				self.out_pub = rospy.Publisher('angle_detection', Image, queue_size=10)
 				self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
-		# init vis
-		if vis and not attached:
+		# cv vis
+		if self.cv_window:
 			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
@@ -869,7 +869,7 @@ class KeypointDetect(DetectBase):
 			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
 			time.sleep(1/self.fps)
 
-        # lock updates on img queues
+		# lock updates on img queues
 		with self.buf_lock:
 
 			# process images
@@ -1125,7 +1125,7 @@ class KeypointDetect(DetectBase):
 		fk_dict = {}
 		joint_angles = {joint: None for joint in self.marker_config.keys()}
 		
-        # at least one detection
+		# at least one detection
 		if marker_det:
 			detected_ids = marker_det.keys()
 
@@ -1188,13 +1188,13 @@ class KeypointDetect(DetectBase):
 				for link, fk in fk_dict.items():
 					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
 
-        # no marker detected
+		# no marker detected
 		else:
-			beep(self.make_noise)
 			res = False
 			print("No detection")
+			beep(self.make_noise)
 		
-        # draw detections
+		# draw detections
 		if self.vis:
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
@@ -1217,7 +1217,7 @@ class KeypointDetect(DetectBase):
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 
-            # save drawings and original
+			# save drawings and original
 			if self.save_record and marker_det:
 				try:
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.data_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
@@ -1308,7 +1308,7 @@ class KeypointDetect(DetectBase):
 		try:
 			# epoch
 			for e in range(self.epochs):
-				print("Epoch", e)
+				print("New epoch", e)
 				self.rh8d_ctrl.moveHeadHome(2.0)
 				head_home = True
 				
@@ -1326,9 +1326,9 @@ class KeypointDetect(DetectBase):
 							self.start_angles.clear()
 
 						# get head out of range if arm moves
-						states = self.rh8d_ctrl.jointStates()
-						if states is not None:
-							if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(states, 3), np.round(list(waypoint.values()), 3)), 0.0) ):
+						positions = self.rh8d_ctrl.jointPositions()
+						if positions is not None:
+							if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(positions, 3), np.round(list(waypoint.values()), 3)), 0.0) ):
 								self.rh8d_ctrl.moveHeadHome(1.5)
 								time.sleep(1.5)
 								head_home = True
@@ -1338,11 +1338,17 @@ class KeypointDetect(DetectBase):
 							head_home = True
 
 						# move arm and hand
-						print(f"Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end=" ... ")
-						print(waypoint)
-						# success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
-						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, move_time)
+						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s")
+						success, _ = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
 						print("done\n") if success else print("fail\n")
+						# wait for zero velocities
+						while not all( np.isclose(self.rh8d_ctrl.jointVelocities(), 0.0) ):
+							print("Waiting")
+							time.sleep(0.1)
+
+						# settle and record images
+						for _ in range(self.filter_iters*2):
+							time.sleep(1/self.fps)
 
 						# look towards hand
 						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
@@ -1352,14 +1358,8 @@ class KeypointDetect(DetectBase):
 
 						# detect angles
 						self.detectionRoutine(waypoint, e, direction, description)
-						# success = False
-						# while not success:
-						# 	success = self.detectionRoutine(waypoint, e, direction, description)
-						# 	if not success:
-						# 		beep(self.make_noise)
-						# 		success = input("Enter 'r' to repeat recording or other key to skip.") != 'r'
 
-						if self.vis and not self.attached:
+						if self.cv_window:
 							if cv2.waitKey(1) == ord("q"):
 								return
 						
@@ -1370,6 +1370,7 @@ class KeypointDetect(DetectBase):
 
 		except None as e:
 			rospy.logerr(e)
+			
 		finally:
 			if self.save_record:
 				# join all dataframes
@@ -1389,7 +1390,7 @@ class KeypointDetect(DetectBase):
 							if self.use_eye_cameras:
 								self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 								self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-			if self.vis and not self.attached:
+			if self.cv_window:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
 
