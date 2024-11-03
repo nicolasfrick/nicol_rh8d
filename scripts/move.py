@@ -2,7 +2,6 @@
 
 import os
 import sys
-import time
 import rospy
 import datetime
 import numpy as np
@@ -101,14 +100,38 @@ class MoveRobot():
 	def reachHomeBlocking(self, t_path: float) -> bool:
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
 		return self.reachPositionBlocking(cmd, t_path)
+	
+	def reachPositionBlocking(self, cmd: dict, t_path: float) -> bool:
+		while not len(self.positions):
+			pass
+		t_path_from_current = self.estimateMoveTime(self.positions.pop(), list(cmd.values()))
+		if not np.isclose(t_path_from_current, t_path):
+			print(f"New move time is {t_path_from_current} s")
 
-	def reachPositionBlocking(self, cmd: dict, t_path: float, t_settle: float=0.0) -> bool:
 		# send position
-		if not self.moveArmJointSpace(cmd, t_path):
+		if not self.moveArmJointSpace(cmd, t_path_from_current):
 			return False
 		# wait
-		time.sleep(t_path)
-		time.sleep(t_settle)
+		rospy.sleep(t_path_from_current)
+		
+		t_start = rospy.Time.now()
+		goal = np.array(list(cmd.values()), dtype=np.float32)
+		crnt = np.ones(len(goal), dtype=np.float32) * np.inf
+		velocities = pd.DataFrame([crnt], columns=list(cmd.keys()), dtype=pd.float32)
+		# wait for reach or abort
+		while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ) or \
+			not all( np.isclose(velocities.rolling(window=4).mean().to_numpy()[-1], 0.0)) :
+
+			rospy.sleep(0.1)
+			if len(self.positions):
+				crnt = self.positions.pop()
+			if len(self.velocities):
+				vel = self.velocities.pop()
+				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
+			if rospy.Time.now() - t_start > 3*t_path:
+				print(f"Positions cannot be reached in {3*t_path} seconds ... stop waiting.")
+				return False
+
 		return True
 
 	def moveArmJointSpace(self, cmd: dict, t_path: float) -> bool:

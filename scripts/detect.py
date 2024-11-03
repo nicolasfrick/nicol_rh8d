@@ -1300,6 +1300,19 @@ class KeypointDetect(DetectBase):
 			if self.vis and not self.attached:
 				cv2.destroyAllWindows()
 			rospy.signal_shutdown(0)
+
+	def moveHeadConditioned(self, waypoint: dict, t_move: float=1.5) -> bool:
+		# wait for new states
+		while not len(self.rh8d_ctrl.positions):
+			pass
+
+		# arm moving
+		if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(self.rh8d_ctrl.positions.pop(), 3), np.round(list(waypoint.values()), 3)), 0.0) ):
+			self.rh8d_ctrl.moveHeadHome(t_move)
+			rospy.sleep(t_move)
+			return True
+		
+		return False
 		
 	def runAttached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
@@ -1308,8 +1321,7 @@ class KeypointDetect(DetectBase):
 			# epoch
 			for e in range(self.epochs):
 				print("New epoch", e)
-				self.rh8d_ctrl.moveHeadHome(2.0)
-				head_home = True
+				head_home = self.rh8d_ctrl.moveHeadHome(2.0)
 				
 				for idx in self.waypoint_df.index.tolist():
 					if not rospy.is_shutdown():
@@ -1325,34 +1337,12 @@ class KeypointDetect(DetectBase):
 							self.start_angles.clear()
 
 						# get head out of range if arm moves
-						positions = self.rh8d_ctrl.jointPositions()
-						if positions is not None:
-							if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(positions, 3), np.round(list(waypoint.values()), 3)), 0.0) ):
-								self.rh8d_ctrl.moveHeadHome(1.5)
-								rospy.sleep(1.5)
-								head_home = True
-						else:
-							self.rh8d_ctrl.moveHeadHome(1.5)
-							rospy.sleep(1.5)
-							head_home = True
+						head_home = self.moveHeadConditioned(waypoint)
 
 						# move arm and hand
 						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s")
-						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, 0.1)
+						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
 						print("done\n") if success else print("fail\n")
-						# wait for zero velocities
-						velocities = np.ones(self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7'], dtype=np.float32) * np.inf
-						while not all( np.isclose(np.round(velocities, 1), 0.0) ):
-							rospy.sleep(0.1)
-							velocities = self.rh8d_ctrl.jointVelocities()
-							if velocities is None:
-								velocities = np.ones(self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7'], dtype=np.float32) * np.inf
-							velocities = velocities[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']]
-							print(np.round(velocities, 1))
-
-						# settle and record images
-						for _ in range(self.filter_iters*2):
-							rospy.sleep(1/self.fps)
 
 						# look towards hand
 						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
