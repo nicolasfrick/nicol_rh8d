@@ -16,14 +16,14 @@
   "reset_angle":true,
   "direction":0,
   "description":"home",
-  "t_travel":30.3
+  "t_travel":15.6
  },
  "1":{
   "joint1":1.91,
   "joint2":0.471,
   "joint3":-1.131,
   "joint4":-1.571,
-  "joint5":1.571,
+  "joint5":-1.571,
   "joint6":-3.142,
   "joint7":0.0,
   "joint8":0.0,
@@ -35,7 +35,7 @@
   "reset_angle":true,
   "direction":0,
   "description":"start",
-  "t_travel":30.3
+  "t_travel":15.6
  },
  "2":{
   "joint1":1.91,
@@ -54,7 +54,7 @@
   "reset_angle":true,
   "direction":0,
   "description":"new sequence",
-  "t_travel":60.094
+  "t_travel":1.0
  },
  "3":{
   "joint1":1.91,
@@ -1650,6 +1650,6 @@
   "reset_angle":true,
   "direction":0,
   "description":"home",
-  "t_travel":30.3
+  "t_travel":15.6
  }
 }

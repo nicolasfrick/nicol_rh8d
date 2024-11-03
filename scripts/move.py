@@ -22,7 +22,7 @@ class MoveRobot():
 	M_PI_2 = np.pi*0.5
 
 	RH8D_VEL = 1.225 # rad/s # 0.13s/60°
-	ACTUATOR_VEL = 0.10472/2 # rad/s
+	ACTUATOR_VEL = 0.10472 # rad/s
 	ACTUATOR_ACCEL = 0.17453 # rad/s^2
 
 	HEAD_NAME = "/NICOL/head"
@@ -50,7 +50,7 @@ class MoveRobot():
 	ROBOT_UP_LIM = [2.5, 1.8, 1.5, 2.9, M_PI_2, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI]
 	ROBOT_INIT = [0.31, 0.2, -0.2, 1.5, 1.28, 0.0, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
 	ROBOT_HOME = [M_PI_2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
-	ROBOT_EXP_START = [1.91, 0.471, -1.131, -M_PI_2, M_PI_2, -M_PI, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
+	ROBOT_EXP_START = [1.91, 0.471, -1.131, -M_PI_2, -M_PI_2, -M_PI, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
 
 	JOINT5_IDX = ROBOT_JOINTS_INDEX['joint5']
 	JOINT6_IDX = ROBOT_JOINTS_INDEX['joint6']
@@ -445,5 +445,4 @@ class MoveRobot():
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	# MoveRobot.generateWaypointsSequential(30,30,10,5)
-	MoveRobot.generateWaypointsSequential()
+	MoveRobot.generateWaypointsSequential(30,30,10,5)
