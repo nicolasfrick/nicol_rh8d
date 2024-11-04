@@ -115,12 +115,13 @@ class MoveRobot():
 		rospy.sleep(t_path_from_current)
 		
 		t_start = rospy.Time.now()
+		t_path_from_current = rospy.Duration(t_path_from_current * 3) # timeout
 		goal = np.array(list(cmd.values()), dtype=np.float32)
 		crnt = np.ones(len(goal), dtype=np.float32) * np.inf
-		velocities = pd.DataFrame([crnt], columns=list(cmd.keys()), dtype=pd.float32)
+		velocities = pd.DataFrame([crnt], columns=list(cmd.keys()), dtype=np.float32)
 		# wait for reach or abort
 		while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ) or \
-			not all( np.isclose(velocities.rolling(window=4).mean().to_numpy()[-1], 0.0)) :
+			not all( np.isclose(np.round(velocities.rolling(window=4).mean().to_numpy()[-1], 2), 0.0)) :
 
 			rospy.sleep(0.1)
 			if len(self.positions):
@@ -128,9 +129,8 @@ class MoveRobot():
 			if len(self.velocities):
 				vel = self.velocities.pop()
 				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
-			if rospy.Time.now() - t_start > 3*t_path:
-				print(f"Positions cannot be reached in {3*t_path} seconds ... stop waiting.")
-				return False
+			if rospy.Time.now() - t_start > t_path_from_current:
+				print(f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
 
 		return True
 

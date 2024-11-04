@@ -776,18 +776,21 @@ class KeypointDetect(DetectBase):
 			num_saved += 1
 			depth_img = self.bridge.imgmsg_to_cv2(self.depth_img_buffer.pop(), 'passthrough')
 			depth_img = (depth_img).astype('float32')
-			cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+			if self.save_record:
+				cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
 		# top realsense
 		if self.use_top_camera and len(self.top_img_buffer):
 			num_saved += 1
 			raw_img = self.bridge.imgmsg_to_cv2(self.top_img_buffer.pop(), 'bgr8')
-			cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if self.save_record:
+				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# depth
 			if self.depth_enabled and len(self.top_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
-				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+				if self.save_record:
+					cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 			# static tf
 
 		# head realsense imgs & tf
@@ -795,12 +798,14 @@ class KeypointDetect(DetectBase):
 			num_saved += 1
 			msg = self.head_img_buffer.pop()
 			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-			cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+			if self.save_record:
+				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# depth
 			if self.depth_enabled and len(self.head_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
-				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
+				if self.save_record:
+					cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 			# save head rs tf
 			if self.use_tf:
 				tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.HEAD_RS_SOURCE_FRAME)
@@ -813,7 +818,8 @@ class KeypointDetect(DetectBase):
 			if len(self.left_img_buffer):
 				msg = self.left_img_buffer.pop()
 				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-				cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				if self.save_record:
+					cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save left eye tf
 				if self.use_tf:
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.LEFT_EYE_SOURCE_FRAME)
@@ -823,7 +829,8 @@ class KeypointDetect(DetectBase):
 			if len(self.right_img_buffer):
 				msg = self.right_img_buffer.pop()
 				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-				cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
+				if self.save_record:
+					cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save right eye tf
 				if self.use_tf:
 					tf_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RIGHT_EYE_SOURCE_FRAME)
@@ -868,6 +875,11 @@ class KeypointDetect(DetectBase):
 			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
 			rospy.sleep(1/self.fps)
 
+		# wait for buffer to be filled
+		while not len(self.joint_state_buffer):
+			print("Joint state buffer not updated")
+			rospy.sleep(0.1)
+
 		# lock updates on img queues
 		with self.buf_lock:
 
@@ -890,7 +902,7 @@ class KeypointDetect(DetectBase):
 				self.refineDetection(marker_det)
 
 			# save additional resources
-			if self.save_record and marker_det:
+			if marker_det:
 				tf_dict, states_dict = self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
@@ -1307,7 +1319,9 @@ class KeypointDetect(DetectBase):
 			pass
 
 		# arm moving
-		if not all( np.isclose(self.rh8d_ctrl.angularDistanceOMP(np.round(self.rh8d_ctrl.positions.pop(), 3), np.round(list(waypoint.values()), 3)), 0.0) ):
+		robot_positions = np.round(self.rh8d_ctrl.positions.pop(), 2)
+		position_command = np.round(list(waypoint.values()), 2)
+		if not all( np.isclose(robot_positions[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']], position_command[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']]) ):
 			self.rh8d_ctrl.moveHeadHome(t_move)
 			rospy.sleep(t_move)
 			return True
@@ -1366,6 +1380,7 @@ class KeypointDetect(DetectBase):
 			rospy.logerr(e)
 			
 		finally:
+			self.rh8d_ctrl.moveHeadHome(2.0)
 			if self.save_record:
 				# join all dataframes
 				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
