@@ -13,7 +13,6 @@ import numpy as np
 import pybullet as pb
 import sensor_msgs.msg
 from collections import deque
-from datetime import datetime
 import dynamic_reconfigure.server
 from sensor_msgs.msg import Image
 from typing import Optional, Any, Tuple
@@ -480,16 +479,16 @@ class KeypointDetect(DetectBase):
 			self.marker_cam_extr = Extrinsics()
 			self.marker_cam_extr.header.stamp = rospy.Time.now()
 			self.marker_cam_extr.header.frame_id = 'marker_camera_optical_frame'
-			self.marker_cam_extr.translation = np.array(marker_cam_holder_to_cam_extr['xyz'], dtype=np.float64)
-			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
+			self.marker_cam_extr.translation = marker_cam_holder_to_cam_extr['xyz']
+			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT).tolist()
 			# top cam
 			if use_top_camera:
 				world_to_top_cam_extr = extrinsics['top_camera_optical_frame']
 				self.top_cam_extr = Extrinsics()
 				self.top_cam_extr.header.stamp = rospy.Time.now()
 				self.top_cam_extr.header.frame_id = 'top_camera_optical_frame'
-				self.top_cam_extr.translation = np.array(world_to_top_cam_extr['xyz'], dtype=np.float64)
-				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
+				self.top_cam_extr.translation = world_to_top_cam_extr['xyz']
+				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT).tolist()
 
 		# load hand marker ids
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -1063,6 +1062,7 @@ class KeypointDetect(DetectBase):
 						trans = keypt_dict[joint]['trans']
 						rot_mat = getRotation(keypt_dict[joint]['quat'], RotTypes.QUAT, RotTypes.MAT)
 						transformed_point = rot_mat @ center_point + trans
+						print(trans, getRotation(rot_mat, RotTypes.MAT, RotTypes.EULER))
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
 						projected_point, _ = cv2.projectPoints(transformed_point, self.marker_cam_extr.rotation, self.marker_cam_extr.translation, self.det.cmx, self.det.dist)
@@ -1143,8 +1143,8 @@ class KeypointDetect(DetectBase):
 			# iter marker config
 			for joint, config in self.marker_config.items():
 				# check if and which joint marker set was detected
-				marker_ids = config['marker_ids'] if all( [id in detected_ids for id in  config['marker_ids']] ) else \
-					config['alt_marker_ids'] if all( [id in detected_ids for id in  config['alt_marker_ids']] ) else False
+				marker_ids = config['marker_ids'] if all( [id in detected_ids for id in config['marker_ids']] ) else \
+					config['alt_marker_ids'] if all( [id in detected_ids for id in config['alt_marker_ids']] ) else False
 				if marker_ids:
 					base_id = marker_ids[0] # base marker id
 					target_id = marker_ids[1] # target marker id
@@ -1188,9 +1188,9 @@ class KeypointDetect(DetectBase):
 					nan_entry = dict(zip(self.DET_COLS, [np.nan for _ in self.DET_COLS]))
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([nan_entry])], ignore_index=True) # add nan to results
 					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }, alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
-				
+
 				# check data counter
-				if self.det_df_dict[joint].last_valid_index() != self.data_cnt:
+				if self.det_df_dict[joint].index[-1] != self.data_cnt:
 					print("DATA RECORD DEVIATION, data index: ", str(self.det_df_dict[joint].last_valid_index()), " record index:", str(self.data_cnt), "for joint", joint)
 
 			# compute 3D keypoints
@@ -1299,7 +1299,7 @@ class KeypointDetect(DetectBase):
 						except:
 							pass
 
-		except None as e:
+		except Exception as e:
 			rospy.logerr(e)
 		finally:
 			if self.save_record:
@@ -1323,7 +1323,7 @@ class KeypointDetect(DetectBase):
 		position_command = np.round(list(waypoint.values()), 2)
 		if not all( np.isclose(robot_positions[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']], position_command[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']]) ):
 			self.rh8d_ctrl.moveHeadHome(t_move)
-			rospy.sleep(t_move)
+			rospy.sleep(t_move+1.5)
 			return True
 		
 		return False
@@ -1376,16 +1376,18 @@ class KeypointDetect(DetectBase):
 						except:
 							pass
 
-		except None as e:
+		except Exception as e:
 			rospy.logerr(e)
 			
 		finally:
+			print("SAVING")
 			self.rh8d_ctrl.moveHeadHome(2.0)
 			if self.save_record:
 				# join all dataframes
 				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 				if not self.test:
+					print("Keypoints", KEYPT_3D_PTH)
 					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
 					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 					pb.disconnect()
