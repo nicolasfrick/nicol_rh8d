@@ -1,7 +1,7 @@
 marker_config:
   joint7:  
     marker_ids: [6, 8]
-    alt_marker_ids: [7, 8]
+    alt_marker_ids: [-1]
     plane: 'yz'
     parent: 'r_forearm'
     child: 'r_palm_axis'
@@ -11,7 +11,7 @@ marker_config:
     name: 'wrist abduction'
   joint8:
     marker_ids: [6, 8]
-    alt_marker_ids: [7, 8]
+    alt_marker_ids: [-1]
     plane: 'xz'
     parent: 'r_palm_axis'
     child: &palm 'r_palm'
@@ -21,7 +21,7 @@ marker_config:
     name: 'wrist flexion'
   jointI1:
     marker_ids:  [1, 2]
-    alt_marker_ids: [0, 2]
+    alt_marker_ids: [-1]
     plane: &plane 'xz'
     parent: *palm
     child: 'r_Iproximal'
@@ -31,7 +31,7 @@ marker_config:
     name: 'index flexion'
   jointI2:
     marker_ids:  [2, 3]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Iproximal'
     child: 'r_Imiddle'
@@ -41,7 +41,7 @@ marker_config:
     name: 'index flexion'
   jointI3:
     marker_ids:  [3, 4]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Imiddle'
     child: 'r_Itip'
@@ -51,7 +51,7 @@ marker_config:
     name: 'index flexion'
   jointM1:
     marker_ids:  [14, 15]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: *palm
     child: 'r_Mproximal'
@@ -61,7 +61,7 @@ marker_config:
     name: 'middle flexion'
   jointM2:
     marker_ids:  [15, 16]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Mproximal'
     child: 'r_Mmiddle'
@@ -71,7 +71,7 @@ marker_config:
     name: 'middle flexion'
   jointM3:
     marker_ids:  [16, 17]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Mmiddle'
     child: 'r_Mtip'
@@ -81,7 +81,7 @@ marker_config:
     name: 'middle flexion'
   jointR1:
     marker_ids: [18, 19]
-    alt_marker_ids: [18, 20]
+    alt_marker_ids: [-1]
     plane: *plane
     parent: *palm
     child: 'r_Rproximal'
@@ -91,7 +91,7 @@ marker_config:
     name: 'ring flexion'
   jointR2:
     marker_ids: [19, 21]
-    alt_marker_ids: [20, 22]
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Rproximal'
     child: 'r_Rmiddle'
@@ -101,7 +101,7 @@ marker_config:
     name: 'ring flexion'
   jointR3:
     marker_ids: [21, 23]
-    alt_marker_ids: [22, 23]
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Rmiddle'
     child: 'r_Rtip'
@@ -111,7 +111,7 @@ marker_config:
     name: 'ring flexion'
   jointL1:
     marker_ids:  [24, 25]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: *palm
     child: 'r_Lproximal'
@@ -121,7 +121,7 @@ marker_config:
     name: 'little flexion'
   jointL2:
     marker_ids:  [25, 26]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Lproximal'
     child: 'r_Lmiddle'
@@ -131,7 +131,7 @@ marker_config:
     name: 'little flexion'
   jointL3:
     marker_ids:  [26, 27]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Lmiddle'
     child: 'r_Ltip'
@@ -141,7 +141,7 @@ marker_config:
     name: 'little flexion'
   jointT0:
     marker_ids: [8, 10]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: 'xy'
     parent: *palm
     child: 'r_thumb_base'
@@ -151,7 +151,7 @@ marker_config:
     name: 'thumb abduction'
   jointT1:
     marker_ids: [10, 11]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_thumb_base'
     child: 'r_Tproximal'
@@ -161,7 +161,7 @@ marker_config:
     name: 'thumb flexion'
   jointT2:
     marker_ids: [11, 12]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Tproximal'
     child: 'r_Tmiddle'
@@ -171,7 +171,7 @@ marker_config:
     name: 'thumb flexion'
   jointT3:
     marker_ids: [12, 13]
-    alt_marker_ids: []
+    alt_marker_ids: [-1]
     plane: *plane
     parent: 'r_Tmiddle'
     child: 'r_Ttip'

@@ -1187,11 +1187,11 @@ class KeypointDetect(DetectBase):
 					beep(self.make_noise)
 					nan_entry = dict(zip(self.DET_COLS, [np.nan for _ in self.DET_COLS]))
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([nan_entry])], ignore_index=True) # add nan to results
-					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }, alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
+					print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }") # , alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
 
 				# check data counter
 				if self.det_df_dict[joint].index[-1] != self.data_cnt:
-					print("DATA RECORD DEVIATION, data index: ", str(self.det_df_dict[joint].last_valid_index()), " record index:", str(self.data_cnt), "for joint", joint)
+					print("DATA RECORD DEVIATION, data index: ", str(self.det_df_dict[joint].index[-1] ), " record index:", str(self.data_cnt), "for joint", joint)
 
 			# compute 3D keypoints
 			if not self.test:
@@ -1239,7 +1239,7 @@ class KeypointDetect(DetectBase):
 					return False
 				
 		# increment data counter 
-		if self.save_record and marker_det:
+		if marker_det:
 			self.data_cnt += 1
 			if self.data_cnt != self.record_cnt:
 				print("IMAGE RECORD DEVIATION, record index: ", str(self.data_cnt), " img index:", str(self.record_cnt))
@@ -1323,7 +1323,7 @@ class KeypointDetect(DetectBase):
 		position_command = np.round(list(waypoint.values()), 2)
 		if not all( np.isclose(robot_positions[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']], position_command[: self.rh8d_ctrl.ROBOT_JOINTS_INDEX['joint7']]) ):
 			self.rh8d_ctrl.moveHeadHome(t_move)
-			rospy.sleep(t_move+1.5)
+			rospy.sleep(t_move)
 			return True
 		
 		return False
@@ -1354,14 +1354,14 @@ class KeypointDetect(DetectBase):
 						head_home = self.moveHeadConditioned(waypoint)
 
 						# move arm and hand
-						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s")
+						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
 						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
 						print("done\n") if success else print("fail\n")
 
-						# look towards hand
+						# look towards hand and settle 
 						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
 						self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
-						rospy.sleep(2.0 if head_home else 1.0)
+						rospy.sleep(3.0 if head_home else 1.5)
 						head_home = False
 
 						# detect angles
