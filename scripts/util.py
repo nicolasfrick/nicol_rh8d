@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Tuple
 from cv2 import Rodrigues
 from datetime import datetime
+from matplotlib import pyplot as plt
 from scipy.spatial.transform import Rotation as R
 
 dt_now = datetime.now()
@@ -267,12 +268,22 @@ def greenScreen(img: cv2.typing.MatLike):
 	f = np.where(f == 0, repl, f)
 	return f
 
+def visTiff(pth: str) -> None:
+   img = cv2.imread(pth, cv2.IMREAD_UNCHANGED)
+   # only for matplotlib to display
+   img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+   plt.imshow(img_rgb)
+   plt.axis('off')
+   plt.show()
+
 if __name__ == "__main__":
-	cv2.namedWindow("gs", cv2.WINDOW_NORMAL)
-	img = cv2.imread(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/test_img.jpg'), cv2.IMREAD_COLOR)
-	img = greenScreen(img)
-	cv2.imshow("gs", img)
-	while 1:
-		if cv2.waitKey(1) == ord('q'):
-			break
-	cv2.destroyAllWindows()
+	# cv2.namedWindow("gs", cv2.WINDOW_NORMAL)
+	# img = cv2.imread(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/test_img.jpg'), cv2.IMREAD_COLOR)
+	# img = greenScreen(img)
+	# cv2.imshow("gs", img)
+	# while 1:
+	# 	if cv2.waitKey(1) == ord('q'):
+	# 		break
+	# cv2.destroyAllWindows()
+
+	visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))

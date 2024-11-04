@@ -31,11 +31,6 @@ from nicol_rh8d.cfg import DetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-# TODO:
-# sub R joint 
-# check keypt plot + tf proj
-# check jointT0 angle
-
 class DetectBase():
 	"""
 		@param camera_ns Camera namespace precceding 'image_raw' and 'camera_info'
@@ -479,16 +474,16 @@ class KeypointDetect(DetectBase):
 			self.marker_cam_extr = Extrinsics()
 			self.marker_cam_extr.header.stamp = rospy.Time.now()
 			self.marker_cam_extr.header.frame_id = 'marker_camera_optical_frame'
-			self.marker_cam_extr.translation = marker_cam_holder_to_cam_extr['xyz']
-			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT).tolist()
+			self.marker_cam_extr.translation = np.array(marker_cam_holder_to_cam_extr['xyz'], dtype=np.float32)
+			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
 			# top cam
 			if use_top_camera:
 				world_to_top_cam_extr = extrinsics['top_camera_optical_frame']
 				self.top_cam_extr = Extrinsics()
 				self.top_cam_extr.header.stamp = rospy.Time.now()
 				self.top_cam_extr.header.frame_id = 'top_camera_optical_frame'
-				self.top_cam_extr.translation = world_to_top_cam_extr['xyz']
-				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT).tolist()
+				self.top_cam_extr.translation = np.array(world_to_top_cam_extr['xyz'], dtype=np.float32)
+				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
 
 		# load hand marker ids
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
@@ -546,7 +541,12 @@ class KeypointDetect(DetectBase):
 					}
 
 		if extr is not None:
-			extr_dict = {extr.header.frame_id: {'rotation': list(extr.rotation), 'translation': list(extr.translation)}}
+			rot = list(extr.rotation)
+			trans = list(extr.translation)
+			if isinstance(extr.rotation, np.ndarray):
+				rot = extr.rotation.tolist()
+				trans = extr.translation.tolist()
+			extr_dict = {extr.header.frame_id: {'rotation': rot, 'translation': trans}}
 			info_dict.update(extr_dict)
 
 		if tf is not None:
@@ -1062,12 +1062,12 @@ class KeypointDetect(DetectBase):
 						trans = keypt_dict[joint]['trans']
 						rot_mat = getRotation(keypt_dict[joint]['quat'], RotTypes.QUAT, RotTypes.MAT)
 						transformed_point = rot_mat @ center_point + trans
-						print(trans, getRotation(rot_mat, RotTypes.MAT, RotTypes.EULER))
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
 						projected_point, _ = cv2.projectPoints(transformed_point, self.marker_cam_extr.rotation, self.marker_cam_extr.translation, self.det.cmx, self.det.dist)
 						projected_point = np.int32(projected_point.flatten())
 						print(projected_point)
+						print(trans, getRotation(rot_mat, RotTypes.MAT, RotTypes.EULER))
 						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
 						# connect points
 						if last_projected_point is not None:
@@ -1376,18 +1376,15 @@ class KeypointDetect(DetectBase):
 						except:
 							pass
 
-		except Exception as e:
+		except None as e:
 			rospy.logerr(e)
 			
 		finally:
-			print("SAVING")
-			self.rh8d_ctrl.moveHeadHome(2.0)
 			if self.save_record:
 				# join all dataframes
 				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 				if not self.test:
-					print("Keypoints", KEYPT_3D_PTH)
 					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
 					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 					pb.disconnect()

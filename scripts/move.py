@@ -130,7 +130,7 @@ class MoveRobot():
 				vel = self.velocities.pop()
 				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
 			if rospy.Time.now() - t_start > t_path_from_current:
-				print(f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
+				rospy.logwarn_throttle(3.0, f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
 
 		return True
 
