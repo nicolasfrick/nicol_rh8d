@@ -1,54 +1,25 @@
+# roslaunch nicol_rh8d cam_pose.launch filter:=median marker_poses_file:=marker_table_poses.yml serial_no:=250122078945 marker_length:=0.1575
+
 root:
-  rpy:
-  - -1.57
-  - 0
-  - -1.57
-  xyz:
-  - 0
-  - 0
-  - 0.185
+  rpy: [0, 0, 0]
+  xyz: [0, 0, 0]
+
 0:
-  rpy:
-  - 0
-  - 0
-  - 0
-  xyz:
-  - 0.0
-  - 0.0
-  - 0.0
+  rpy: &euler [3.14159265359, 0.0, 1.57079633]
+  xyz: [0.113, -0.183, 0.80]
+
 1:
-  rpy:
-  - 0
-  - 0
-  - 0
-  xyz:
-  - -0.02
-  - 0.03
-  - 0.0
+  rpy: *euler
+  xyz: [0.154, -0.893, 0.80]
+
 2:
-  rpy:
-  - 0
-  - 0
-  - 0.7854
-  xyz:
-  - 0.02
-  - 0.03
-  - 0.0
+  rpy: *euler
+  xyz: [0.449, -0.200, 0.80]
+
 3:
-  rpy:
-  - 0
-  - 0
-  - 0.7854
-  xyz:
-  - -0.02
-  - -0.03
-  - 0.0
+  rpy: *euler
+  xyz: [0.507, -0.893, 0.80]
+
 4:
-  rpy:
-  - 0
-  - 0
-  - 0
-  xyz:
-  - 0.02
-  - -0.03
-  - 0.0
+  rpy: *euler
+  xyz: [0.309, -0.464, 0.80]

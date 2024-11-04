@@ -111,7 +111,7 @@ class DetectBase():
 			self.bridge = cv_bridge.CvBridge()
 			self.img_topic = camera_ns + '/image_raw'
 			rospy.loginfo("Waiting for camera_info from %s", camera_ns + '/camera_info')
-			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo, 10)
+			self.rgb_info = rospy.wait_for_message(camera_ns + '/camera_info', sensor_msgs.msg.CameraInfo, 25)
 			print("Camera height:", self.rgb_info.height, "width:", self.rgb_info.width)
 
 		# init detector
