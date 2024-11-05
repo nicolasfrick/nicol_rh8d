@@ -1075,7 +1075,7 @@ class KeypointDetect(DetectBase):
 		transformed_point = T_world_cam_holder[:3, :3] @ center_point + T_world_cam_holder[:3, 3]
 		projected_point_parent, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
 		projected_point_parent =  np.int32(projected_point_parent.flatten())
-		cv2.circle(img, projected_point_parent, self.KEYPT_THKNS, color, -1)
+		cv2.circle(img, projected_point_parent, self.KEYPT_THKNS, self.CHAIN_COLORS[0], -1)
 		
 		# draw keypoints
 		for idx, chain in enumerate(self.kinematic_chains):
