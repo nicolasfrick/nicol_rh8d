@@ -314,7 +314,7 @@ class KeypointDetect(DetectBase):
 	X_EL_TXT_OFFSET = 0.95
 	Y_EL_TXT_OFFSET = 1
 
-	KEYPT_THKNS = 5
+	KEYPT_THKNS = 10
 	KEYPT_LINE_THKNS = 2
 	CHAIN_COLORS = [(255,255,255), (0,0,255), (0,255,0), (255,0,0), (0,255,255), (255,255,0)]
 	PLOT_COLORS = ['w', 'r', 'g', 'b', 'y', 'c']
@@ -330,7 +330,8 @@ class KeypointDetect(DetectBase):
 	# dataframe columns
 	JS_COLS = ['name', 'position', 'velocity', 'effort', 'timestamp']
 	TF_COLS = ['frame_id', 'child_frame_id', 'trans', 'quat', 'timestamp']
-	KEYPT_COLS = ['timestamp', 'trans', 'quat']
+	FK_COLS = ['timestamp', 'trans', 'quat']
+	KEYPT_COLS = ['timestamp', 'trans', 'rot_mat']
 	DET_COLS = [ 'angle', 
 			 					'start_angle',
 								'base_id', 
@@ -500,7 +501,8 @@ class KeypointDetect(DetectBase):
 			self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
 			self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
 			self.keypt_keys.extend(self.initRH8DFK(urdf_pth)) # end links
-			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys} 
+			self.rh8d_tf_df_dict = {link:  pd.DataFrame(columns=self.FK_COLS) for link in self.keypt_keys} 
+			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys[1:]} 
 			self.keypt_plot = KeypointPlot()
 			
 		# ros topics
@@ -1036,96 +1038,161 @@ class KeypointDetect(DetectBase):
 			# draw ellipse
 			p1 = tuple(map(int, interpolated_point_base_ax))
 			p2 = tuple(map(int, interpolated_point_target_ax))
-			# self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
+			self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
-	def visKeypoints(self, img: cv2.typing.MatLike, keypt_dict: dict) -> cv2.typing.MatLike:
-		plot_img = np.ones(self.keypt_plot.img_shape, dtype=np.uint8) * 255
-		
+	def visKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
 		# root joints not detected
-		if not self.chain_complete[0] or not keypt_dict:
-			return plot_img
+		if not self.chain_complete[0] or not fk_dict:
+			return 
 		
-		plot_dicts = []
 		joints_visualized = []
-		projected_point_parent = None
 		center_point = np.zeros(3, dtype=np.float32)
+		
+		# world to cam holder (joint6) tf (dynamic)
+		base_trans = fk_dict[self.marker_config[self.root_joint]['parent']]['trans']
+		base_rot = fk_dict[self.marker_config[self.root_joint]['parent']]['quat']
+		T_world_cam_holder = pose2Matrix(base_trans, base_rot, RotTypes.QUAT)
+		# cam holder to cam tf (static)
+		T_cam_holder_cam = pose2Matrix(self.marker_cam_extr.translation,  self.marker_cam_extr.rotation, RotTypes.MAT)
+		# world to cam tf
+		T_world_cam = T_world_cam_holder @ T_cam_holder_cam
+		# cam to world tf
+		(inv_trans, inv_rot) = invPersp(T_world_cam[:3, 3],  T_world_cam[:3, :3], RotTypes.MAT)
+
+		# draw base keypoint
+		transformed_point = T_world_cam_holder[:3, :3] @ center_point + T_world_cam_holder[:3, 3]
+		projected_point_parent, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+		projected_point_parent =  np.int32(projected_point_parent.flatten())
+		cv2.circle(img, projected_point_parent, self.KEYPT_THKNS, color, -1)
+		
 		# draw keypoints
 		for idx, chain in enumerate(self.kinematic_chains):
 			# draw only complete detections
 			if self.chain_complete[idx]:
-				plot_dicts.append({})
 				last_projected_point = projected_point_parent
+				
 				for joint in chain:
 					if joint not in joints_visualized:
 						joints_visualized.append(joint)
+						
 						# transform point
-						trans = keypt_dict[joint]['trans']
-						rot_mat = getRotation(keypt_dict[joint]['quat'], RotTypes.QUAT, RotTypes.MAT)
+						trans = fk_dict[joint]['trans']
+						rot_mat = getRotation(fk_dict[joint]['quat'], RotTypes.QUAT, RotTypes.MAT)
 						transformed_point = rot_mat @ center_point + trans
+						
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
-						projected_point, _ = cv2.projectPoints(transformed_point, self.marker_cam_extr.rotation, self.marker_cam_extr.translation, self.det.cmx, self.det.dist)
+						projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
 						projected_point = np.int32(projected_point.flatten())
-						print(projected_point)
-						print(trans, getRotation(rot_mat, RotTypes.MAT, RotTypes.EULER))
 						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
+						
 						# connect points
 						if last_projected_point is not None:
 							cv2.line(img, last_projected_point, projected_point, color, self.KEYPT_LINE_THKNS)
 						last_projected_point = projected_point
+						
 						# root connection
 						if idx == 0:
 							projected_point_parent = projected_point
-						# 3D plot data
-						plot_dicts[-1].update({joint: {'trans': trans, 'rot_mat': rot_mat, 'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]}})
+							
+						# get end link
+						link_info = self.link_info_dict.get(joint)
+						if link_info is not None:
+							# end link tf
+							trans = fk_dict[link_info['fixed_end']]['trans']
+							rot_mat = getRotation(fk_dict[link_info['fixed_end']]['quat'], RotTypes.QUAT, RotTypes.MAT)
+							# draw end link
+							transformed_point = rot_mat @ center_point + trans
+							projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+							projected_point = np.int32(projected_point.flatten())
+							cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
+							cv2.line(img, last_projected_point, projected_point, color, self.KEYPT_LINE_THKNS)
+							
+	def plotKeypoints(self, keypt_dict: dict) -> Union[None, cv2.typing.MatLike]:
+		plot_img = None
+		if not self.chain_complete[0] or not keypt_dict:
+			# root joints not detected
+			return plot_img
 
-		# plot keypoints 3D
 		self.keypt_plot.clear()
 		parent_joint = self.kinematic_chains[0][-1]
-		for plot_dict in plot_dicts:
-			plot_img = self.keypt_plot.plotKeypoints(plot_dict, parent_joint)
+
+		# plot keypoints
+		for idx, chain in enumerate(self.kinematic_chains):
+			# plot only complete detections
+			if self.chain_complete[idx]:
+				plt_dict = {}
+				for joint in chain:
+					plt_dict.update( {joint: keypt_dict[joint]} )
+					plt_dict[joint].update( {'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]} )
+					# end link
+					link_info = self.link_info_dict.get(joint)
+					if link_info is not None:
+						link_name = link_info['fixed_end']
+						plt_dict.update( {link_name: keypt_dict[link_name]} )
+						plt_dict[link_name].update( {'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]} )
+				# plot
+				plot_img = self.keypt_plot.plotKeypoints(plt_dict, parent_joint)
 
 		return cv2.cvtColor(plot_img, cv2.COLOR_RGBA2BGR)
 
-	def rh8dFK(self, joint_angles: dict, base_tf: dict, timestamp: float) -> dict:
+	def rh8dFK(self, joint_angles: dict, base_tf: dict, timestamp: float) -> Tuple[dict, dict]:
 		# reset flag
 		self.chain_complete = [True for _ in range(len(self.chain_complete))]
 
 		fk_dict = {}
+		keypt_dict = {}
 		if base_tf:
 			# applied to link's com
 			pb.resetBasePositionAndOrientation(self.robot_id, base_tf['trans'], base_tf['quat'])
-			fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': base_tf['trans'], 'quat': base_tf['quat']}})
-		else:
-			fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}})
 
+		# save base link pose
+		base_pos, base_orn = pb.getBasePositionAndOrientation(self.robot_id)
+		fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': base_pos, 'quat': base_orn}})
+		
 		# set detected angles
 		for joint, angle in joint_angles.items():
 			if angle is not None:
 				# revolute joint index
 				pb.resetJointState(self.robot_id, self.joint_info_dict[joint], angle)
+				
+		# world to root joint tf inverse
+		(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.joint_info_dict[self.root_joint], computeForwardKinematics=True)
+		(inv_trans, inv_quat) = invPersp(trans, quat, RotTypes.QUAT)
+		T_root_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
 
 		# get fk
 		for joint, angle in joint_angles.items():
 			if angle is not None:
 				# revolute joint's attached link
 				(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.joint_info_dict[joint], computeForwardKinematics=True)
+				# add world pose
 				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+				# compute relative pose
+				T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
+				T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
+				keypt_dict.update( {joint: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
 				# additional fk for tip frame
 				if joint in self.link_info_dict.keys():
 					# end link attached to last fixed joint 
 					(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.link_info_dict[joint]['index'], computeForwardKinematics=True)
 					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+					# compute relative pose
+					T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
+					T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
+					keypt_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
 			else:
 				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+				keypt_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'rot_mat': np.nan}} )
 				if joint in self.link_info_dict.keys():
 					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+					keypt_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': np.nan, 'rot_mat': np.nan}} )
 				# disable chain
 				for idx, chain in enumerate(self.kinematic_chains):
 					if joint in chain:
 						self.chain_complete[idx] = False
 
-		return fk_dict
+		return fk_dict, keypt_dict
 
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
@@ -1134,6 +1201,7 @@ class KeypointDetect(DetectBase):
 
 		res = True
 		fk_dict = {}
+		keypt_dict = {}
 		joint_angles = {joint: None for joint in self.marker_config.keys()}
 		
 		# at least one detection
@@ -1195,9 +1263,11 @@ class KeypointDetect(DetectBase):
 
 			# compute 3D keypoints
 			if not self.test:
-				fk_dict = self.rh8dFK(joint_angles, base_tf, timestamp)
+				(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
 				for link, fk in fk_dict.items():
-					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
+					self.rh8d_tf_df_dict[link] = pd.concat([self.rh8d_tf_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
+				for link, keypt in keypt_dict.items():
+					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([keypt])], ignore_index=True) # add to results
 
 		# no marker detected
 		else:
@@ -1210,10 +1280,11 @@ class KeypointDetect(DetectBase):
 			# frame counter
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw keypoints
-			kpt_plt = self.visKeypoints(out_img, fk_dict)
+			self.visKeypoints(out_img, fk_dict)
+			kpt_plt = self.plotKeypoints(keypt_dict)
 			# draw angle labels and possibly fixed detections 
 			for id, detection in marker_det.items():
-				self.labelDetection(out_img, id, marker_det) # cv angle
+				# self.labelDetection(out_img, id, marker_det) # cv angle
 				self.det._drawMarkers(id, detection['corners'], out_img) # square
 				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
 				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
@@ -1221,19 +1292,22 @@ class KeypointDetect(DetectBase):
 				cv2.imshow('Processed', proc_img)
 				cv2.imshow('Detection', det_img)
 				cv2.imshow('Output', out_img)
-				cv2.imshow('Plot', kpt_plt)
+				if kpt_plt is not None:
+					cv2.imshow('Plot', kpt_plt)
 			elif self.attached:
 				self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="mono8"))
 				self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
-				self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
+				if kpt_plt is not None:
+					self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 
 			# save drawings and original
 			if self.save_record and marker_det:
 				try:
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.data_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
-					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.data_cnt) + '.jpg'), det_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
-					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, 'plot3D_' + str(self.data_cnt) + '.jpg'), kpt_plt, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save plot
+					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.data_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
+					if kpt_plt is not None:
+						cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, 'plot3D_' + str(self.data_cnt) + '.jpg'), kpt_plt, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save plot
 				except Exception as e:
 					print(e)
 					return False
@@ -1303,9 +1377,14 @@ class KeypointDetect(DetectBase):
 			rospy.logerr(e)
 		finally:
 			if self.save_record:
-				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
-				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				# angles
+				det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
+				det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 				if not self.test:
+					# keypoints wrt world
+					fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
+					fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
+					# relative keypoints
 					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
 					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 					pb.disconnect()
@@ -1381,10 +1460,14 @@ class KeypointDetect(DetectBase):
 			
 		finally:
 			if self.save_record:
-				# join all dataframes
-				joint_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
-				joint_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				# angles
+				det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
+				det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 				if not self.test:
+					# keypoints wrt world
+					fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
+					fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
+					# relative keypoints
 					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
 					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 					pb.disconnect()

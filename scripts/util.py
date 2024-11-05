@@ -16,6 +16,7 @@ DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')
 KEYPT_DET_PTH = os.path.join(DATA_PTH, 'keypoint/detection_' + dt_now + '.json')
 KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
+KEYPT_FK_PTH = os.path.join(DATA_PTH, 'keypoint/kptsFK_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
 REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
