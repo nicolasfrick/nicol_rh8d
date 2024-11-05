@@ -1044,6 +1044,14 @@ class KeypointDetect(DetectBase):
 			p2 = tuple(map(int, interpolated_point_target_ax))
 			self.drawAngle(id, img, p1, p2, np.rad2deg(angle))
 
+	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
+		if angle is None: 
+			return
+		txt = "{} {} {:.2f} deg".format(id, name, np.rad2deg(angle))
+		xpos = self.TXT_OFFSET
+		ypos = (id+2)*self.TXT_OFFSET
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+
 	def visKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
 		# root joints not detected
 		if not self.chain_complete[0] or not fk_dict:
@@ -1252,7 +1260,7 @@ class KeypointDetect(DetectBase):
 									'timestamp': timestamp,
 									}
 					joint_angles[joint] = angle # add angle for keypoint vis
-					marker_det[target_id].update({'angle': angle, 'base_id': base_id}) # add to detection for drawings
+					marker_det[target_id].update({'angle': angle, 'base_id': base_id, 'joint': joint}) # add to detection for drawings
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
 					res = False
@@ -1289,6 +1297,7 @@ class KeypointDetect(DetectBase):
 			# draw angle labels and possibly fixed detections 
 			for id, detection in marker_det.items():
 				# self.labelDetection(out_img, id, marker_det) # cv angle
+				self.labelAngle(out_img, detection.get('joint'), id, detection.get('angle'))
 				self.det._drawMarkers(id, detection['corners'], out_img) # square
 				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
 				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
@@ -1439,14 +1448,6 @@ class KeypointDetect(DetectBase):
 				if self.refine_pose:
 					self.refineDetection(marker_det)
 
-			# show
-			if self.cv_window:
-				cv2.imshow('Detection', det_img)
-				if cv2.waitKey(1) == ord("q"):
-					return False
-			else:
-				self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
-
 			# detect angles
 			detected_ids = marker_det.keys()
 			for joint, config in self.marker_config.items():
@@ -1458,12 +1459,20 @@ class KeypointDetect(DetectBase):
 					target_marker = marker_det[marker_ids[1]] # target marker detection
 					# detected angle in rad
 					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
-					# save angle
 					self.start_angles.update({joint: angle})
+					# show
 					print("Updating start angle", {joint: angle})
+					self.labelAngle(det_img, joint, marker_ids[1], angle)
+					if self.cv_window:
+						cv2.imshow('Detection', det_img)
+						if cv2.waitKey(1) == ord("q"):
+							return False
+					else:
+						self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
+					# exit
 					if joint == last_joint:
-						print("All angles initialized")
-						return True
+						if input("All angles initialized. Press any key to exit or r to repeat.") != 'r':
+							return True
 				else:
 					if input(f"{joint} markers not detected, check illumination and press any key to repeat or q to exit!") == 'q':
 						return False
