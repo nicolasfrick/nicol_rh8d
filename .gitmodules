@@ -5,3 +5,6 @@
 [submodule "kypt_transformer"]
 	path = kypt_transformer
 	url = https://github.com/shreyashampali/kypt_transformer.git
+[submodule "INN_Continuum_Robot"]
+	path = INN_Continuum_Robot
+	url = https://github.com/Shaswat2001/INN_Continuum_Robot.git

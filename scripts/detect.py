@@ -1422,6 +1422,9 @@ class KeypointDetect(DetectBase):
 		return False
 	
 	def initAngles(self) -> bool:
+		"""Initial angles are the difference between two marker planes when all joints are at zero
+		      position. This angle difference is substracted at any further reading.
+		"""
 		topic_info = f"Visualization topic: {self.det_pub.resolved_name}" if not self.cv_window else ""
 		input(f"Illuminate all markers for angle initialization and press any key to proceed! {topic_info}")
 		last_joint =  list(self.marker_config.keys())[-1]
