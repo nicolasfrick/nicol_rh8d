@@ -1237,7 +1237,7 @@ class KeypointDetect(DetectBase):
 						self.start_angles.update({joint: angle})
 						print("Updating start angle", {joint: angle})
 					# substract initial angle
-					angle = angle - self.start_angles[joint]
+					angle = angle - self.start_angles[joint] # TODO: check
 
 					# data entry
 					data = { 'angle': angle, 

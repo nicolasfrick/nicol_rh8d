@@ -48,7 +48,7 @@ class MoveRobot():
 	ROBOT_LOW_LIM = [0.0, -1.5, -2.25, -2.9, -M_PI_2, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
 	ROBOT_UP_LIM = [2.5, 1.8, 1.5, 2.9, M_PI_2, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI, M_PI]
 	ROBOT_INIT = [0.31, 0.2, -0.2, 1.5, 1.28, 0.0, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
-	ROBOT_HOME = [M_PI_2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
+	ROBOT_HOME = [M_PI_2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, -M_PI, -M_PI, -M_PI, 0.0, -M_PI]
 	ROBOT_EXP_START = [1.91, 0.471, -1.131, -M_PI_2, -M_PI_2, -M_PI, 0.0, 0.0, -M_PI, -M_PI, -M_PI, -M_PI, -M_PI]
 
 	JOINT5_IDX = ROBOT_JOINTS_INDEX['joint5']
