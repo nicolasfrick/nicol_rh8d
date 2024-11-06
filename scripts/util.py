@@ -32,6 +32,9 @@ KEYPT_R_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'right_eye')
 KEYPT_L_EYE_REC_DIR = os.path.join(KEYPT_REC_DIR, 'left_eye')
 KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
 KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
+
+# training
+TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'train')
 	
 def mkDirs() -> None:
     if not os.path.exists(REC_DIR):

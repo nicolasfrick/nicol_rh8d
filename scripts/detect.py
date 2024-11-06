@@ -465,7 +465,7 @@ class KeypointDetect(DetectBase):
 			mkDirs()
 
 		# load waypoints
-		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint", waypoint_set)
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint/waypoints", waypoint_set)
 		self.waypoint_df = pd.read_json(fl, orient='index')
 		if waypoint_start_idx > 0:
 			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]

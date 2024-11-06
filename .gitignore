@@ -1,7 +1,7 @@
 *.code-workspace
 *.mp4
 *.pyc
-# aruco
 inventor/lockfile.lck
 *.code-workspace
 .vscode
+*log
