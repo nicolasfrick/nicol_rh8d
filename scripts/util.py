@@ -1,11 +1,13 @@
-import os, cv2
+import os
+import cv2
+import yaml
 import subprocess
 import numpy as np
 import pandas as pd	
 from enum import Enum
 from typing import Tuple
 from cv2 import Rodrigues
-from datetime import datetime
+from datetime import datetimes
 from matplotlib import pyplot as plt
 from scipy.spatial.transform import Rotation as R
 
@@ -264,6 +266,14 @@ def dfsKinematicChain(joint_name: str, kinematic_chains: list, marker_config:dic
 		if len(joint_children) > 1:
 			kinematic_chains.append(kinematic_chains[0].copy())
 		dfsKinematicChain(child, kinematic_chains, marker_config, branched)
+
+def loadMarkerConfig() -> dict:
+	# load hand marker ids
+	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_config.yaml")
+	with open(fl, 'r') as fr:
+		config = yaml.safe_load(fr)
+		marker_config = config['marker_config']
+		return marker_config
 
 def beep(do_beep: bool=True) -> None:
 	if do_beep:

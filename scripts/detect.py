@@ -493,12 +493,8 @@ class KeypointDetect(DetectBase):
 				self.top_cam_extr.translation = np.array(world_to_top_cam_extr['xyz'], dtype=np.float32)
 				self.top_cam_extr.rotation = getRotation(world_to_top_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
 
-		# load hand marker ids
-		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/hand_ids.yaml")
-		with open(fl, 'r') as fr:
-			self.hand_ids = yaml.safe_load(fr)
-			self.marker_config = self.hand_ids['marker_config'] # target marker ids
-
+		# load marker config			
+		self.marker_config = loadMarkerConfig()
 		self.start_angles = {} # initial angles
 		self.root_joint = list(self.marker_config.keys())[0] # first joint
 		self.det_df_dict = {joint:  pd.DataFrame(columns=self.DET_COLS) for joint in self.marker_config.keys()} # angles dataset
