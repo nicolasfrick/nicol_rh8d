@@ -35,6 +35,7 @@ KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
 
 # training
 TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'train')
+MLP_LOG_PTH = os.path.join(TRAIN_PTH, 'mlp/log')
 	
 def mkDirs() -> None:
     if not os.path.exists(REC_DIR):
@@ -252,10 +253,17 @@ def refinePose(tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_poin
 																							)
 	return out_tvec.flatten(), out_rvec.flatten()
 
-def readDataset(filepth: str) -> dict:
-	pth = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint')
-	df = pd.read_json(os.path.join(pth, filepth), orient='index')
-	return {joint: pd.DataFrame.from_dict(data, orient='index') for joint, data in df.iloc[0].items()}
+def dfsKinematicChain(joint_name: str, kinematic_chains: list, marker_config:dict, branched: bool=False) -> None:
+	"""Find all joint chains in config."""
+	kinematic_chains[-1].append(joint_name)
+	joint_children = marker_config[joint_name]['joint_children']
+	if len(joint_children) > 1:
+		assert(not branched)
+		branched = True
+	for child in joint_children:
+		if len(joint_children) > 1:
+			kinematic_chains.append(kinematic_chains[0].copy())
+		dfsKinematicChain(child, kinematic_chains, marker_config, branched)
 
 def beep(do_beep: bool=True) -> None:
 	if do_beep:

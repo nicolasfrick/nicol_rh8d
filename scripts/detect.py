@@ -571,7 +571,7 @@ class KeypointDetect(DetectBase):
 
 		# get all present chains
 		self.kinematic_chains = [[]]
-		self.dfsKinematicChain(self.root_joint)
+		dfsKinematicChain(self.root_joint, self.kinematic_chains, self.marker_config)
 		self.chain_complete = [False for _ in range(len(self.kinematic_chains))]
 		# revolute end joints to fixed end joint mapping
 		end_joints = [chain[-1] for chain in self.kinematic_chains]
@@ -594,17 +594,6 @@ class KeypointDetect(DetectBase):
 					self.link_info_dict.update( {end_joints[fixed_end_joints.index(joint_name)]: {'index': idx, 'fixed_end': joint_name}} )
 		
 		return fixed_end_joints
-		
-	def dfsKinematicChain(self, joint_name, branched: bool=False):
-		self.kinematic_chains[-1].append(joint_name)
-		joint_children = self.marker_config[joint_name]['joint_children']
-		if len(joint_children) > 1:
-			assert(not branched)
-			branched = True
-		for child in joint_children:
-			if len(joint_children) > 1:
-				self.kinematic_chains.append(self.kinematic_chains[0].copy())
-			self.dfsKinematicChain(child, branched)
 
 	def initSubscriber(self) -> None:
 		rospy.wait_for_message(self.actuator_state_topic, JointState, 5)
