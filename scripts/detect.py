@@ -382,7 +382,7 @@ class KeypointDetect(DetectBase):
 				left_eye_camera_name: Optional[str]='left_eye_camera',
 				right_eye_camera_name: Optional[str]='right_eye_camera',
 				head_camera_name: Optional[str]='head_camera',
-				joint_state_topic: Optional[str]='joint_states',
+				actuator_state_topic: Optional[str]='actuator_states',
 				waypoint_set: Optional[str]='waypoints.json',
 				waypoint_start_idx: Optional[int]=0,
 				sync_slop: Optional[float]=0.1,
@@ -424,7 +424,8 @@ class KeypointDetect(DetectBase):
 		self.head_camera_name = head_camera_name
 		self.left_eye_camera_name = left_eye_camera_name
 		self.right_eye_camera_name = right_eye_camera_name
-		self.joint_state_topic = joint_state_topic
+		self.actuator_state_topic = actuator_state_topic
+		self.joint_state_topic = actuator_state_topic.replace('actuator', 'joint')
 		self.record_cnt = 0
 		self.data_cnt = 0
 		self.subs = []
@@ -438,10 +439,12 @@ class KeypointDetect(DetectBase):
 		self.head_depth_img_buffer = deque(maxlen=1)
 		self.left_img_buffer = deque(maxlen=1)
 		self.right_img_buffer = deque(maxlen=1)
+		self.actuator_state_buffer = deque(maxlen=1)
 		self.joint_state_buffer = deque(maxlen=1)
 		self.buf_lock = threading.Lock()
 
 		# data frames
+		self.as_df = pd.DataFrame(columns=self.JS_COLS)
 		self.js_df = pd.DataFrame(columns=self.JS_COLS)
 		self.rh8d_tf_df = pd.DataFrame(columns=self.TF_COLS)
 		self.rh8d_tcp_tf_df = pd.DataFrame(columns=self.TF_COLS)
@@ -604,6 +607,10 @@ class KeypointDetect(DetectBase):
 			self.dfsKinematicChain(child, branched)
 
 	def initSubscriber(self) -> None:
+		rospy.wait_for_message(self.actuator_state_topic, JointState, 5)
+		self.actuator_states_sub = Subscriber(self.actuator_state_topic, JointState)
+		self.subs.append(self.actuator_states_sub)
+		
 		rospy.wait_for_message(self.joint_state_topic, JointState, 5)
 		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
 		self.subs.append(self.joint_states_sub)
@@ -695,6 +702,7 @@ class KeypointDetect(DetectBase):
 		print("Syncing all aubscibers")
 
 	def recCB(self, 
+		        actuator_state: JointState, 
 		   		joint_state: JointState, 
 		   		det_img: Image, 
 				msg3: Image=None,  # depth_img
@@ -709,6 +717,7 @@ class KeypointDetect(DetectBase):
 		if not self.buf_lock.acquire(blocking=False):
 					return  
 		try:
+			self.actuator_state_buffer.append(actuator_state)
 			self.joint_state_buffer.append(joint_state)
 			self.det_img_buffer.append(det_img)
 
@@ -750,20 +759,20 @@ class KeypointDetect(DetectBase):
 	def saveRecord(self) -> Tuple[dict, dict]:	
 		num_saved = 0
 		tf_rh8d_dict = {}
-		joint_states_dict = {}
+		actuator_states_dict = {}
 
-		# joint states and rh8d tf
-		if len(self.joint_state_buffer):
+		# actuator states and rh8d tf
+		if len(self.actuator_state_buffer):
 			num_saved += 1
-			msg = self.joint_state_buffer.pop()
+			msg = self.actuator_state_buffer.pop()
 			state_dict = {'name': msg.name,
 							'position': msg.position,
 							'velocity': msg.velocity,
 							'effort': msg.effort,
 							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
 						 }
-			self.js_df = pd.concat([self.js_df, pd.DataFrame([state_dict])], ignore_index=True)
-			joint_states_dict = dict(zip(msg.name, msg.position))
+			self.as_df = pd.concat([self.as_df, pd.DataFrame([state_dict])], ignore_index=True)
+			actuator_states_dict = dict(zip(msg.name, msg.position))
 			
 			# save rh8d tf
 			if self.use_tf:
@@ -775,6 +784,18 @@ class KeypointDetect(DetectBase):
 				tf_rh8d_tcp_dict = self.lookupTF(msg.header.stamp, self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
 				if tf_rh8d_tcp_dict:
 					self.rh8d_tcp_tf_df = pd.concat([self.rh8d_tcp_tf_df, pd.DataFrame([tf_rh8d_tcp_dict])], ignore_index=True)
+			
+		# joint states
+		if len(self.joint_state_buffer):
+			num_saved += 1
+			msg = self.joint_state_buffer.pop()
+			state_dict = {'name': msg.name,
+							'position': msg.position,
+							'velocity': msg.velocity,
+							'effort': msg.effort,
+							'timestamp': msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
+						 }
+			self.js_df = pd.concat([self.js_df, pd.DataFrame([state_dict])], ignore_index=True)
 
 		# marker cam depth img
 		if self.depth_enabled and len(self.depth_img_buffer):
@@ -843,6 +864,8 @@ class KeypointDetect(DetectBase):
 						self.right_eye_tf_df = pd.concat([self.right_eye_tf_df, pd.DataFrame([tf_dict])], ignore_index=True)
 
 		# check df lengths
+		if self.record_cnt != self.as_df.last_valid_index():
+			print("Record size deviates as dataframe index:", self.record_cnt, "!=", self.as_df.last_valid_index())
 		if self.record_cnt != self.js_df.last_valid_index():
 			print("Record size deviates js dataframe index:", self.record_cnt, "!=", self.js_df.last_valid_index())
 		if self.use_tf:
@@ -863,7 +886,7 @@ class KeypointDetect(DetectBase):
 		if num_saved > 0:
 			self.record_cnt += 1
 
-		return tf_rh8d_dict, joint_states_dict
+		return tf_rh8d_dict, actuator_states_dict
 
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict, dict, float]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
@@ -879,8 +902,10 @@ class KeypointDetect(DetectBase):
 		while len(self.det_img_buffer) != self.filter_iters:
 			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
 			rospy.sleep(1/self.fps)
-
 		# wait for buffer to be filled
+		while not len(self.actuator_state_buffer):
+			print("Actuator state buffer not updated")
+			rospy.sleep(0.1)
 		while not len(self.joint_state_buffer):
 			print("Joint state buffer not updated")
 			rospy.sleep(0.1)
@@ -1552,7 +1577,8 @@ class KeypointDetect(DetectBase):
 					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 					pb.disconnect()
 					if self.attached:
-						self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+						self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+						self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
 						if self.use_tf:
 							self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
 							self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
