@@ -138,15 +138,27 @@ class DetectBase():
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(DetectorConfig, self.det.setDetectorParams)
 
-	def flipOutliers(self, detections: dict, tolerance: float=0.5) -> bool:
+	def flipOutliers(self, marker_detections: dict, tolerance: float=0.5, exclude_ids: list=[6,7,8,9], axis: str='z') -> bool:
 		"""Check if all Z axes are oriented similarly and 
 			  flip orientation for outliers. 
 		"""
+		# TODO: divide between fingers and thumb
+
+		# exclude markers from check
+		detections = {id: det for id, det in marker_detections.items() if id not in exclude_ids}
+		# get ids
 		marker_ids = list(detections.keys())
 		# extract filtered rotations
 		rotations = [getRotation(marker_det['frot'], RotTypes.EULER, RotTypes.MAT)  for marker_det in detections.values()]
+
+		# index 0, 1, 2 supported
+		axis_idx = ord(axis)
+		if axis_idx < ord('x') or axis_idx > ord('z'):
+			raise ValueError
+		# index in 0,1,2
+		axis_idx = axis_idx - ord('x')
 		# find outliers
-		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis='z')
+		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis_idx=axis_idx)
 
 		# correct outliers
 		fixed = []
@@ -165,15 +177,15 @@ class DetectBase():
 			for rvec, tvec in zip(rvecs, tvecs):
 				# normalize rotation
 				mat = getRotation(rvec.flatten(), RotTypes.RVEC, RotTypes.MAT)
-				axs = mat[:, 2] / np.linalg.norm(mat[:, 2])
+				axs = mat[:, axis_idx] / np.linalg.norm(mat[:, axis_idx])
 				# check angular distance to average
 				if abs( np.dot(axs, axis_avg) ) > tolerance:
 					# set other rot
-					detections[mid]['rot_mat'] = mat
-					detections[mid]['rvec'] = rvec.flatten()
-					detections[mid]['frot'] = getRotation(mat, RotTypes.MAT, RotTypes.EULER)
+					marker_detections[mid]['rot_mat'] = mat
+					marker_detections[mid]['rvec'] = rvec.flatten()
+					marker_detections[mid]['frot'] = getRotation(mat, RotTypes.MAT, RotTypes.EULER)
 					# set other trans
-					detections[mid]['ftrans'] = tvec.flatten()
+					marker_detections[mid]['ftrans'] = tvec.flatten()
 					print("fixed")
 					fixed.append(idx)
 				
@@ -692,7 +704,7 @@ class KeypointDetect(DetectBase):
 		print("Syncing all aubscibers")
 
 	def recCB(self, 
-		        actuator_state: JointState, 
+				actuator_state: JointState, 
 		   		joint_state: JointState, 
 		   		det_img: Image, 
 				msg3: Image=None,  # depth_img
@@ -915,6 +927,7 @@ class KeypointDetect(DetectBase):
 			# align rotations by consens
 			if self.flip_outliers:
 				if not self.flipOutliers(marker_det):
+					print("Not all flipped markers were fixed!")
 					beep(self.make_noise)
 
 			# improve detection
@@ -1447,7 +1460,7 @@ class KeypointDetect(DetectBase):
 	
 	def initAngles(self) -> bool:
 		"""Initial angles are the difference between two marker planes when all joints are at zero
-		      position. This angle difference is substracted at any further reading.
+			  position. This angle difference is substracted at any further reading.
 		"""
 		topic_info = f"Visualization topic: {self.det_pub.resolved_name}" if not self.cv_window else ""
 		input(f"Illuminate all markers for angle initialization and press any key to proceed! {topic_info}")

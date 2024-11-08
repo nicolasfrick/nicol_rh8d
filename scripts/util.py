@@ -195,16 +195,10 @@ def refRotZ(rot_mat: np.ndarray, ref_rotations: np.ndarray, threshold: float=1e-
 
 import numpy as np
 
-def findAxisOrientOutliers(rot_mats: np.ndarray, tolerance: float=1e-6, axis: str='x') -> Tuple[list, np.ndarray]:
+def findAxisOrientOutliers(rot_mats: np.ndarray, tolerance: float=1e-6, axis_idx: int=ord('x')) -> Tuple[list, np.ndarray]:
 	"""Average the axes of all matrices and find the index
 		for matrices that do not match the avg orientation.
 	"""	
-	# index 0, 1, 2 supported
-	if ord(axis) < ord('x') or ord(axis) > ord('z'):
-		raise ValueError
-	# index
-	axis_idx = ord(axis) - ord('x')
-
 	# compute average axes
 	axs_avg = np.mean( [r[:3, axis_idx] for r in rot_mats], axis=0 )
 	axs_avg /= np.linalg.norm(axs_avg)
@@ -268,12 +262,20 @@ def dfsKinematicChain(joint_name: str, kinematic_chains: list, marker_config:dic
 		dfsKinematicChain(child, kinematic_chains, marker_config, branched)
 
 def loadMarkerConfig() -> dict:
-	# load hand marker ids
+	# load marker configuration
 	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/marker_config.yaml")
 	with open(fl, 'r') as fr:
 		config = yaml.safe_load(fr)
 		marker_config = config['marker_config']
 		return marker_config
+	
+def loadNetConfig(net: str) -> dict:
+	# load net configuration
+	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/net_config.yaml")
+	with open(fl, 'r') as fr:
+		config = yaml.safe_load(fr)
+		net_config = config[net]
+		return net_config
 
 def beep(do_beep: bool=True) -> None:
 	if do_beep:
