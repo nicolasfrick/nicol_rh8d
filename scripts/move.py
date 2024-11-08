@@ -468,4 +468,4 @@ class MoveRobot():
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential()
+	MoveRobot.generateWaypointsSequential(30, 30, 20, 10)
