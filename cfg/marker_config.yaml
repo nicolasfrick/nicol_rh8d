@@ -20,7 +20,7 @@ marker_config:
     joint_children: ['jointI1', 'jointM1', 'jointR1', 'jointL1', 'jointT0']
     name: 'wrist flexion'
   jointI1:
-    marker_ids:  [1, 2]
+    marker_ids:  [0, 2]
     alt_marker_ids: [-1]
     plane: &plane 'xz'
     parent: *palm
@@ -140,7 +140,7 @@ marker_config:
     joint_children: []
     name: 'little flexion'
   jointT0:
-    marker_ids: [8, 10]
+    marker_ids: [9, 10]
     alt_marker_ids: [-1]
     plane: 'xy'
     parent: *palm

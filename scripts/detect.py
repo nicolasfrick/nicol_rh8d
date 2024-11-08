@@ -12,6 +12,7 @@ import threading
 import numpy as np
 import pybullet as pb
 import sensor_msgs.msg
+from pynput import keyboard
 from collections import deque
 import dynamic_reconfigure.server
 from sensor_msgs.msg import Image
@@ -296,6 +297,8 @@ class KeypointDetect(DetectBase):
 		@type bool
 		@param self_reset_angles
 		@type bool
+		@param topic_wait_secs
+		@type float
 
 	"""
 
@@ -389,6 +392,7 @@ class KeypointDetect(DetectBase):
 				urdf_pth: Optional[str]='rh8d.urdf',
 				make_noise: Optional[bool]=False,
 				self_reset_angles: Optional[bool]=False,
+				topic_wait_secs: Optional[float]=15,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -429,6 +433,8 @@ class KeypointDetect(DetectBase):
 		self.record_cnt = 0
 		self.data_cnt = 0
 		self.subs = []
+		self.pause = False
+		self.topic_wait_secs = topic_wait_secs
 
 		# message buffers
 		self.det_img_buffer = deque(maxlen=self.filter_iters)
@@ -454,8 +460,8 @@ class KeypointDetect(DetectBase):
 
 		# init ros
 		if use_tf and not test:
-			self.buf = tf2_ros.Buffer()
-			self.listener = tf2_ros.TransformListener(self.buf)
+			self.buf = tf2_ros.Buffer(cache_time=500)
+			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
 
 		# init controller
 		if attached:
@@ -592,11 +598,11 @@ class KeypointDetect(DetectBase):
 		return fixed_end_joints
 
 	def initSubscriber(self) -> None:
-		rospy.wait_for_message(self.actuator_state_topic, JointState, 5)
+		rospy.wait_for_message(self.actuator_state_topic, JointState, self.topic_wait_secs)
 		self.actuator_states_sub = Subscriber(self.actuator_state_topic, JointState)
 		self.subs.append(self.actuator_states_sub)
 		
-		rospy.wait_for_message(self.joint_state_topic, JointState, 5)
+		rospy.wait_for_message(self.joint_state_topic, JointState, self.topic_wait_secs)
 		self.joint_states_sub = Subscriber(self.joint_state_topic, JointState)
 		self.subs.append(self.joint_states_sub)
 
@@ -612,8 +618,8 @@ class KeypointDetect(DetectBase):
 			self.subs.append(self.depth_img_sub)
 			# save camera info
 			print("Waiting for camera_info from", self.depth_topic + '/camera_info')
-			depth_info = rospy.wait_for_message(self.depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-			extr_info = rospy.wait_for_message(self.camera_ns.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+			depth_info = rospy.wait_for_message(self.depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
+			extr_info = rospy.wait_for_message(self.camera_ns.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, self.topic_wait_secs)
 			self.saveCamInfo(depth_info, os.path.join(KEYPT_ORIG_REC_DIR, "rs_d415_info_depth.yaml"), extr_info)
 
 		if self.use_top_camera:
@@ -622,7 +628,7 @@ class KeypointDetect(DetectBase):
 			self.subs.append(self.top_img_sub)
 			# save camera info
 			print("Waiting for camera_info from", self.top_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			rgb_info = rospy.wait_for_message(self.top_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_rgb.yaml"), self.top_cam_extr)
 			if self.depth_enabled:
 				self.top_depth_topic = self.top_camera_name.replace('color', 'depth')
@@ -631,8 +637,8 @@ class KeypointDetect(DetectBase):
 				self.subs.append(self.top_depth_img_sub)
 				# save camera info
 				print("Waiting for camera_info from", self.top_depth_topic + '/camera_info')
-				depth_info = rospy.wait_for_message(self.top_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-				extr_info = rospy.wait_for_message(self.top_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+				depth_info = rospy.wait_for_message(self.top_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
+				extr_info = rospy.wait_for_message(self.top_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, self.topic_wait_secs)
 				self.saveCamInfo(depth_info, os.path.join(KEYPT_TOP_CAM_REC_DIR, "rs_d435IF_info_depth.yaml"), extr_info)
 
 		if self.use_head_camera:
@@ -641,7 +647,7 @@ class KeypointDetect(DetectBase):
 			self.subs.append(self.head_img_sub)
 			# save camera info
 			print("Waiting for camera_info from", self.head_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.head_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			rgb_info = rospy.wait_for_message(self.head_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_rgb.yaml")) # dynamic extrinsics
 			if self.depth_enabled:
 				self.head_depth_topic = self.head_camera_name.replace('color', 'depth')
@@ -650,8 +656,8 @@ class KeypointDetect(DetectBase):
 				self.subs.append(self.head_depth_img_sub)
 				# save camera info
 				print("Waiting for camera_info from", self.head_depth_topic + '/camera_info')
-				depth_info = rospy.wait_for_message(self.head_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
-				extr_info = rospy.wait_for_message(self.head_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, 5)
+				depth_info = rospy.wait_for_message(self.head_depth_topic + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
+				extr_info = rospy.wait_for_message(self.head_camera_name.replace('/color', '') + '/extrinsics/depth_to_color', Extrinsics, self.topic_wait_secs)
 				self.saveCamInfo(depth_info, os.path.join(KEYPT_HEAD_CAM_REC_DIR, "rs_d435I_info_depth.yaml"), extr_info)
 
 		if self.use_eye_cameras:
@@ -661,7 +667,7 @@ class KeypointDetect(DetectBase):
 			self.subs.append(self.right_img_sub)
 			# save camera info
 			print("Waiting for camera_info from", self.right_eye_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			rgb_info = rospy.wait_for_message(self.right_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_R_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml")) # dynamic extrinsics
 			# left eye
 			self.left_img_topic = self.left_eye_camera_name + '/image_raw'
@@ -669,7 +675,7 @@ class KeypointDetect(DetectBase):
 			self.subs.append(self.left_img_sub)
 			# save camera info
 			print("Waiting for camera_info from", self.left_eye_camera_name + '/camera_info')
-			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, 5)
+			rgb_info = rospy.wait_for_message(self.left_eye_camera_name + '/camera_info', sensor_msgs.msg.CameraInfo, self.topic_wait_secs)
 			self.saveCamInfo(rgb_info, os.path.join(KEYPT_L_EYE_REC_DIR, "See3CAM_CU135_info_rgb.yaml")) # dynamic extrinsics
 		
 		# trigger condition
@@ -1057,6 +1063,9 @@ class KeypointDetect(DetectBase):
 	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
 		if angle is None: 
 			return
+		# TODO: general fix
+		if name == 'joint7':
+			id = 7
 		txt = "{} {} {:.2f} deg".format(id, name, np.rad2deg(angle))
 		xpos = self.TXT_OFFSET
 		ypos = (id+2)*self.TXT_OFFSET
@@ -1474,7 +1483,7 @@ class KeypointDetect(DetectBase):
 					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					self.start_angles.update({joint: angle})
 					# show
-					print("Updating start angle", {joint: angle})
+					print(f"Updating start angle {joint}: {angle} rad, {np.rad2deg(angle)} deg")
 					self.labelAngle(det_img, joint, marker_ids[1], angle)
 					if self.cv_window:
 						cv2.imshow('Detection', det_img)
@@ -1490,91 +1499,108 @@ class KeypointDetect(DetectBase):
 					if input(f"{joint} markers not detected, check illumination and press any key to repeat or q to exit!") == 'q':
 						return False
 					break
+
+	def togglePause(self) -> None:
+		self.pause = not self.pause
+		if self.pause:
+			print("Application paused")
+		else:
+			print("Application unpaused")
 		
 	def runAttached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
 		
-		try:
-			# epoch
-			for e in range(self.epochs):
-				print("New epoch", e)
-				print("Moving home!")
-				head_home = self.rh8d_ctrl.moveHeadHome(2.0)
-				self.rh8d_ctrl.reachHomeBlocking(15.0)
-				# save initially detected angles
-				if not self.self_reset_angles:
-					if not self.initAngles():
-						return
-				
-				for idx in self.waypoint_df.index.tolist():
-					if not rospy.is_shutdown():
-						# get waypoint
-						waypoint = self.waypoint_df.iloc[idx]
-						reset_angles = waypoint[-4]
-						direction = waypoint[-3]
-						description = waypoint[-2]
-						move_time = waypoint[-1]
-						waypoint = waypoint[: -4].to_dict()
-						# reset initially detected angles
-						if reset_angles and self.self_reset_angles:
-							self.start_angles.clear()
-
-						# get head out of range if arm moves
-						head_home = self.moveHeadConditioned(waypoint)
-
-						# move arm and hand
-						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
-						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
-						print("done\n") if success else print("fail\n")
-
-						# look towards hand and settle 
-						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
-						self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
-						rospy.sleep(3.0 if head_home else 1.5)
-						head_home = False
-
-						# detect angles
-						self.detectionRoutine(waypoint, e, direction, description)
-
-						if self.cv_window:
-							if cv2.waitKey(1) == ord("q"):
-								return
+		with keyboard.GlobalHotKeys({'p': self.togglePause}) as h:
+			try:
+				# epoch
+				for e in range(self.epochs):
+					print("New epoch", e)
+					print("Moving home!")
+					head_home = self.rh8d_ctrl.moveHeadHome(2.0)
+					self.rh8d_ctrl.reachHomeBlocking(15.0)
+					# save initially detected angles
+					if not self.self_reset_angles:
+						if not self.initAngles():
+							return
+					
+					for idx in self.waypoint_df.index.tolist():
 						
-						try:
-							rate.sleep()
-						except:
-							pass
+						# 'p' pressed
+						while self.pause:
+							rospy.sleep(0.1)
+						
+						if not rospy.is_shutdown():
+							# get waypoint
+							waypoint = self.waypoint_df.iloc[idx]
+							reset_angles = waypoint[-4]
+							direction = waypoint[-3]
+							description = waypoint[-2]
+							move_time = waypoint[-1]
+							waypoint = waypoint[: -4].to_dict()
+							# reset initially detected angles
+							if reset_angles and self.self_reset_angles:
+								self.start_angles.clear()
 
-		except None as e:
-			rospy.logerr(e)
-			
-		finally:
-			if self.save_record:
-				# angles
-				det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
-				det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-				if not self.test:
-					# keypoints wrt world
-					fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
-					fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
-					# relative keypoints
-					kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
-					kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
-					pb.disconnect()
-					if self.attached:
-						self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-						self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
-						if self.use_tf:
-							self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-							self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
-							if self.use_head_camera:
-								self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-							if self.use_eye_cameras:
-								self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-								self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-			if self.cv_window:
-				cv2.destroyAllWindows()
-			rospy.signal_shutdown(0)
+							# get head out of range if arm moves
+							head_home = self.moveHeadConditioned(waypoint)
+
+							# move arm and hand
+							print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
+							success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
+							print("done\n") if success else print("fail\n")
+
+							# look towards hand and settle 
+							tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
+							self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
+							rospy.sleep(3.0 if head_home else 1.5)
+							head_home = False
+
+							# detect angles
+							self.detectionRoutine(waypoint, e, direction, description)
+
+							if self.cv_window:
+								if cv2.waitKey(1) == ord("q"):
+									return
+							
+							try:
+								rate.sleep()
+							except:
+								pass
+
+			except None as e:
+				rospy.logerr(e)
+				
+			finally:
+				if self.save_record:
+					# angles
+					det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
+					det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+					if not self.test:
+						# keypoints wrt world
+						fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
+						fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
+						# relative keypoints
+						kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
+						kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+						pb.disconnect()
+						if self.attached:
+							self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+							self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
+							if self.use_tf:
+								self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+								self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+								if self.use_head_camera:
+									self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+								if self.use_eye_cameras:
+									self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+									self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+				if self.cv_window:
+					cv2.destroyAllWindows()
+				rospy.signal_shutdown(0)
+
+			# hotkey
+			h.stop()
+			h.join()
 
 class HybridDetect(KeypointDetect):
 	"""
@@ -2218,7 +2244,7 @@ def main() -> None:
 						head_camera_name=rospy.get_param('~head_camera_name', 'head_camera'),
 						left_eye_camera_name=rospy.get_param('~left_eye_camera_name', 'left_eye_camera'),
 						right_eye_camera_name=rospy.get_param('~right_eye_camera_name', 'right_eye_camera'),
-						joint_state_topic=rospy.get_param('~joint_state_topic', 'joint_states'),
+						actuator_state_topic=rospy.get_param('~actuator_state_topic', 'actuator_states'),
 						waypoint_set=rospy.get_param('~waypoint_set', 'waypoints.json'),
 						waypoint_start_idx=rospy.get_param('~waypoint_start_idx', 0),
 						).run()
