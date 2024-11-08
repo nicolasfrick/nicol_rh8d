@@ -405,7 +405,7 @@ class KeypointDetect(DetectBase):
 						use_aruco=use_aruco,
 						plt_id=plt_id,
 						f_ctrl=f_ctrl,
-						test=test,
+						test=False,
 						vis=vis,
 						fps=fps,
 						cv_window=not attached,
@@ -433,7 +433,6 @@ class KeypointDetect(DetectBase):
 		self.record_cnt = 0
 		self.data_cnt = 0
 		self.subs = []
-		self.pause = False
 		self.topic_wait_secs = topic_wait_secs
 
 		# message buffers
@@ -506,16 +505,15 @@ class KeypointDetect(DetectBase):
 		self.det_df_dict = {joint:  pd.DataFrame(columns=self.DET_COLS) for joint in self.marker_config.keys()} # angles dataset
 		
 		# init 3D keypoints dataset
-		if not test:
-			self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
-			self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
-			self.keypt_keys.extend(self.initRH8DFK(urdf_pth)) # end links
-			self.rh8d_tf_df_dict = {link:  pd.DataFrame(columns=self.FK_COLS) for link in self.keypt_keys} 
-			self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys[1:]} 
-			self.keypt_plot = KeypointPlot()
+		self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
+		self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
+		self.keypt_keys.extend(self.initRH8DFK(urdf_pth)) # end links
+		self.rh8d_tf_df_dict = {link:  pd.DataFrame(columns=self.FK_COLS) for link in self.keypt_keys} 
+		self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys[1:]} 
+		self.keypt_plot = KeypointPlot()
 			
 		# ros topics
-		if not test and attached:
+		if attached:
 			self.initSubscriber()
 			# init ros vis
 			if vis:
@@ -1293,12 +1291,11 @@ class KeypointDetect(DetectBase):
 					print("DATA RECORD DEVIATION, data index: ", str(self.det_df_dict[joint].index[-1] ), " record index:", str(self.data_cnt), "for joint", joint)
 
 			# compute 3D keypoints
-			if not self.test:
-				(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
-				for link, fk in fk_dict.items():
-					self.rh8d_tf_df_dict[link] = pd.concat([self.rh8d_tf_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
-				for link, keypt in keypt_dict.items():
-					self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([keypt])], ignore_index=True) # add to results
+			(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
+			for link, fk in fk_dict.items():
+				self.rh8d_tf_df_dict[link] = pd.concat([self.rh8d_tf_df_dict[link], pd.DataFrame([fk])], ignore_index=True) # add to results
+			for link, keypt in keypt_dict.items():
+				self.keypt_df_dict[link] = pd.concat([self.keypt_df_dict[link], pd.DataFrame([keypt])], ignore_index=True) # add to results
 
 		# no marker detected
 		else:
@@ -1499,108 +1496,90 @@ class KeypointDetect(DetectBase):
 					if input(f"{joint} markers not detected, check illumination and press any key to repeat or q to exit!") == 'q':
 						return False
 					break
-
-	def togglePause(self) -> None:
-		self.pause = not self.pause
-		if self.pause:
-			print("Application paused")
-		else:
-			print("Application unpaused")
 		
 	def runAttached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
 		
-		with keyboard.GlobalHotKeys({'p': self.togglePause}) as h:
-			try:
-				# epoch
-				for e in range(self.epochs):
-					print("New epoch", e)
-					print("Moving home!")
-					head_home = self.rh8d_ctrl.moveHeadHome(2.0)
-					self.rh8d_ctrl.reachHomeBlocking(15.0)
-					# save initially detected angles
-					if not self.self_reset_angles:
-						if not self.initAngles():
-							return
-					
-					for idx in self.waypoint_df.index.tolist():
-						
-						# 'p' pressed
-						while self.pause:
-							rospy.sleep(0.1)
-						
-						if not rospy.is_shutdown():
-							# get waypoint
-							waypoint = self.waypoint_df.iloc[idx]
-							reset_angles = waypoint[-4]
-							direction = waypoint[-3]
-							description = waypoint[-2]
-							move_time = waypoint[-1]
-							waypoint = waypoint[: -4].to_dict()
-							# reset initially detected angles
-							if reset_angles and self.self_reset_angles:
-								self.start_angles.clear()
-
-							# get head out of range if arm moves
-							head_home = self.moveHeadConditioned(waypoint)
-
-							# move arm and hand
-							print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
-							success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
-							print("done\n") if success else print("fail\n")
-
-							# look towards hand and settle 
-							tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
-							self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
-							rospy.sleep(3.0 if head_home else 1.5)
-							head_home = False
-
-							# detect angles
-							self.detectionRoutine(waypoint, e, direction, description)
-
-							if self.cv_window:
-								if cv2.waitKey(1) == ord("q"):
-									return
-							
-							try:
-								rate.sleep()
-							except:
-								pass
-
-			except None as e:
-				rospy.logerr(e)
+		try:
+			# epoch
+			for e in range(self.epochs):
+				print("New epoch", e)
+				print("Moving home!")
+				head_home = self.rh8d_ctrl.moveHeadHome(2.0)
+				self.rh8d_ctrl.reachHomeBlocking(15.0)
+				# save initially detected angles
+				if not self.self_reset_angles:
+					if not self.initAngles():
+						return
 				
-			finally:
-				if self.save_record:
-					# angles
-					det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
-					det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-					if not self.test:
-						# keypoints wrt world
-						fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
-						fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
-						# relative keypoints
-						kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
-						kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
-						pb.disconnect()
-						if self.attached:
-							self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-							self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
-							if self.use_tf:
-								self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-								self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
-								if self.use_head_camera:
-									self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-								if self.use_eye_cameras:
-									self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-									self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-				if self.cv_window:
-					cv2.destroyAllWindows()
-				rospy.signal_shutdown(0)
+				for idx in self.waypoint_df.index.tolist():
+					if not rospy.is_shutdown():
+						# get waypoint
+						waypoint = self.waypoint_df.iloc[idx]
+						reset_angles = waypoint[-4]
+						direction = waypoint[-3]
+						description = waypoint[-2]
+						move_time = waypoint[-1]
+						waypoint = waypoint[: -4].to_dict()
+						# reset initially detected angles
+						if reset_angles and self.self_reset_angles:
+							self.start_angles.clear()
 
-			# hotkey
-			h.stop()
-			h.join()
+						# get head out of range if arm moves
+						head_home = self.moveHeadConditioned(waypoint)
+
+						# move arm and hand
+						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
+						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
+						print("done\n") if success else print("fail\n")
+
+						# look towards hand and settle 
+						tf = self.lookupTF(rospy.Time(0), self.TF_TARGET_FRAME, self.RH8D_TCP_SOURCE_FRAME)
+						self.rh8d_ctrl.moveHeadTaskSpace(tf['trans'][0], tf['trans'][1], tf['trans'][2], 2.0 if head_home else 1.0)			
+						rospy.sleep(3.0 if head_home else 1.5)
+						head_home = False
+
+						# detect angles
+						self.detectionRoutine(waypoint, e, direction, description)
+
+						if self.cv_window:
+							if cv2.waitKey(1) == ord("q"):
+								return
+						
+						try:
+							rate.sleep()
+						except:
+							pass
+
+		except None as e:
+			rospy.logerr(e)
+			
+		finally:
+			if self.save_record:
+				# angles
+				det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
+				det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+				# keypoints wrt world
+				fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
+				fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
+				# relative keypoints
+				kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
+				kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+				pb.disconnect()
+				if self.attached:
+					self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+					self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
+					if self.use_tf:
+						self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+						self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+						if self.use_head_camera:
+							self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+						if self.use_eye_cameras:
+							self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+							self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+			if self.cv_window:
+				cv2.destroyAllWindows()
+			rospy.signal_shutdown(0)
 
 class HybridDetect(KeypointDetect):
 	"""
