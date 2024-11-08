@@ -1245,6 +1245,7 @@ class KeypointDetect(DetectBase):
 					target_id = marker_ids[1] # target marker id
 					base_marker = marker_det[base_id] # base marker detection
 					target_marker = marker_det[target_id] # target marker detection
+					
 					# detected angle in rad
 					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					# save initially detected angle
@@ -1253,6 +1254,12 @@ class KeypointDetect(DetectBase):
 						print("Updating start angle", {joint: angle})
 					# substract initial angle
 					angle = angle - self.start_angles[joint] # TODO: check
+					# map direction for centered joints
+					cmd = pos_cmd[config['actuator']]
+					if joint in ['joint7', 'joint8', 'jointT0']:
+						if cmd < 0.0 and angle > 0.0:
+							print("Inverting angle for", joint)
+							angle *= -1
 
 					# data entry
 					data = { 'angle': angle, 
@@ -1261,7 +1268,7 @@ class KeypointDetect(DetectBase):
 									'target_id': target_id, 
 									'frame_cnt': self.frame_cnt, 
 									'rec_cnt': self.record_cnt, 
-									'cmd': pos_cmd[config['actuator']], 
+									'cmd': cmd, 
 									'state': joint_states[config['actuator']],
 									'epoch': epoch,
 									'direction': direction,
@@ -1535,6 +1542,7 @@ class KeypointDetect(DetectBase):
 							target_id = marker_ids[1] # target marker id
 							base_marker = marker_det[base_id] # base marker detection
 							target_marker = marker_det[target_id] # target marker detection
+
 							# detected angle in rad
 							angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 							# save initially detected angle
@@ -1543,6 +1551,19 @@ class KeypointDetect(DetectBase):
 								print("Updating start angle", {joint: angle})
 							# substract initial angle
 							angle = angle - self.start_angles[joint] # TODO: check
+
+							# map direction for centered joints
+							if joint in ['joint7', 'joint8', 'jointT0']:
+								while not len(self.actuator_state_buffer):
+									if not rospy.is_shutdown():
+										rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
+										rospy.sleep(0.1)
+								msg = self.actuator_state_buffer.pop()
+								cmd = msg.position[self.rh8d_ctrl.ROBOT_JOINTS_INDEX[joint]]
+								if cmd < 0.0 and angle > 0.0:
+									print("Inverting angle for", joint)
+									angle *= -1
+
 							joint_angles[joint] = angle # add angle for keypoint vis
 							# TODO: fix this permanently
 							marker_det[target_id if joint != 'joint7' else base_id].update({'angle': angle, 'base_id': base_id, 'joint': joint}) # add to detection for drawings
