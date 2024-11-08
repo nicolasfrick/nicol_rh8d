@@ -1,0 +1,124 @@
+<launch>
+
+	<!-- glob params -->
+	<arg name="use_markers_camera"  default="true" />
+	<arg name="use_realsense"  default="true" />
+	<arg name="use_eye_cameras" default="false" />
+	<arg name="use_top_camera" default="false" />
+	<arg name="use_head_camera" default="false" />
+	<arg name="markers_camera_name" default="markers_camera" />
+	<arg name="top_camera_name" default="top_camera" />
+	<arg name="head_camera_name" default="head_camera" />
+	<arg name="left_eye_camera_name" default="left_eye_cam" />
+	<arg name="right_eye_camera_name" default="right_eye_cam" />
+    <arg name="fps"             default="15" />
+
+	<!-- rs params -->
+	<arg name="serial_no"           default="822512060411"/>
+	<arg name="top_cam_serial_no"   default="250122078945"/>
+	<arg name="head_cam_serial_no"  default="239722073868"/>
+	<arg name="enable_depth"        default="true"/>
+	<arg name="depth_width"         default="1280"/>
+	<arg name="depth_height"        default="720"/>  
+	<arg name="depth_fps"           default="$(arg fps)"/>
+	<arg name="enable_color"        default="true"/>
+	<arg name="color_width"         default="1920"/>
+	<arg name="color_height"        default="1080"/>
+	<arg name="color_fps"           default="$(arg fps)"/>
+	<arg name="filters"                   default=""/>
+	<arg name="clip_distance"             default="-2"/>
+	<arg name="align_depth"               default="true"/>
+	<arg name="initial_reset"             default="false"/>
+
+	<!-- webcam args -->
+    <arg name="always_capture"                            default="false"                                       doc="If true, always capture camera images, even if no one is subscribed to the output topics yet"/> 
+    <arg name="video_stream_provider"            default="/dev/video0"                         doc="video device"/> 
+    <arg name="width"                                              default="1280"                                        doc="set resolution"/> 
+    <arg name="height"                                            default="960"                                         doc="set resolution"/> 
+    <arg name="camera_info_url"                          default="file:///$(find nicol_rh8d)/cfg/camcalib_$(arg width)x$(arg height).yaml"  doc=" camera info loading"/>
+
+	<!-- common manager -->
+	<node  if="$(arg use_markers_camera)" pkg="nodelet" type="nodelet" name="manager" args="manager" output="screen" required="true" />
+	<!-- markers cam -->
+	<include if="$(eval use_markers_camera and use_realsense)" file="$(find nicol_rh8d)/launch/realsense.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="manager"             value="/manager"/>
+		<arg name="use_realsense" value="$(arg use_markers_camera)" />
+		<arg name="camera"             value="$(arg markers_camera_name)" />
+		<arg name="serial_no"           value="$(arg serial_no)"/>
+		<arg name="enable_depth"        value="$(arg enable_depth)"/>
+		<arg name="depth_width"         value="$(arg depth_width)"/>
+		<arg name="depth_height"        value="$(arg depth_height)"/>  
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>
+		<arg name="enable_color"        value="$(arg enable_color)"/>
+		<arg name="color_width"         value="$(arg color_width)"/>
+		<arg name="color_height"        value="$(arg color_height)"/>
+		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="filters"                   value="$(arg filters)"/>
+		<arg name="clip_distance"             value="$(arg clip_distance)"/>
+		<arg name="align_depth"               value="$(arg align_depth)"/>
+		<arg name="initial_reset"               value="$(arg initial_reset)"/>
+	</include>
+	<include if="$(eval use_markers_camera and not use_realsense)" ns="$(arg markers_camera_name)/color"  file="$(find nicol_rh8d)/launch/webcam.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="nodelet_manager"     value="/manager"/>
+		<arg name="fps"                                   value="$(arg fps)" />
+    	<arg name="always_capture"           value="$(arg always_capture)" />
+    	<arg name="camera_name"              value="$(arg markers_camera_name)" />
+    	<arg name="video_stream_provider"   value="$(arg video_stream_provider)" />
+    	<arg name="width"                                value="$(arg width)" />
+    	<arg name="height"                              value="$(arg height)" />
+    	<arg name="camera_info_url"           value="$(arg camera_info_url)" />
+	</include>
+
+	<!-- secondary cameras -->
+	<include if="$(eval use_markers_camera and use_eye_cameras)" file="$(find nicol_vision)/launch/nicol_eye_cameras.launch">
+		<arg name="external_manager"                       value="true"  />  
+		<arg name="nodelet_manager"                         value="/manager"/>
+		<arg name="use_4k"                                             value="false" /> 
+		<arg name="fps"                                                    value="$(arg fps)"   />
+		<arg name="width"                               			 	value="$(arg color_width)" />
+    	<arg name="height"                              				value="$(arg color_height)" />
+		<arg name="left_camera_name"                       value="$(arg left_eye_camera_name)" />
+		<arg name="right_camera_name"                       value="$(arg right_eye_camera_name)" />
+	</include>
+	<include if="$(eval use_markers_camera and use_top_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="manager"             value="/manager"/>
+		<arg name="use_realsense" value="$(arg use_top_camera)" />
+		<arg name="camera"             value="$(arg top_camera_name)" />
+		<arg name="serial_no"           value="$(arg top_cam_serial_no)"/>
+		<arg name="enable_depth"        value="$(arg enable_depth)"/>
+		<arg name="depth_width"         value="$(arg depth_width)"/>
+		<arg name="depth_height"        value="$(arg depth_height)"/>  
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>s
+		<arg name="enable_color"        value="$(arg enable_color)"/>
+		<arg name="color_width"         value="$(arg color_width)"/>
+		<arg name="color_height"        value="$(arg color_height)"/>
+		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="filters"                   value="$(arg filters)"/>
+		<arg name="clip_distance"             value="$(arg clip_distance)"/>
+		<arg name="align_depth"               value="$(arg align_depth)"/>
+		<arg name="initial_reset"               value="$(arg initial_reset)"/>
+	</include>
+	<include if="$(eval use_markers_camera and use_head_camera)" file="$(find nicol_rh8d)/launch/realsense.launch">
+		<arg name="external_manager"    value="true"/>
+		<arg name="manager"             value="/manager"/>
+		<arg name="use_realsense"       value="$(arg use_head_camera)" />
+		<arg name="camera"              value="$(arg head_camera_name)" />
+		<arg name="serial_no"           value="$(arg head_cam_serial_no)"/>
+		<arg name="enable_depth"        value="$(arg enable_depth)"/>
+		<arg name="depth_width"         value="$(arg depth_width)"/>
+		<arg name="depth_height"        value="$(arg depth_height)"/>  
+		<arg name="depth_fps"           value="$(arg depth_fps)"/>s
+		<arg name="enable_color"        value="$(arg enable_color)"/>
+		<arg name="color_width"         value="$(arg color_width)"/>
+		<arg name="color_height"        value="$(arg color_height)"/>
+		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="filters"                   value="$(arg filters)"/>
+		<arg name="clip_distance"             value="$(arg clip_distance)"/>
+		<arg name="align_depth"               value="$(arg align_depth)"/>
+		<arg name="initial_reset"               value="$(arg initial_reset)"/>
+	</include>
+
+</launch>

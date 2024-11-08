@@ -140,7 +140,7 @@ marker_config:
     joint_children: []
     name: 'little flexion'
   jointT0:
-    marker_ids: [9, 10]
+    marker_ids: [8, 10]
     alt_marker_ids: [-1]
     plane: 'xy'
     parent: *palm

@@ -391,7 +391,7 @@ class KeypointDetect(DetectBase):
 				sync_slop: Optional[float]=0.1,
 				urdf_pth: Optional[str]='rh8d.urdf',
 				make_noise: Optional[bool]=False,
-				self_reset_angles: Optional[bool]=False,
+				self_reset_angles: Optional[bool]=True,
 				topic_wait_secs: Optional[float]=15,
 				) -> None:
 		
@@ -460,7 +460,7 @@ class KeypointDetect(DetectBase):
 
 		# init ros
 		if use_tf and not test:
-			self.buf = tf2_ros.Buffer(cache_time=500)
+			self.buf = tf2_ros.Buffer(cache_time=rospy.Duration(180))
 			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
 
 		# init controller
