@@ -68,12 +68,12 @@ class KeypointPlot():
 	def __init__(self,
 							dpi: int=300,
 							shape: Tuple=(1920, 1080),
-							x_llim: float=0.0, 
-							x_hlim: float=0.7,
-							y_llim: float=-0.3,
-							y_hlim: float=-1.0,
-							z_llim: float=0.8,
-							z_hlim: float=1.5,
+							x_llim: float=-0.05, 
+							x_hlim: float=0.075,
+							y_llim: float=0.0,
+							y_hlim: float=0.15,
+							z_llim: float=0.0,
+							z_hlim: float=0.04,
 							ax_scale: float=0.005,
 							linewidth: float=1.0,
 							grid_shape: Tuple=(1, 1),
@@ -86,9 +86,9 @@ class KeypointPlot():
 		self.fig = plt.figure(figsize=figsize)
 		self.gs = gridspec.GridSpec(grid_shape[0], grid_shape[1], width_ratios=width_ratios, height_ratios=height_ratios)
 		self.ax_3d = self.fig.add_subplot(self.gs[0, 0], projection='3d')
-		# self.ax_3d.set_xlim([x_llim, x_hlim])
-		# self.ax_3d.set_ylim([y_llim, y_hlim])
-		# self.ax_3d.set_zlim([z_llim, z_hlim])
+		self.ax_3d.set_xlim([x_llim, x_hlim])
+		self.ax_3d.set_ylim([y_llim, y_hlim])
+		self.ax_3d.set_zlim([z_llim, z_hlim])
 		self.ax_3d.set_xlabel('X')
 		self.ax_3d.set_ylabel('Y')
 		self.ax_3d.set_zlabel('Z')
@@ -125,9 +125,9 @@ class KeypointPlot():
 		self.ax_3d.set_xlabel('X')
 		self.ax_3d.set_ylabel('Y')
 		self.ax_3d.set_zlabel('Z')
-		# self.ax_3d.set_xlim([self.x_llim, self.x_hlim])
-		# self.ax_3d.set_ylim([self.y_llim, self.y_hlim])
-		# self.ax_3d.set_zlim([self.z_llim, self.z_hlim])
+		self.ax_3d.set_xlim([self.x_llim, self.x_hlim])
+		self.ax_3d.set_ylim([self.y_llim, self.y_hlim])
+		self.ax_3d.set_zlim([self.z_llim, self.z_hlim])
 
 		last_center_point = self.root_center_point
 		for joint, fk in fk_dict.items():

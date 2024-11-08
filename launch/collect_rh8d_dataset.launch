@@ -3,9 +3,9 @@
 	run robot alongside with:
 	$ roslaunch nicol_controller NICOL_launch_all.launch use_platform:=true launch_tf_publisher:=true use_moveit:=false use_primitives:=false use_face_expr:=false use_cameras:=false with_left_omp:=false compat_mode:=false use_speech_recognition:=false use_hand_sensors:=false 
 	$ $HOME/test_ws/src/nicol_ros/nicol_vision/config/configure_cameras.sh
-	$ roslaunch nicol_rh8d dataset_cameras.launch use_eye_cameras:=true use_top_camera:=true use_head_camera:=true fps:=15 enable_depth:=true
+	$ roslaunch nicol_rh8d dataset_cameras.launch use_eye_cameras:=true use_top_camera:=true use_head_camera:=true
 	$ rqt -> right_eye_cam_stream: exposure_time_absolute=1500, left_eye_cam_stream: exposure_time_absolute=1500
-	$ roslaunch nicol_rh8d collect_rh8d_dataset.launch filter:=median filter_iters:=1 use_eye_cameras:=true use_top_camera:=true use_head_camera:=true fps:=15 enable_depth:=true 
+	$ roslaunch nicol_rh8d collect_rh8d_dataset.launch filter:=median filter_iters:=5 use_eye_cameras:=true use_top_camera:=true use_head_camera:=true
  -->
 
 	<!-- set params as in dataset_cameras.launch -->
@@ -19,7 +19,7 @@
 	<arg name="head_camera_name" default="head_camera" />
 	<arg name="left_eye_camera_name" default="left_eye_cam" />
 	<arg name="right_eye_camera_name" default="right_eye_cam" />
-    <arg name="fps"             default="15" />
+    <arg name="fps"             default="30" />
 	<arg name="enable_depth"        default="true"/>
 
 	<arg name="actuator_state_topic" default="/right/open_manipulator_p/actuator_states" />

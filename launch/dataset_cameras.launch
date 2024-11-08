@@ -11,6 +11,7 @@
 	<arg name="head_camera_name" default="head_camera" />
 	<arg name="left_eye_camera_name" default="left_eye_cam" />
 	<arg name="right_eye_camera_name" default="right_eye_cam" />
+	<arg name="marker_fps"             default="30" />
     <arg name="fps"             default="15" />
 
 	<!-- rs params -->
@@ -53,7 +54,7 @@
 		<arg name="enable_color"        value="$(arg enable_color)"/>
 		<arg name="color_width"         value="$(arg color_width)"/>
 		<arg name="color_height"        value="$(arg color_height)"/>
-		<arg name="color_fps"           value="$(arg color_fps)"/>
+		<arg name="color_fps"           value="$(arg marker_fps)"/>
 		<arg name="filters"                   value="$(arg filters)"/>
 		<arg name="clip_distance"             value="$(arg clip_distance)"/>
 		<arg name="align_depth"               value="$(arg align_depth)"/>
@@ -62,7 +63,7 @@
 	<include if="$(eval use_markers_camera and not use_realsense)" ns="$(arg markers_camera_name)/color"  file="$(find nicol_rh8d)/launch/webcam.launch">
 		<arg name="external_manager"    value="true"/>
 		<arg name="nodelet_manager"     value="/manager"/>
-		<arg name="fps"                                   value="$(arg fps)" />
+		<arg name="fps"                                   value="$(arg marker_fps)" />
     	<arg name="always_capture"           value="$(arg always_capture)" />
     	<arg name="camera_name"              value="$(arg markers_camera_name)" />
     	<arg name="video_stream_provider"   value="$(arg video_stream_provider)" />
