@@ -13,7 +13,7 @@ from sensor_msgs.msg  import JointState
 from open_manipulator_msgs.srv import SetJointPosition, SetJointPositionRequest, SetKinematicsPose, SetKinematicsPoseRequest
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-WAYPOINT_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint')
+WAYPOINT_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint/waypoints')
 
 class MoveRobot():
 

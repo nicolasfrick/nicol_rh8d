@@ -12,7 +12,7 @@ marker_config:
   joint8:
     marker_ids: [6, 8]
     alt_marker_ids: [-1]
-    plane: 'xz'
+    plane: 'xy'
     parent: 'r_palm_axis'
     child: &palm 'r_palm'
     fixed_end: 'joint_r_laser'

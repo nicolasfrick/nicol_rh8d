@@ -28,7 +28,7 @@
     <arg name="attached"      default="true"/>
 	<arg name="vis" default="true" />
 	<arg name="save_imgs" default="true" />
-	<arg name="f_ctrl" default="0.5" /> 
+	<arg name="f_ctrl" default="10" /> 
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
 	<arg name="use_tf" default="true" /> 
@@ -77,7 +77,7 @@
 		<param name="rh8d_baud" value="$(arg rh8d_baud)" />
 		<param name="epochs" value="$(arg epochs)" /> 
 		<param name="debug" value="$(arg debug)" /> 
-		<param name="test" value="$(eval test or not use_markers_camera)" /> 
+		<param name="test" value="$(arg test)" /> 
 		<param name="fps"     value="$(arg fps)" />
 		<param name="use_tf"     value="$(arg use_tf)" />
 		<param name="attached"     value="$(arg attached)" />

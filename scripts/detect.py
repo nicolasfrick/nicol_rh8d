@@ -412,6 +412,7 @@ class KeypointDetect(DetectBase):
 						)
 
 		self.fps = fps
+		self.test = test
 		self.use_tf = use_tf
 		self.epochs = epochs
 		self.attached = attached
@@ -458,7 +459,7 @@ class KeypointDetect(DetectBase):
 		self.right_eye_tf_df = pd.DataFrame(columns=self.TF_COLS)
 
 		# init ros
-		if use_tf and not test:
+		if use_tf:
 			self.buf = tf2_ros.Buffer(cache_time=rospy.Duration(180))
 			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
 
@@ -884,20 +885,20 @@ class KeypointDetect(DetectBase):
 		states_dict = {}
 		timestamp = 0.0
 
-		if self.test:
-			return super().preProcImage(vis), tf_dict, states_dict, timestamp
-
 		# wait for buffer to be filled
 		while len(self.det_img_buffer) != self.filter_iters:
-			print("Record size deviates from filter size:", len(self.det_img_buffer), " !=", self.filter_iters)
-			rospy.sleep(1/self.fps)
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(3.0, f"Image buffer size deviates from filter size: {str(self.filter_iters-len(self.det_img_buffer))}")
+				rospy.sleep(1/self.fps)
 		# wait for buffer to be filled
 		while not len(self.actuator_state_buffer):
-			print("Actuator state buffer not updated")
-			rospy.sleep(0.1)
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
+				rospy.sleep(0.1)
 		while not len(self.joint_state_buffer):
-			print("Joint state buffer not updated")
-			rospy.sleep(0.1)
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(3.0, "Joint state buffer not updated")
+				rospy.sleep(0.1)
 
 		# lock updates on img queues
 		with self.buf_lock:
@@ -1061,9 +1062,6 @@ class KeypointDetect(DetectBase):
 	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
 		if angle is None: 
 			return
-		# TODO: general fix
-		if name == 'joint7':
-			id = 7
 		txt = "{} {} {:.2f} deg".format(id, name, np.rad2deg(angle))
 		xpos = self.TXT_OFFSET
 		ypos = (id+2)*self.TXT_OFFSET
@@ -1277,7 +1275,8 @@ class KeypointDetect(DetectBase):
 									'timestamp': timestamp,
 									}
 					joint_angles[joint] = angle # add angle for keypoint vis
-					marker_det[target_id].update({'angle': angle, 'base_id': base_id, 'joint': joint}) # add to detection for drawings
+					# TODO: fix this permanently
+					marker_det[target_id if joint != 'joint7' else base_id].update({'angle': angle, 'base_id': base_id, 'joint': joint}) # add to detection for drawings
 					self.det_df_dict[joint] = pd.concat([self.det_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 				else:
 					res = False
@@ -1350,7 +1349,9 @@ class KeypointDetect(DetectBase):
 		return res
 	
 	def run(self) -> None:
-		if self.attached:
+		if self.test:
+			self.runTest()
+		elif self.attached:
 			self.runAttached()
 		else:
 			raise NotImplementedError
@@ -1496,6 +1497,110 @@ class KeypointDetect(DetectBase):
 					if input(f"{joint} markers not detected, check illumination and press any key to repeat or q to exit!") == 'q':
 						return False
 					break
+
+	def runTest(self) -> None:
+		rate = rospy.Rate(self.f_loop)
+		
+		try:
+			if not rospy.is_shutdown():
+				self.rh8d_ctrl.moveHeadHome(2.0)
+				self.rh8d_ctrl.reachHomeBlocking(15.0)
+				if not self.self_reset_angles:
+					if not self.initAngles():
+						return
+				else:
+					self.start_angles.clear()
+
+			# epoch
+			while not rospy.is_shutdown():
+					
+				(marker_det, det_img, proc_img, img, base_tf, joint_states, timestamp) = self.preProcImage()
+				out_img = img.copy()
+
+				fk_dict = {}
+				keypt_dict = {}
+				joint_angles = {joint: None for joint in self.marker_config.keys()}
+				
+				# at least one detection
+				if marker_det:
+					detected_ids = marker_det.keys()
+
+					# iter marker config
+					for joint, config in self.marker_config.items():
+						# check if and which joint marker set was detected
+						marker_ids = config['marker_ids'] if all( [id in detected_ids for id in config['marker_ids']] ) else \
+							config['alt_marker_ids'] if all( [id in detected_ids for id in config['alt_marker_ids']] ) else False
+						if marker_ids:
+							base_id = marker_ids[0] # base marker id
+							target_id = marker_ids[1] # target marker id
+							base_marker = marker_det[base_id] # base marker detection
+							target_marker = marker_det[target_id] # target marker detection
+							# detected angle in rad
+							angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
+							# save initially detected angle
+							if self.start_angles.get(joint) is None:
+								self.start_angles.update({joint: angle})
+								print("Updating start angle", {joint: angle})
+							# substract initial angle
+							angle = angle - self.start_angles[joint] # TODO: check
+							joint_angles[joint] = angle # add angle for keypoint vis
+							# TODO: fix this permanently
+							marker_det[target_id if joint != 'joint7' else base_id].update({'angle': angle, 'base_id': base_id, 'joint': joint}) # add to detection for drawings
+						else:
+							beep(self.make_noise)
+							print(f"Cannot detect all required ids for {joint}, missing: { [id for id in config['marker_ids'] if id not in detected_ids] }") # , alt missing:  { [id for id in config['alt_marker_ids'] if id not in detected_ids] }")
+
+					# compute 3D keypoints
+					(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
+
+				# no marker detected
+				else:
+					beep(self.make_noise)
+					print("No detection")
+				
+				# draw detections
+				if self.vis:
+					# frame counter
+					cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+					# draw keypoints
+					self.visKeypoints(out_img, fk_dict)
+					kpt_plt = self.plotKeypoints(keypt_dict)
+					# draw angle labels and possibly fixed detections 
+					for id, detection in marker_det.items():
+						self.labelAngle(out_img, detection.get('joint'), id, detection.get('angle'))
+						self.det._drawMarkers(id, detection['corners'], out_img) # square
+						out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
+						out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
+					if self.cv_window:
+						cv2.imshow('Processed', proc_img)
+						cv2.imshow('Detection', det_img)
+						cv2.imshow('Output', out_img)
+						if kpt_plt is not None:
+							cv2.imshow('Plot', kpt_plt)
+					elif self.attached:
+						self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="mono8"))
+						self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
+						self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
+						if kpt_plt is not None:
+							self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
+
+				if self.cv_window:
+					if cv2.waitKey(1) == ord("q"):
+						return
+				
+				try:
+					rate.sleep()
+				except:
+					pass
+
+		except Exception as e:
+			rospy.logerr(e)
+			
+		finally:
+			pb.disconnect()
+			if self.cv_window:
+				cv2.destroyAllWindows()
+			rospy.signal_shutdown(0)
 		
 	def runAttached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
@@ -1565,7 +1670,6 @@ class KeypointDetect(DetectBase):
 				# relative keypoints
 				kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
 				kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
-				pb.disconnect()
 				if self.attached:
 					self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
 					self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
@@ -1579,6 +1683,7 @@ class KeypointDetect(DetectBase):
 							self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 			if self.cv_window:
 				cv2.destroyAllWindows()
+			pb.disconnect()
 			rospy.signal_shutdown(0)
 
 class HybridDetect(KeypointDetect):
