@@ -311,6 +311,8 @@ class KeypointDetect(DetectBase):
 		@type bool
 		@param topic_wait_secs
 		@type float
+		@param vis_ros_tf
+		@type bool
 
 	"""
 
@@ -405,6 +407,7 @@ class KeypointDetect(DetectBase):
 				make_noise: Optional[bool]=False,
 				self_reset_angles: Optional[bool]=True,
 				topic_wait_secs: Optional[float]=15,
+				vis_ros_tf: Optional[bool]=True,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -447,6 +450,7 @@ class KeypointDetect(DetectBase):
 		self.data_cnt = 0
 		self.subs = []
 		self.topic_wait_secs = topic_wait_secs
+		self.vis_ros_tf = vis_ros_tf
 
 		# message buffers
 		self.det_img_buffer = deque(maxlen=self.filter_iters)
@@ -524,6 +528,15 @@ class KeypointDetect(DetectBase):
 		self.rh8d_tf_df_dict = {link:  pd.DataFrame(columns=self.FK_COLS) for link in self.keypt_keys} 
 		self.keypt_df_dict = {link:  pd.DataFrame(columns=self.KEYPT_COLS) for link in self.keypt_keys[1:]} 
 		self.keypt_plot = KeypointPlot()
+
+		# get tf links
+		self.tf_links = []
+		for config in self.marker_config.values():
+			link = config['child']
+			self.tf_links.append(link)
+			end_link = config.get('fixed_end')
+			if end_link is not None:
+				self.tf_links.append(end_link.replace('r_', '').replace('joint', 'r'))
 			
 		# ros topics
 		if attached:
@@ -1234,6 +1247,32 @@ class KeypointDetect(DetectBase):
 
 		return fk_dict, keypt_dict
 
+	def visRosTF(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
+		# world to cam holder (joint6) tf (dynamic)
+		base_trans = fk_dict[self.marker_config[self.root_joint]['parent']]['trans']
+		base_rot = fk_dict[self.marker_config[self.root_joint]['parent']]['quat']
+		timestamp = fk_dict[self.marker_config[self.root_joint]['parent']]['timestamp']
+		timestamp = rospy.Time(timestamp)
+		T_world_cam_holder = pose2Matrix(base_trans, base_rot, RotTypes.QUAT)
+		# cam holder to cam tf (static)
+		T_cam_holder_cam = pose2Matrix(self.marker_cam_extr.translation,  self.marker_cam_extr.rotation, RotTypes.MAT)
+		# world to cam tf
+		T_world_cam = T_world_cam_holder @ T_cam_holder_cam
+		# cam to world tf
+		(inv_trans, inv_rot) = invPersp(T_world_cam[:3, 3],  T_world_cam[:3, :3], RotTypes.MAT)
+
+		center_point = np.zeros(3, dtype=np.float32)
+		for link in self.tf_links:
+			tf_dict = self.lookupTF(timestamp, self.TF_TARGET_FRAME, link)
+			trans = tf_dict['trans']
+			quat = tf_dict['quat']
+			rot_mat = getRotation(quat, RotTypes.QUAT, RotTypes.MAT)
+			transformed_point = rot_mat @ center_point + trans
+			# draw projected point
+			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+			projected_point = np.int32(projected_point.flatten())
+			cv2.circle(img, projected_point, self.KEYPT_THKNS, (203,192,255), -1)
+
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
 		(marker_det, det_img, proc_img, img, base_tf, joint_states, timestamp) = self.preProcImage()
@@ -1329,6 +1368,8 @@ class KeypointDetect(DetectBase):
 			# draw keypoints
 			self.visKeypoints(out_img, fk_dict)
 			kpt_plt = self.plotKeypoints(keypt_dict)
+			if self.vis_ros_tf:
+				self.visRosTF(out_img, fk_dict)
 			# draw angle labels and possibly fixed detections 
 			for id, detection in marker_det.items():
 				# self.labelDetection(out_img, id, marker_det) # cv angle
