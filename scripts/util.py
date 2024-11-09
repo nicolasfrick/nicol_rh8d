@@ -70,8 +70,12 @@ class NormalTypes(Enum):
 	YZ='yz'
 NORMAL_TYPES_MAP={  NormalTypes.XY.value : NormalTypes.XY, 
 				                                    NormalTypes.XZ.value : NormalTypes.XZ, 
-													NormalTypes.YZ.value : NormalTypes.YZ 
+													NormalTypes.YZ.value : NormalTypes.YZ ,
 												}
+NORMAL_IDX_MAP={ NormalTypes.XY: 2, 
+                                            NormalTypes.XZ: 1, 
+											NormalTypes.YZ: 0,
+											}
 
 class RotTypes(Enum):
 	RVEC='rvec'

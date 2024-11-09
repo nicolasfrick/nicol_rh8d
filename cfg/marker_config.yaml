@@ -5,7 +5,7 @@ marker_config:
     plane: 'yz'
     parent: 'r_forearm'
     child: 'r_palm_axis'
-    fixed_end: 'joint_r_laser'
+    fixed_end: null
     actuator: 'joint7'
     joint_children: ['joint8']
     name: 'wrist abduction'
@@ -25,7 +25,7 @@ marker_config:
     plane: &plane 'xz'
     parent: *palm
     child: 'r_Iproximal'
-    fixed_end: 'joint_Ibumper'
+    fixed_end: null
     actuator: 'jointI1'
     joint_children: ['jointI2']
     name: 'index flexion'
@@ -35,7 +35,7 @@ marker_config:
     plane: *plane
     parent: 'r_Iproximal'
     child: 'r_Imiddle'
-    fixed_end: 'joint_Ibumper'
+    fixed_end: null
     actuator: 'jointI1'
     joint_children: ['jointI3']
     name: 'index flexion'
@@ -55,7 +55,7 @@ marker_config:
     plane: *plane
     parent: *palm
     child: 'r_Mproximal'
-    fixed_end: 'joint_Mbumper'
+    fixed_end: null
     actuator: 'jointM1'
     joint_children: ['jointM2']
     name: 'middle flexion'
@@ -65,7 +65,7 @@ marker_config:
     plane: *plane
     parent: 'r_Mproximal'
     child: 'r_Mmiddle'
-    fixed_end: 'joint_Mbumper'
+    fixed_end: null
     actuator: 'jointM1'
     joint_children: ['jointM3']
     name: 'middle flexion'
@@ -85,7 +85,7 @@ marker_config:
     plane: *plane
     parent: *palm
     child: 'r_Rproximal'
-    fixed_end: 'joint_Rbumper'
+    fixed_end: null
     actuator: 'jointL1R1'
     joint_children: ['jointR2']
     name: 'ring flexion'
@@ -95,7 +95,7 @@ marker_config:
     plane: *plane
     parent: 'r_Rproximal'
     child: 'r_Rmiddle'
-    fixed_end: 'joint_Rbumper'
+    fixed_end: null
     actuator: 'jointL1R1'
     joint_children: ['jointR3']
     name: 'ring flexion'
@@ -115,7 +115,7 @@ marker_config:
     plane: *plane
     parent: *palm
     child: 'r_Lproximal'
-    fixed_end: 'joint_Lbumper'
+    fixed_end: null
     actuator: 'jointL1R1'
     joint_children: ['jointL2']
     name: 'little flexion'
@@ -125,7 +125,7 @@ marker_config:
     plane: *plane
     parent: 'r_Lproximal'
     child: 'r_Lmiddle'
-    fixed_end: 'joint_Lbumper'
+    fixed_end: null
     actuator: 'jointL1R1'
     joint_children: ['jointL3']
     name: 'little flexion'
@@ -145,7 +145,7 @@ marker_config:
     plane: 'xy'
     parent: *palm
     child: 'r_thumb_base'
-    fixed_end: 'joint_Tbumper'
+    fixed_end: null
     actuator: 'jointT0'
     joint_children: ['jointT1']
     name: 'thumb abduction'
@@ -155,7 +155,7 @@ marker_config:
     plane: *plane
     parent: 'r_thumb_base'
     child: 'r_Tproximal'
-    fixed_end: 'joint_Tbumper'
+    fixed_end: null
     actuator: 'jointT1'
     joint_children: ['jointT2']
     name: 'thumb flexion'
@@ -165,7 +165,7 @@ marker_config:
     plane: *plane
     parent: 'r_Tproximal'
     child: 'r_Tmiddle'
-    fixed_end: 'joint_Tbumper'
+    fixed_end: null
     actuator: 'jointT1'
     joint_children: ['jointT3']
     name: 'thumb flexion'

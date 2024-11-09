@@ -138,7 +138,7 @@ class DetectBase():
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(DetectorConfig, self.det.setDetectorParams)
 
-	def flipOutliers(self, marker_detections: dict, tolerance: float=0.5, exclude_ids: list=[6,7,8,9], axis: str='z') -> bool:
+	def flipOutliers(self, marker_detections: dict, tolerance: float=0.5, exclude_ids: list=[6,7,8,9], normal_type: NormalTypes=NormalTypes.XZ) -> bool:
 		"""Check if all Z axes are oriented similarly and 
 			  flip orientation for outliers. 
 		"""
@@ -151,12 +151,8 @@ class DetectBase():
 		# extract filtered rotations
 		rotations = [getRotation(marker_det['frot'], RotTypes.EULER, RotTypes.MAT)  for marker_det in detections.values()]
 
-		# index 0, 1, 2 supported
-		axis_idx = ord(axis)
-		if axis_idx < ord('x') or axis_idx > ord('z'):
-			raise ValueError
-		# index in 0,1,2
-		axis_idx = axis_idx - ord('x')
+		# get axis idx
+		axis_idx = NORMAL_IDX_MAP[normal_type]
 		# find outliers
 		outliers, axis_avg = findAxisOrientOutliers(rotations, tolerance=tolerance, axis_idx=axis_idx)
 
@@ -992,9 +988,16 @@ class KeypointDetect(DetectBase):
 		# get angle
 		dot_product = base_normal @ target_normal
 		# ensure the dot product is within the valid range for arccos due to numerical precision
-		dot_product = np.clip(dot_product, -1.0, 1.0)
-		# angle in radians
-		return np.arccos(dot_product)
+		cos_theta = np.clip(dot_product, -1.0, 1.0)
+		# angle in radians, always return values in the range [0, pi]
+		angle = np.arccos(cos_theta)
+
+		# get sign
+		cross_product = np.cross(base_normal, target_normal)
+		if cross_product[NORMAL_IDX_MAP[normal_type]] < 0.0:
+			return  -1 * angle
+		
+		return angle
 	
 	def tfPoints(self, tf: np.ndarray, points: np.ndarray) -> np.ndarray:
 		"""Transform marker corners to some frame.
@@ -1307,11 +1310,11 @@ class KeypointDetect(DetectBase):
 					# substract initial angle
 					angle = angle - self.start_angles[joint] # TODO: check
 					# map direction for centered joints
-					cmd = pos_cmd[config['actuator']]
-					if joint in ['joint7', 'joint8', 'jointT0']:
-						if cmd < 0.0 and angle > 0.0:
-							print("Inverting angle for", joint)
-							angle *= -1
+					# cmd = pos_cmd[config['actuator']]
+					# if joint in ['joint7', 'joint8', 'jointT0']:
+					# 	if cmd < 0.0 and angle > 0.0:
+					# 		print("Inverting angle for", joint)
+					# 		angle *= -1
 
 					# data entry
 					data = { 'angle': angle, 
