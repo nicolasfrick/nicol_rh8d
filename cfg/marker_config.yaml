@@ -9,6 +9,8 @@ marker_config:
     actuator: 'joint7'
     joint_children: ['joint8']
     name: 'wrist abduction'
+    lim_low: -0.7854
+    lim_high: 0.7854
   joint8:
     marker_ids: [6, 8]
     alt_marker_ids: [-1]
@@ -19,6 +21,8 @@ marker_config:
     actuator: 'joint8'
     joint_children: ['jointI1', 'jointM1', 'jointR1', 'jointL1', 'jointT0']
     name: 'wrist flexion'
+    lim_low: -0.7854
+    lim_high: 0.7854
   jointI1:
     marker_ids:  [0, 2]
     alt_marker_ids: [-1]
@@ -29,6 +33,8 @@ marker_config:
     actuator: 'jointI1'
     joint_children: ['jointI2']
     name: 'index flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointI2:
     marker_ids:  [2, 3]
     alt_marker_ids: [-1]
@@ -39,6 +45,8 @@ marker_config:
     actuator: 'jointI1'
     joint_children: ['jointI3']
     name: 'index flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointI3:
     marker_ids:  [3, 4]
     alt_marker_ids: [-1]
@@ -49,6 +57,8 @@ marker_config:
     actuator: 'jointI1'
     joint_children: []
     name: 'index flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointM1:
     marker_ids:  [14, 15]
     alt_marker_ids: [-1]
@@ -59,6 +69,8 @@ marker_config:
     actuator: 'jointM1'
     joint_children: ['jointM2']
     name: 'middle flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointM2:
     marker_ids:  [15, 16]
     alt_marker_ids: [-1]
@@ -69,6 +81,8 @@ marker_config:
     actuator: 'jointM1'
     joint_children: ['jointM3']
     name: 'middle flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointM3:
     marker_ids:  [16, 17]
     alt_marker_ids: [-1]
@@ -79,6 +93,8 @@ marker_config:
     actuator: 'jointM1'
     joint_children: []
     name: 'middle flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointR1:
     marker_ids: [18, 19]
     alt_marker_ids: [-1]
@@ -89,6 +105,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: ['jointR2']
     name: 'ring flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointR2:
     marker_ids: [19, 21]
     alt_marker_ids: [-1]
@@ -99,6 +117,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: ['jointR3']
     name: 'ring flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointR3:
     marker_ids: [21, 23]
     alt_marker_ids: [-1]
@@ -109,6 +129,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: []
     name: 'ring flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointL1:
     marker_ids:  [24, 25]
     alt_marker_ids: [-1]
@@ -119,6 +141,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: ['jointL2']
     name: 'little flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointL2:
     marker_ids:  [25, 26]
     alt_marker_ids: [-1]
@@ -129,6 +153,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: ['jointL3']
     name: 'little flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointL3:
     marker_ids:  [26, 27]
     alt_marker_ids: [-1]
@@ -139,6 +165,8 @@ marker_config:
     actuator: 'jointL1R1'
     joint_children: []
     name: 'little flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointT0:
     marker_ids: [8, 10]
     alt_marker_ids: [-1]
@@ -149,6 +177,11 @@ marker_config:
     actuator: 'jointT0'
     joint_children: ['jointT1']
     name: 'thumb abduction'
+    lim_low: -0.7854
+    lim_high: 0.7854
+    virtual_base_tf :
+      trans: [0,0,0]
+      rot: [ 0.22909005, -0.31920022, -0.53619658] # [ 0.4136552,  -0.26684877, -0.76265598]
   jointT1:
     marker_ids: [10, 11]
     alt_marker_ids: [-1]
@@ -159,6 +192,8 @@ marker_config:
     actuator: 'jointT1'
     joint_children: ['jointT2']
     name: 'thumb flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointT2:
     marker_ids: [11, 12]
     alt_marker_ids: [-1]
@@ -169,6 +204,8 @@ marker_config:
     actuator: 'jointT1'
     joint_children: ['jointT3']
     name: 'thumb flexion'
+    lim_low: 0.0
+    lim_high: 1.571
   jointT3:
     marker_ids: [12, 13]
     alt_marker_ids: [-1]
@@ -179,6 +216,8 @@ marker_config:
     actuator: 'jointT1'
     joint_children: []
     name: 'thumb flexion'
+    lim_low: 0.0
+    lim_high: 1.571
 
 tf_marker_ids:
   forearm: [5]

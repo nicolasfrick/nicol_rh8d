@@ -999,6 +999,21 @@ class KeypointDetect(DetectBase):
 		
 		return angle
 	
+	def tfBaseMarker(self, base_marker: dict, virtual_base_tf: dict) -> dict:
+		trans = base_marker['ftrans']
+		rot = base_marker['frot']
+		T_cam_base_marker = pose2Matrix(trans, rot, RotTypes.EULER)
+		
+		virt_trans = virtual_base_tf['trans']
+		virt_rot = virtual_base_tf['rot']
+		T_base_marker_virtual_marker = pose2Matrix(virt_trans, virt_rot, RotTypes.EULER)
+
+		T_cam_virtual_marker = T_cam_base_marker @ T_base_marker_virtual_marker
+		res_marker = base_marker.copy()
+		res_marker['ftrans'] = T_cam_virtual_marker[:3, 3]
+		res_marker['frot'] = getRotation(T_cam_virtual_marker[:3, :3], RotTypes.MAT, RotTypes.EULER)
+		return res_marker
+	
 	def tfPoints(self, tf: np.ndarray, points: np.ndarray) -> np.ndarray:
 		"""Transform marker corners to some frame.
 		""" 
@@ -1295,11 +1310,17 @@ class KeypointDetect(DetectBase):
 				# check if and which joint marker set was detected
 				marker_ids = config['marker_ids'] if all( [id in detected_ids for id in config['marker_ids']] ) else \
 					config['alt_marker_ids'] if all( [id in detected_ids for id in config['alt_marker_ids']] ) else False
+				
 				if marker_ids:
 					base_id = marker_ids[0] # base marker id
 					target_id = marker_ids[1] # target marker id
 					base_marker = marker_det[base_id] # base marker detection
 					target_marker = marker_det[target_id] # target marker detection
+					
+					# apply static tf
+					virtual_base_tf = config.get('virtual_base_tf')
+					if virtual_base_tf is not None:
+						base_marker = self.tfBaseMarker(base_marker, virtual_base_tf)
 					
 					# detected angle in rad
 					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
@@ -1307,8 +1328,14 @@ class KeypointDetect(DetectBase):
 					if self.start_angles.get(joint) is None:
 						self.start_angles.update({joint: angle})
 						print("Updating start angle", {joint: angle})
+						if len(self.start_angles.keys()) == len(self.marker_config.keys()):
+							print("All start angles updated")
+							
 					# substract initial angle
-					angle = angle - self.start_angles[joint] # TODO: check
+					angle = angle - self.start_angles[joint]
+					# physical limits
+					angle = np.clip(angle, a_min=config['lim_low'], a_max=config['lim_high'])
+					
 					# map direction for centered joints
 					# cmd = pos_cmd[config['actuator']]
 					# if joint in ['joint7', 'joint8', 'jointT0']:
@@ -1323,7 +1350,7 @@ class KeypointDetect(DetectBase):
 									'target_id': target_id, 
 									'frame_cnt': self.frame_cnt, 
 									'rec_cnt': self.record_cnt, 
-									'cmd': cmd, 
+									'cmd': pos_cmd[config['actuator']], 
 									'state': joint_states[config['actuator']],
 									'epoch': epoch,
 									'direction': direction,
