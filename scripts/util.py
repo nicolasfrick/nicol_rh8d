@@ -1,4 +1,5 @@
 import os
+import re
 import cv2
 import yaml
 import subprocess
@@ -40,40 +41,40 @@ TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 MLP_LOG_PTH = os.path.join(TRAIN_PTH, 'mlp/log')
 	
 def mkDirs() -> None:
-    if not os.path.exists(REC_DIR):
-        os.mkdir(REC_DIR)
-    print("Writing images to", REC_DIR)
-    if not os.path.exists(QDEC_REC_DIR):
-        os.mkdir(QDEC_REC_DIR)
-    if not os.path.exists(QDEC_ORIG_REC_DIR):
-        os.mkdir(QDEC_ORIG_REC_DIR)
-    if not os.path.exists(QDEC_DET_REC_DIR):
-        os.mkdir(QDEC_DET_REC_DIR)
-    if not os.path.exists(KEYPT_REC_DIR):
-        os.mkdir(KEYPT_REC_DIR)
-    if not os.path.exists(KEYPT_ORIG_REC_DIR):
-        os.mkdir(KEYPT_ORIG_REC_DIR)
-    if not os.path.exists(KEYPT_DET_REC_DIR):
-        os.mkdir(KEYPT_DET_REC_DIR)
-    if not os.path.exists(KEYPT_R_EYE_REC_DIR):
-        os.mkdir(KEYPT_R_EYE_REC_DIR)
-    if not os.path.exists(KEYPT_L_EYE_REC_DIR):
-        os.mkdir(KEYPT_L_EYE_REC_DIR)
-    if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
-        os.mkdir(KEYPT_TOP_CAM_REC_DIR)
-    if not os.path.exists(KEYPT_HEAD_CAM_REC_DIR):
-        os.mkdir(KEYPT_HEAD_CAM_REC_DIR)
+	if not os.path.exists(REC_DIR):
+		os.mkdir(REC_DIR)
+	print("Writing images to", REC_DIR)
+	if not os.path.exists(QDEC_REC_DIR):
+		os.mkdir(QDEC_REC_DIR)
+	if not os.path.exists(QDEC_ORIG_REC_DIR):
+		os.mkdir(QDEC_ORIG_REC_DIR)
+	if not os.path.exists(QDEC_DET_REC_DIR):
+		os.mkdir(QDEC_DET_REC_DIR)
+	if not os.path.exists(KEYPT_REC_DIR):
+		os.mkdir(KEYPT_REC_DIR)
+	if not os.path.exists(KEYPT_ORIG_REC_DIR):
+		os.mkdir(KEYPT_ORIG_REC_DIR)
+	if not os.path.exists(KEYPT_DET_REC_DIR):
+		os.mkdir(KEYPT_DET_REC_DIR)
+	if not os.path.exists(KEYPT_R_EYE_REC_DIR):
+		os.mkdir(KEYPT_R_EYE_REC_DIR)
+	if not os.path.exists(KEYPT_L_EYE_REC_DIR):
+		os.mkdir(KEYPT_L_EYE_REC_DIR)
+	if not os.path.exists(KEYPT_TOP_CAM_REC_DIR):
+		os.mkdir(KEYPT_TOP_CAM_REC_DIR)
+	if not os.path.exists(KEYPT_HEAD_CAM_REC_DIR):
+		os.mkdir(KEYPT_HEAD_CAM_REC_DIR)
 	
 class NormalTypes(Enum):
 	XY='xy'
 	XZ='xz'
 	YZ='yz'
 NORMAL_TYPES_MAP={  NormalTypes.XY.value : NormalTypes.XY, 
-				                                    NormalTypes.XZ.value : NormalTypes.XZ, 
+													NormalTypes.XZ.value : NormalTypes.XZ, 
 													NormalTypes.YZ.value : NormalTypes.YZ ,
 												}
 NORMAL_IDX_MAP={ NormalTypes.XY: 2, 
-                                            NormalTypes.XZ: 1, 
+											NormalTypes.XZ: 1, 
 											NormalTypes.YZ: 0,
 											}
 
@@ -283,7 +284,7 @@ def loadNetConfig(net: str) -> dict:
 
 def beep(do_beep: bool=True) -> None:
 	if do_beep:
-	    subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
+		subprocess.run(['paplay', '/usr/share/sounds/gnome/default/alerts/sonar.ogg'])
 
 def greenScreen(img: cv2.typing.MatLike):
 	repl = np.ones(img.shape, dtype=np.float32) * 255
@@ -304,6 +305,33 @@ def visTiff(pth: str) -> None:
    plt.axis('off')
    plt.show()
 
+def extract_number(filename: str) -> int:
+    match = re.search(r'(\d+)', filename)
+    return int(match.group(1)) if match else float('inf')
+
+def img2Video(img_path: str, output_name: str, img_format: str='.jpg', video_format: str='mp4v', fps: float=30):
+	
+	images = [img for img in os.listdir(img_path) if img.endswith(img_format)]
+	images.sort(key=extract_number) 
+	print("Converting", len(images), "images to video", output_name, "with format", video_format, "from", img_path)
+
+	first_image = cv2.imread(os.path.join(img_path, images[0]))
+	height, width, layers = first_image.shape
+	fourcc = cv2.VideoWriter_fourcc(*video_format) 
+	video = cv2.VideoWriter(output_name, fourcc, fps, (width, height))
+	
+	cnt = 0
+	for image in images:
+		pth = os.path.join(img_path, image)
+		frame = cv2.imread(pth)
+		video.write(frame)
+		cnt += 1
+		if cnt % 100 == 0:
+			print("Converting img", pth)
+
+	video.release()
+	cv2.destroyAllWindows()
+
 if __name__ == "__main__":
 	# cv2.namedWindow("gs", cv2.WINDOW_NORMAL)
 	# img = cv2.imread(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/test_img.jpg'), cv2.IMREAD_COLOR)
@@ -314,4 +342,6 @@ if __name__ == "__main__":
 	# 		break
 	# cv2.destroyAllWindows()
 
-	visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))
+	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))
+	
+	img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
