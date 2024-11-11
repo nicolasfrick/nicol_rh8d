@@ -23,7 +23,7 @@
 	<arg name="enable_depth"        default="true"/>
 
 	<arg name="actuator_state_topic" default="/right/open_manipulator_p/actuator_states" />
-	<arg name="waypoint_set"  default="waypoints_test.json" />
+	<arg name="waypoint_set"  default="10013_waypoints_30_30_20_10__8h.json" />
 	<arg name="waypoint_start_idx"  default="0" />
     <arg name="attached"      default="true"/>
 	<arg name="vis" default="true" />

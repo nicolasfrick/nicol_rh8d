@@ -97,13 +97,13 @@ class MoveRobot():
 
 	def reachInitBlocking(self, t_path: float) -> bool:
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_INIT))
-		return self.reachPositionBlocking(cmd, t_path)
+		return self.reachPositionBlocking(cmd, t_path, "init")
 
 	def reachHomeBlocking(self, t_path: float) -> bool:
 		cmd = dict(zip(self.ROBOT_JOINTS, self.ROBOT_HOME))
-		return self.reachPositionBlocking(cmd, t_path)
+		return self.reachPositionBlocking(cmd, t_path, "home")
 	
-	def reachPositionBlocking(self, cmd: dict, t_path: float) -> bool:
+	def reachPositionBlocking(self, cmd: dict, t_path: float, description: str) -> bool:
 		while not len(self.positions):
 			pass
 		t_path_from_current = self.estimateMoveTime(self.positions.pop(), list(cmd.values()))
@@ -134,8 +134,10 @@ class MoveRobot():
 				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
 			if rospy.Time.now() - t_start > t_path_from_current:
 				rospy.logwarn_throttle(1.0, f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
-				if input("Press q to exit wait loop if robot stopped moving, other key to continue") == 'q':
+				if "joint" in description or "thumb" in description or "wrist" in description:
 					break
+				# elif input("Press q to exit wait loop if robot stopped moving, other key to continue") == 'q':
+				# 	break
 
 		return True
 

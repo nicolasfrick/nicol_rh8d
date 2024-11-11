@@ -1021,6 +1021,7 @@ class KeypointDetect(DetectBase):
 		res_marker = base_marker.copy()
 		res_marker['ftrans'] = T_cam_virtual_marker[:3, 3]
 		res_marker['frot'] = getRotation(T_cam_virtual_marker[:3, :3], RotTypes.MAT, RotTypes.EULER)
+		# TODO: visualize
 		return res_marker
 	
 	def tfPoints(self, tf: np.ndarray, points: np.ndarray) -> np.ndarray:
@@ -1743,7 +1744,7 @@ class KeypointDetect(DetectBase):
 
 						# move arm and hand
 						print(f"Epoch {e}. Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end="... ")
-						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time)
+						success = self.rh8d_ctrl.reachPositionBlocking(waypoint, move_time, description)
 						print("done\n") if success else print("fail\n")
 
 						# look towards hand and settle 
@@ -1764,35 +1765,41 @@ class KeypointDetect(DetectBase):
 						except:
 							pass
 
+						if idx % 10 == 0:
+							self.writeData()
+
 		except None as e:
 			rospy.logerr(e)
 			
 		finally:
-			if self.save_record:
-				# angles
-				det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
-				det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-				# keypoints wrt world
-				fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
-				fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
-				# relative keypoints
-				kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
-				kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
-				if self.attached:
-					self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
-					self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
-					if self.use_tf:
-						self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
-						self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
-						if self.use_head_camera:
-							self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
-						if self.use_eye_cameras:
-							self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
-							self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+			self.writeData()
 			if self.cv_window:
 				cv2.destroyAllWindows()
 			pb.disconnect()
 			rospy.signal_shutdown(0)
+
+	def writeData(self) -> None:
+		if self.save_record:
+			# angles
+			det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
+			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+			# keypoints wrt world
+			fk_df = pd.DataFrame({link: [df] for link, df in self.rh8d_tf_df_dict.items()})
+			fk_df.to_json(KEYPT_FK_PTH, orient="index", indent=4)
+			# relative keypoints
+			kypt_df = pd.DataFrame({link: [df] for link, df in self.keypt_df_dict.items()})
+			kypt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+			if self.attached:
+				self.as_df.to_json(os.path.join(KEYPT_REC_DIR, 'actuator_states.json'), orient="index", indent=4)
+				self.js_df.to_json(os.path.join(KEYPT_REC_DIR, 'joint_states.json'), orient="index", indent=4)
+				if self.use_tf:
+					self.rh8d_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tf.json'), orient="index", indent=4)
+					self.rh8d_tcp_tf_df.to_json(os.path.join(KEYPT_DET_REC_DIR, 'tcp_tf.json'), orient="index", indent=4)
+					if self.use_head_camera:
+						self.head_rs_tf_df.to_json(os.path.join(KEYPT_HEAD_CAM_REC_DIR, 'tf.json'), orient="index", indent=4)
+					if self.use_eye_cameras:
+						self.left_eye_tf_df.to_json(os.path.join(KEYPT_L_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
+						self.right_eye_tf_df.to_json(os.path.join(KEYPT_R_EYE_REC_DIR, 'tf.json'), orient="index", indent=4)
 
 class HybridDetect(KeypointDetect):
 	"""
