@@ -398,12 +398,12 @@ class KeypointDetect(DetectBase):
 				actuator_state_topic: Optional[str]='actuator_states',
 				waypoint_set: Optional[str]='waypoints.json',
 				waypoint_start_idx: Optional[int]=0,
-				sync_slop: Optional[float]=0.1,
+				sync_slop: Optional[float]=0.5,
 				urdf_pth: Optional[str]='rh8d.urdf',
 				make_noise: Optional[bool]=False,
 				self_reset_angles: Optional[bool]=True,
 				topic_wait_secs: Optional[float]=15,
-				vis_ros_tf: Optional[bool]=True,
+				vis_ros_tf: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -975,7 +975,7 @@ class KeypointDetect(DetectBase):
 		normal = mat @ self.UNIT_AXIS_X
 		return normal
 
-	def normalAngularDispl(self, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER, normal_type: NormalTypes=NormalTypes.XY) -> float:
+	def normalAngularDispl(self, joint: str, base_rot: np.ndarray, target_rot: np.ndarray, rot_t: RotTypes=RotTypes.EULER, normal_type: NormalTypes=NormalTypes.XY) -> float:
 		""" Calculate the angle between normal vectors.
 		"""
 		# get normal vectors for the axis planes
@@ -1002,7 +1002,7 @@ class KeypointDetect(DetectBase):
 		if normal_type == NormalTypes.XY:
 			if cross_product[NORMAL_IDX_MAP[normal_type]] < 0.0:
 				return  -1 * angle
-		else:
+		elif joint == 'joint7':
 			if cross_product[NORMAL_IDX_MAP[normal_type]] > 0.0:
 				return  -1 * angle
 		
@@ -1118,7 +1118,7 @@ class KeypointDetect(DetectBase):
 		txt = "{} {} {:.2f} deg".format(id, name, np.rad2deg(angle))
 		xpos = self.TXT_OFFSET
 		ypos = (id+2)*self.TXT_OFFSET
-		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
 
 	def visKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
 		# root joints not detected
@@ -1332,7 +1332,7 @@ class KeypointDetect(DetectBase):
 						base_marker = self.tfBaseMarker(base_marker, virtual_base_tf)
 					
 					# detected angle in rad
-					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
+					angle = self.normalAngularDispl(joint, base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					# save initially detected angle
 					if self.start_angles.get(joint) is None:
 						self.start_angles.update({joint: angle})
@@ -1571,7 +1571,7 @@ class KeypointDetect(DetectBase):
 					base_marker = marker_det[marker_ids[0]] # base marker detection
 					target_marker = marker_det[marker_ids[1]] # target marker detection
 					# detected angle in rad
-					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
+					angle = self.normalAngularDispl(joint, base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 					self.start_angles.update({joint: angle})
 					# show
 					print(f"Updating start angle {joint}: {angle} rad, {np.rad2deg(angle)} deg")
@@ -1636,7 +1636,7 @@ class KeypointDetect(DetectBase):
 								base_marker = self.tfBaseMarker(base_marker, virtual_base_tf)
 
 							# detected angle in rad
-							angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
+							angle = self.normalAngularDispl(joint, base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
 							# save initially detected angle
 							if self.start_angles.get(joint) is None:
 								self.start_angles.update({joint: angle})
@@ -1927,7 +1927,7 @@ class HybridDetect(KeypointDetect):
 					target_marker = marker_det[target_id] # target detection
 
 					# detected angle in rad
-					angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[self.normal_plane])
+					angle = self.normalAngularDispl("jointI1", base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[self.normal_plane])
 					# save initially detected angle
 					if init:
 						self.start_angles.update({base_idx: angle})

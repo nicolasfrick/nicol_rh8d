@@ -53,14 +53,16 @@ class MoveRobot():
 
 	JOINT5_IDX = ROBOT_JOINTS_INDEX['joint5']
 	JOINT6_IDX = ROBOT_JOINTS_INDEX['joint6']
-	JOINT5_MAX = 1.56
-	JOINT5_MIN = -1.56
+	JOINT5_MAX = 1.5
+	JOINT5_MIN = -1.5
 	JOINT6_MAX = 3
 	JOINT6_MIN = -3
-	RH8D_WRIST_MAX = 2.8
-	RH8D_WRIST_MIN = -2.8
-	RH8D_FINGER_MAX = 3
-	RH8D_FINGER_MIN = -3
+	RH8D_WRIST_MAX = 2.5
+	RH8D_WRIST_MIN = -2.5
+	RH8D_T0_MAX = 2.0
+	RH8D_T0_MIN = -2.5
+	RH8D_FINGER_MAX = np.pi
+	RH8D_FINGER_MIN = -np.pi
 
 	def __init__(self, sensors: bool=False) -> None:
 
@@ -131,7 +133,9 @@ class MoveRobot():
 				vel = self.velocities.pop()
 				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
 			if rospy.Time.now() - t_start > t_path_from_current:
-				rospy.logwarn_throttle(3.0, f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
+				rospy.logwarn_throttle(1.0, f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
+				if input("Press q to exit wait loop if robot stopped moving, other key to continue") == 'q':
+					break
 
 		return True
 
@@ -300,7 +304,7 @@ class MoveRobot():
 	def generateWaypointsSequential(self, 
 					   								robot_resolution_deg: float=90.0, 
 					   								wrist_resolution_deg: float=170.0, 
-													finger_resolution_deg: float=170.0, 
+													finger_resolution_deg: float=120.0, 
 													interleaving_offset_deg: float=60.0,
 													t_exp: float=2.0,
 													interleave: bool=False,
@@ -335,6 +339,11 @@ class MoveRobot():
 		steps4 = int( (abs(self.RH8D_FINGER_MIN) + abs(self.RH8D_FINGER_MAX)) / np.deg2rad(finger_resolution_deg) )
 		finger_waypoints = np.linspace(self.RH8D_FINGER_MIN + np.deg2rad(finger_resolution_deg), self.RH8D_FINGER_MAX, steps4)
 		assert(steps4 > 1)
+
+		# jointT0
+		steps5 = int( (abs(self.RH8D_T0_MIN) + abs(self.RH8D_T0_MAX)) / np.deg2rad(finger_resolution_deg) )
+		thumb_waypoints = np.linspace(self.RH8D_T0_MIN + np.deg2rad(finger_resolution_deg), self.RH8D_T0_MAX, steps5)
+		assert(steps5 > 1)
 		
 		# exp start
 		t_move_home_start = self.estimateMoveTime(self.ROBOT_HOME, self.ROBOT_EXP_START)
@@ -411,7 +420,7 @@ class MoveRobot():
 				wps_df = pd.concat([wps_df, last_waypoint.to_frame().T], ignore_index=True)
 
 				# thumb abduction
-				for rh8d_wp in finger_waypoints:
+				for rh8d_wp in thumb_waypoints:
 					print("thumb abduction", len(wps_df))
 					waypoint = self.ROBOT_EXP_START[ : self.JOINT5_IDX] # joint 1,2,3,4 fixed
 					thumb_only = [joint5_wp, joint6_wp, *self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] : self.ROBOT_JOINTS_INDEX['jointT0']], rh8d_wp] # jointT0 moving
@@ -427,7 +436,7 @@ class MoveRobot():
 				for rh8d_wp in finger_waypoints:
 					print("thumb flexion", len(wps_df))
 					waypoint = self.ROBOT_EXP_START[ : self.JOINT5_IDX] # joint 1,2,3,4 fixed
-					thumb_only = [joint5_wp, joint6_wp, *self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] : self.ROBOT_JOINTS_INDEX['jointT0']], self.ROBOT_UP_LIM[self.ROBOT_JOINTS_INDEX['jointT0']], rh8d_wp] # jointT1 moving
+					thumb_only = [joint5_wp, joint6_wp, *self.ROBOT_EXP_START[self.ROBOT_JOINTS_INDEX['joint7'] : self.ROBOT_JOINTS_INDEX['jointT0']], self.RH8D_T0_MAX, rh8d_wp] # jointT1 moving
 					waypoint.extend(thumb_only)
 					last_wp = wps_df.loc[wps_df.last_valid_index()][:-4].values
 					t_travel = self.estimateMoveTime(last_wp, waypoint)
@@ -469,4 +478,4 @@ class MoveRobot():
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential(30, 30, 20, 10)
+	MoveRobot.generateWaypointsSequential()
