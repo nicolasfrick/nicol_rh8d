@@ -120,8 +120,9 @@ class MoveRobot():
 		crnt = np.ones(len(goal), dtype=np.float32) * np.inf
 		velocities = pd.DataFrame([crnt], columns=list(cmd.keys()), dtype=np.float32)
 		# wait for reach or abort
-		while not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ) or \
-			not all( np.isclose(np.round(velocities.rolling(window=4).mean().to_numpy()[-1], 2), 0.0)) :
+		while not rospy.is_shutdown() and \
+			( not all( np.isclose(np.round(goal, 2), np.round(crnt, 2)) ) or \
+			  not all( np.isclose(np.round(velocities.rolling(window=4).mean().to_numpy()[-1], 2), 0.0)) ) :
 
 			rospy.sleep(0.1)
 			if len(self.positions):

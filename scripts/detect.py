@@ -999,8 +999,12 @@ class KeypointDetect(DetectBase):
 
 		# get sign
 		cross_product = np.cross(base_normal, target_normal)
-		if cross_product[NORMAL_IDX_MAP[normal_type]] < 0.0:
-			return  -1 * angle
+		if normal_type == NormalTypes.XY:
+			if cross_product[NORMAL_IDX_MAP[normal_type]] < 0.0:
+				return  -1 * angle
+		else:
+			if cross_product[NORMAL_IDX_MAP[normal_type]] > 0.0:
+				return  -1 * angle
 		
 		return angle
 	
@@ -1340,13 +1344,6 @@ class KeypointDetect(DetectBase):
 					angle = angle - self.start_angles[joint]
 					# physical limits
 					angle = np.clip(angle, a_min=config['lim_low'], a_max=config['lim_high'])
-					
-					# map direction for centered joints
-					# cmd = pos_cmd[config['actuator']]
-					# if joint in ['joint7', 'joint8', 'jointT0']:
-					# 	if cmd < 0.0 and angle > 0.0:
-					# 		print("Inverting angle for", joint)
-					# 		angle *= -1
 
 					# data entry
 					data = { 'angle': angle, 
@@ -1651,18 +1648,6 @@ class KeypointDetect(DetectBase):
 							angle = angle - self.start_angles[joint] # TODO: check
 							# physical limits
 							angle = np.clip(angle, a_min=config['lim_low'], a_max=config['lim_high'])
-
-							# map direction for centered joints
-							# if joint in ['joint7', 'joint8', 'jointT0']:
-							# 	while not len(self.actuator_state_buffer):
-							# 		if not rospy.is_shutdown():
-							# 			rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
-							# 			rospy.sleep(0.1)
-							# 	msg = self.actuator_state_buffer.pop()
-							# 	cmd = msg.position[self.rh8d_ctrl.ROBOT_JOINTS_INDEX[joint]]
-							# 	if cmd < 0.0 and angle > 0.0:
-							# 		print("Inverting angle for", joint)
-							# 		angle *= -1
 
 							joint_angles[joint] = angle # add angle for keypoint vis
 							# TODO: fix this permanently
