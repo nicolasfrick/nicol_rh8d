@@ -72,8 +72,13 @@
                 "parent_frame_id":"r_forearm",
                 "child_frame_id":"r_palm_axis",
                 "timestamp":1731323738.1427471638
-            },			if cross_product[NORMAL_IDX_MAP[normal_type]] < 0.0:
-            return  -1 * angle
+            },
+            "2":{
+                "angle":0.0,
+                "start_angle":0.0076730717,
+                "base_id":6,
+                "target_id":8,
+                "frame_cnt":9,
                 "rec_cnt":3,
                 "cmd":0.0,
                 "state":0.0,
