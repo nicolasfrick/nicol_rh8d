@@ -133,11 +133,10 @@ class MoveRobot():
 				vel = self.velocities.pop()
 				velocities = pd.concat([velocities, pd.DataFrame([dict(zip(cmd.keys(), vel))])], ignore_index=True)
 			if rospy.Time.now() - t_start > t_path_from_current:
-				rospy.logwarn_throttle(1.0, f"Positions cannot be reached in {t_path_from_current} seconds ... robot might be stuck.")
+				rospy.logwarn_throttle(1.0, f"Positions cannot be reached in {t_path_from_current.to_sec()} seconds ... robot might be stuck.")
+				# ignore hand joints 
 				if "joint" in description or "thumb" in description or "wrist" in description:
 					break
-				# elif input("Press q to exit wait loop if robot stopped moving, other key to continue") == 'q':
-				# 	break
 
 		return True
 

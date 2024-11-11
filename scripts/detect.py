@@ -927,30 +927,31 @@ class KeypointDetect(DetectBase):
 				rospy.sleep(0.1)
 
 		# lock updates on img queues
-		with self.buf_lock:
+		# with self.buf_lock:
 
-			# process images
-			self.det.resetFilters()
-			while len(self.det_img_buffer):
-				self.frame_cnt += 1
-				msg = self.det_img_buffer.pop()
-				timestamp =  msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
-				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
+		# process images
+		self.det.resetFilters()
+		# while len(self.det_img_buffer):
+		for _ in range(self.filter_iters):
+			self.frame_cnt += 1
+			msg = self.det_img_buffer.pop()
+			timestamp =  msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
+			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
 
-			# align rotations by consens
-			if self.flip_outliers:
-				if not self.flipOutliers(marker_det):
-					print("Not all flipped markers were fixed!")
-					beep(self.make_noise)
+		# align rotations by consens
+		if self.flip_outliers:
+			if not self.flipOutliers(marker_det):
+				print("Not all flipped markers were fixed!")
+				beep(self.make_noise)
 
-			# improve detection
-			if self.refine_pose:
-				self.refineDetection(marker_det)
+		# improve detection
+		if self.refine_pose:
+			self.refineDetection(marker_det)
 
-			# save additional resources
-			if marker_det:
-				tf_dict, states_dict = self.saveRecord()
+		# save additional resources
+		if marker_det:
+			tf_dict, states_dict = self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
 		
@@ -1547,20 +1548,21 @@ class KeypointDetect(DetectBase):
 				rospy.sleep(1/self.fps)
 
 			# lock updates on img queues
-			with self.buf_lock:
-				# process images
-				self.det.resetFilters()
-				while len(self.det_img_buffer):
-					msg = self.det_img_buffer.pop()
-					raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-					(marker_det, det_img, _) = self.det.detMarkerPoses(raw_img.copy(), (not len(self.det_img_buffer) and self.vis))
-				# align rotations by consens
-				if self.flip_outliers:
-					if not self.flipOutliers(marker_det):
-						beep(self.make_noise)
-				# improve detection
-				if self.refine_pose:
-					self.refineDetection(marker_det)
+			# with self.buf_lock:
+			# process images
+			self.det.resetFilters()
+			# while len(self.det_img_buffer):
+			for _ in range(self.filter_iters):
+				msg = self.det_img_buffer.pop()
+				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+				(marker_det, det_img, _) = self.det.detMarkerPoses(raw_img.copy(), (not len(self.det_img_buffer) and self.vis))
+			# align rotations by consens
+			if self.flip_outliers:
+				if not self.flipOutliers(marker_det):
+					beep(self.make_noise)
+			# improve detection
+			if self.refine_pose:
+				self.refineDetection(marker_det)
 
 			# detect angles
 			detected_ids = marker_det.keys()
