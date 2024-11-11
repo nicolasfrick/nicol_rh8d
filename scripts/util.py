@@ -13,7 +13,7 @@ from matplotlib import pyplot as plt
 from scipy.spatial.transform import Rotation as R
 
 dt_now = datetime.now()
-dt_now = dt_now.strftime("%H_%M_%S")
+dt_now = dt_now.strftime("%m_%d_%H_%M")
 # data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection')
 QDEC_DET_PTH = os.path.join(DATA_PTH, 'qdec/detection_' + dt_now + '.json')

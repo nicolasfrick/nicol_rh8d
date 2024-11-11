@@ -14,11 +14,11 @@ import pybullet as pb
 import sensor_msgs.msg
 from pynput import keyboard
 from collections import deque
+from std_msgs.msg import Bool
 import dynamic_reconfigure.server
-from sensor_msgs.msg import Image
 from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
-from sensor_msgs.msg import JointState
+from sensor_msgs.msg import Image, JointState
 from realsense2_camera.msg import Extrinsics
 from scipy.spatial.transform import Rotation as R
 from message_filters import Subscriber, ApproximateTimeSynchronizer
@@ -537,6 +537,7 @@ class KeypointDetect(DetectBase):
 		# ros topics
 		if attached:
 			self.initSubscriber()
+			self.clear_sub = rospy.Subscriber("clear_angles", Bool, self.clearAngles, queue_size=1)
 			# init ros vis
 			if vis:
 				self.proc_pub = rospy.Publisher('processed_image', Image, queue_size=10)
@@ -710,7 +711,7 @@ class KeypointDetect(DetectBase):
 		self.sync.registerCallback(self.recCB)
 		for s in self.subs:
 			print("Subscribed to topic", s.topic)
-		print("Syncing all aubscibers")
+		print("Syncing all subscibers")
 
 	def recCB(self, 
 				actuator_state: JointState, 
@@ -750,6 +751,10 @@ class KeypointDetect(DetectBase):
 						self.left_img_buffer.append(msg)
 		finally:
 			self.buf_lock.release()
+
+	def clearAngles(self, msg: Bool) -> None:
+		if msg.data:
+			self.start_angles.clear()
 
 	def lookupTF(self, stamp: rospy.Time, target_frame: str, source_frame: str) -> dict:
 		try:
@@ -1621,11 +1626,17 @@ class KeypointDetect(DetectBase):
 						# check if and which joint marker set was detected
 						marker_ids = config['marker_ids'] if all( [id in detected_ids for id in config['marker_ids']] ) else \
 							config['alt_marker_ids'] if all( [id in detected_ids for id in config['alt_marker_ids']] ) else False
+						
 						if marker_ids:
 							base_id = marker_ids[0] # base marker id
 							target_id = marker_ids[1] # target marker id
 							base_marker = marker_det[base_id] # base marker detection
 							target_marker = marker_det[target_id] # target marker detection
+
+							# apply static tf
+							virtual_base_tf = config.get('virtual_base_tf')
+							if virtual_base_tf is not None:
+								base_marker = self.tfBaseMarker(base_marker, virtual_base_tf)
 
 							# detected angle in rad
 							angle = self.normalAngularDispl(base_marker['frot'], target_marker['frot'], RotTypes.EULER, NORMAL_TYPES_MAP[config['plane']])
@@ -1633,20 +1644,25 @@ class KeypointDetect(DetectBase):
 							if self.start_angles.get(joint) is None:
 								self.start_angles.update({joint: angle})
 								print("Updating start angle", {joint: angle})
+								if len(self.start_angles.keys()) == len(self.marker_config.keys()):
+									print("All start angles updated")
+							
 							# substract initial angle
 							angle = angle - self.start_angles[joint] # TODO: check
+							# physical limits
+							angle = np.clip(angle, a_min=config['lim_low'], a_max=config['lim_high'])
 
 							# map direction for centered joints
-							if joint in ['joint7', 'joint8', 'jointT0']:
-								while not len(self.actuator_state_buffer):
-									if not rospy.is_shutdown():
-										rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
-										rospy.sleep(0.1)
-								msg = self.actuator_state_buffer.pop()
-								cmd = msg.position[self.rh8d_ctrl.ROBOT_JOINTS_INDEX[joint]]
-								if cmd < 0.0 and angle > 0.0:
-									print("Inverting angle for", joint)
-									angle *= -1
+							# if joint in ['joint7', 'joint8', 'jointT0']:
+							# 	while not len(self.actuator_state_buffer):
+							# 		if not rospy.is_shutdown():
+							# 			rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
+							# 			rospy.sleep(0.1)
+							# 	msg = self.actuator_state_buffer.pop()
+							# 	cmd = msg.position[self.rh8d_ctrl.ROBOT_JOINTS_INDEX[joint]]
+							# 	if cmd < 0.0 and angle > 0.0:
+							# 		print("Inverting angle for", joint)
+							# 		angle *= -1
 
 							joint_angles[joint] = angle # add angle for keypoint vis
 							# TODO: fix this permanently
@@ -1670,6 +1686,8 @@ class KeypointDetect(DetectBase):
 					# draw keypoints
 					self.visKeypoints(out_img, fk_dict)
 					kpt_plt = self.plotKeypoints(keypt_dict)
+					if self.vis_ros_tf:
+						self.visRosTF(out_img, fk_dict)
 					# draw angle labels and possibly fixed detections 
 					for id, detection in marker_det.items():
 						self.labelAngle(out_img, detection.get('joint'), id, detection.get('angle'))
