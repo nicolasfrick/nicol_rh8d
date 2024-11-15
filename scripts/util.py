@@ -22,7 +22,8 @@ KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
 KEYPT_FK_PTH = os.path.join(DATA_PTH, 'keypoint/kptsFK_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
-REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+# REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+REC_DIR = '/data/rh8d_dataset'
 # quadrature encoder
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
 QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')

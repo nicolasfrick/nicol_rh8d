@@ -28,7 +28,7 @@
     <arg name="attached"      default="true"/>
 	<arg name="vis" default="true" />
 	<arg name="save_imgs" default="true" />
-	<arg name="f_ctrl" default="10" /> 
+	<arg name="f_ctrl" default="30" /> 
 	<arg name="debug" default="false" /> 
 	<arg name="test" default="false" /> 
 	<arg name="use_tf" default="true" /> 

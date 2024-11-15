@@ -144,7 +144,7 @@ class KeypointPlot():
 				# save last point before branching
 				self.root_center_point = trans
 
-		self.ax_3d.set_title('3D Keypoints')
+		# self.ax_3d.set_title('6D Keypoints')
 		if pause > 0.0:
 			plt.pause(pause)
 		self.fig.canvas.draw()

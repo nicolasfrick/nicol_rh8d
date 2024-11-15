@@ -398,7 +398,7 @@ class KeypointDetect(DetectBase):
 				actuator_state_topic: Optional[str]='actuator_states',
 				waypoint_set: Optional[str]='waypoints.json',
 				waypoint_start_idx: Optional[int]=0,
-				sync_slop: Optional[float]=0.5,
+				sync_slop: Optional[float]=0.08,
 				urdf_pth: Optional[str]='rh8d.urdf',
 				make_noise: Optional[bool]=False,
 				self_reset_angles: Optional[bool]=True,
@@ -482,7 +482,7 @@ class KeypointDetect(DetectBase):
 			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
 		
 		# record directories
-		if save_imgs:
+		if save_imgs and not self.test:
 			mkDirs()
 
 		# load waypoints
@@ -818,20 +818,20 @@ class KeypointDetect(DetectBase):
 			num_saved += 1
 			depth_img = self.bridge.imgmsg_to_cv2(self.depth_img_buffer.pop(), 'passthrough')
 			depth_img = (depth_img).astype('float32')
-			if self.save_record:
+			if self.save_record and not self.test:
 				cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 
 		# top realsense
 		if self.use_top_camera and len(self.top_img_buffer):
 			num_saved += 1
 			raw_img = self.bridge.imgmsg_to_cv2(self.top_img_buffer.pop(), 'bgr8')
-			if self.save_record:
+			if self.save_record and not self.test:
 				cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# depth
 			if self.depth_enabled and len(self.top_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.top_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
-				if self.save_record:
+				if self.save_record and not self.test:
 					cv2.imwrite(os.path.join(KEYPT_TOP_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 			# static tf
 
@@ -840,13 +840,13 @@ class KeypointDetect(DetectBase):
 			num_saved += 1
 			msg = self.head_img_buffer.pop()
 			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-			if self.save_record:
+			if self.save_record and not self.test:
 				cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 			# depth
 			if self.depth_enabled and len(self.head_depth_img_buffer):
 				depth_img = self.bridge.imgmsg_to_cv2(self.head_depth_img_buffer.pop(), 'passthrough')
 				depth_img = (depth_img).astype('float32')
-				if self.save_record:
+				if self.save_record and not self.test:
 					cv2.imwrite(os.path.join(KEYPT_HEAD_CAM_REC_DIR, str(self.record_cnt) + '.tiff'), depth_img)
 			# save head rs tf
 			if self.use_tf:
@@ -860,7 +860,7 @@ class KeypointDetect(DetectBase):
 			if len(self.left_img_buffer):
 				msg = self.left_img_buffer.pop()
 				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-				if self.save_record:
+				if self.save_record and not self.test:
 					cv2.imwrite(os.path.join(KEYPT_L_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save left eye tf
 				if self.use_tf:
@@ -871,7 +871,7 @@ class KeypointDetect(DetectBase):
 			if len(self.right_img_buffer):
 				msg = self.right_img_buffer.pop()
 				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-				if self.save_record:
+				if self.save_record and not self.test:
 					cv2.imwrite(os.path.join(KEYPT_R_EYE_REC_DIR, str(self.record_cnt) + '.jpg'), raw_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY])
 				# save right eye tf
 				if self.use_tf:
@@ -903,6 +903,41 @@ class KeypointDetect(DetectBase):
 			self.record_cnt += 1
 
 		return tf_rh8d_dict, actuator_states_dict
+	
+	def waitForImgs(self) -> None:
+		# wait for buffer to be filled
+		while len(self.det_img_buffer) != self.filter_iters:
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(1.0, f"Image buffer size deviates from filter size: {str(self.filter_iters-len(self.det_img_buffer))}")
+				rospy.sleep(1/self.fps)
+		# wait for buffers to be filled
+		while not len(self.actuator_state_buffer):
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(1.0, "Actuator state buffer not updated")
+				rospy.sleep(0.01)
+		while not len(self.joint_state_buffer):
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(1.0, "Joint state buffer not updated")
+				rospy.sleep(0.01)
+		if self.use_eye_cameras:
+			while not len(self.left_img_buffer):
+				if not rospy.is_shutdown():
+					rospy.logwarn_throttle(1.0, "Left img buffer not updated")
+					rospy.sleep(1/self.fps)
+			while not len(self.right_img_buffer):
+				if not rospy.is_shutdown():
+					rospy.logwarn_throttle(1.0, "Right img buffer not updated")
+					rospy.sleep(1/self.fps)
+		if self.use_top_camera:
+			while not len(self.top_img_buffer):
+				if not rospy.is_shutdown():
+					rospy.logwarn_throttle(1.0, "Top img buffer not updated")
+					rospy.sleep(1/self.fps)
+		if self.use_head_camera:
+			while not len(self.head_img_buffer):
+				if not rospy.is_shutdown():
+					rospy.logwarn_throttle(1.0, "Head img buffer not updated")
+					rospy.sleep(1/self.fps)
 
 	def preProcImage(self, vis: bool=True) -> Tuple[dict, cv2.typing.MatLike, cv2.typing.MatLike, cv2.typing.MatLike, dict, dict, float]:
 		""" Put num filter_iters images into fresh detection filter and save last images."""
@@ -911,47 +946,34 @@ class KeypointDetect(DetectBase):
 		states_dict = {}
 		timestamp = 0.0
 
-		# wait for buffer to be filled
-		while len(self.det_img_buffer) != self.filter_iters:
-			if not rospy.is_shutdown():
-				rospy.logwarn_throttle(3.0, f"Image buffer size deviates from filter size: {str(self.filter_iters-len(self.det_img_buffer))}")
-				rospy.sleep(1/self.fps)
-		# wait for buffer to be filled
-		while not len(self.actuator_state_buffer):
-			if not rospy.is_shutdown():
-				rospy.logwarn_throttle(3.0, "Actuator state buffer not updated")
-				rospy.sleep(0.1)
-		while not len(self.joint_state_buffer):
-			if not rospy.is_shutdown():
-				rospy.logwarn_throttle(3.0, "Joint state buffer not updated")
-				rospy.sleep(0.1)
+		# blocking
+		self.waitForImgs()
 
 		# lock updates on img queues
-		# with self.buf_lock:
+		with self.buf_lock:
 
-		# process images
-		self.det.resetFilters()
-		# while len(self.det_img_buffer):
-		for _ in range(self.filter_iters):
-			self.frame_cnt += 1
-			msg = self.det_img_buffer.pop()
-			timestamp =  msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
-			raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-			(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
+			# process images
+			self.det.resetFilters()
+			while len(self.det_img_buffer):
+				self.frame_cnt += 1
+				msg = self.det_img_buffer.pop()
+				timestamp =  msg.header.stamp.secs + msg.header.stamp.nsecs*1e-9
+				raw_img = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+				(marker_det, det_img, proc_img) = self.det.detMarkerPoses(raw_img.copy(), vis and (not len(self.det_img_buffer) and self.vis))
 
-		# align rotations by consens
-		if self.flip_outliers:
-			if not self.flipOutliers(marker_det):
-				print("Not all flipped markers were fixed!")
-				beep(self.make_noise)
+			# align rotations by consens
+			if self.flip_outliers:
+				if not self.flipOutliers(marker_det):
+					print("Not all flipped markers were fixed!")
+					beep(self.make_noise)
 
-		# improve detection
-		if self.refine_pose:
-			self.refineDetection(marker_det)
+			# improve detection
+			if self.refine_pose:
+				self.refineDetection(marker_det)
 
-		# save additional resources
-		if marker_det:
-			tf_dict, states_dict = self.saveRecord()
+			# save additional resources
+			if marker_det:
+				tf_dict, states_dict = self.saveRecord()
 
 			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
 		
@@ -1502,7 +1524,7 @@ class KeypointDetect(DetectBase):
 	# 	except Exception as e:
 	# 		rospy.logerr(e)
 	# 	finally:
-	# 		if self.save_record:
+	# 		if self.save_record and not self.test:
 	# 			# angles
 	# 			det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 	# 			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
@@ -1781,7 +1803,7 @@ class KeypointDetect(DetectBase):
 			rospy.signal_shutdown(0)
 
 	def writeData(self) -> None:
-		if self.save_record:
+		if self.save_record and not self.test:
 			# angles
 			det_df = pd.DataFrame({joint: [df] for joint, df in self.det_df_dict.items()})
 			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
