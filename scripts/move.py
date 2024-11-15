@@ -303,7 +303,8 @@ class MoveRobot():
 
 	@classmethod
 	def generateWaypointsSequential(self, 
-					   								robot_resolution_deg: float=90.0, 
+					   								joint5_resolution_deg: float=90.0, 
+													joint6_resolution_deg: float=90.0,    
 					   								wrist_resolution_deg: float=170.0, 
 													finger_resolution_deg: float=120.0, 
 													interleaving_offset_deg: float=60.0,
@@ -321,15 +322,16 @@ class MoveRobot():
 								3.1.7 move fingers interleaved:  index -> middle -> little/ring
 		"""
 
-		assert(interleaving_offset_deg <= finger_resolution_deg/2)
+		if interleave:
+			assert(interleaving_offset_deg <= finger_resolution_deg/2)
 		interleaving_offset = np.deg2rad(interleaving_offset_deg)
 		
 		# joint5
-		steps1 = int( (abs(self.JOINT5_MIN) + abs(self.JOINT5_MAX)) / np.deg2rad(robot_resolution_deg) )
+		steps1 = int( (abs(self.JOINT5_MIN) + abs(self.JOINT5_MAX)) / np.deg2rad(joint5_resolution_deg) )
 		joint5_waypoints = np.linspace(self.JOINT5_MIN, self.JOINT5_MAX, steps1)
 
 		# joint6
-		steps2 = int( (abs(self.JOINT6_MIN) + abs(self.JOINT6_MAX)) / np.deg2rad(robot_resolution_deg) )
+		steps2 = int( (abs(self.JOINT6_MIN) + abs(self.JOINT6_MAX)) / np.deg2rad(joint6_resolution_deg) )
 		joint6_waypoints = np.linspace(self.JOINT6_MIN, self.JOINT6_MAX, steps2)
 
 		# joint7-8
@@ -475,8 +477,8 @@ class MoveRobot():
 		t_total = str(datetime.timedelta(seconds=t_total))
 		t_str = t_total.split('.')[0].replace(':','_')
 		h_str = t_str.split('_')[0]
-		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints{"_interleaved" if interleave else ""}_{int(robot_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{h_str}h.json'), orient="index", indent=1, double_precision=3)		
+		wps_df.to_json(os.path.join(WAYPOINT_PTH, f'{len(wps_df)}_waypoints{"_interleaved" if interleave else ""}_{int(joint5_resolution_deg)}_{int(joint6_resolution_deg)}_{int(wrist_resolution_deg)}_{int(finger_resolution_deg)}_{int(interleaving_offset_deg)}__{h_str}h.json'), orient="index", indent=1, double_precision=3)		
 		print("\nTotal cnt:", len(wps_df), "\nestimated experiment time:", t_exp_sum, "s",  "\nestimated move time:", t_travel_sum, "s", "\nestimated time total:", t_total)
 		
 if __name__ == '__main__':
-	MoveRobot.generateWaypointsSequential()
+	MoveRobot.generateWaypointsSequential(20, 45, 30, 20, 10, 5)
