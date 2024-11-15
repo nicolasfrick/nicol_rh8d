@@ -209,7 +209,8 @@
   </link>
   <!-- NICOL revolute joint -->
   <joint name="jointT0" type="revolute">
-    <origin rpy="-2.54680616 -0.60124514  0.33418237" xyz="-0.0083412575 0.0157859987 0.0379541955"/>
+    <!-- <origin rpy="-2.54680616 -0.60124514  0.33418237" xyz="-0.0083412575 0.0157859987 0.0379541955"/> -->
+    <origin rpy="-2.54680616 -0.60124514 0.33" xyz="-0.0083412575 0.0157859987 0.0379541955"/>
     <parent link="r_palm"/>
     <child link="r_thumb_base"/>
     <axis xyz="0 0 -1"/>
@@ -312,7 +313,8 @@
   <!-- if sensor used, append respective sensor -->
   <!-- NICOL revolute joint -->
   <joint name="jointI1" type="revolute">
-    <origin rpy="-0.08267713  0.17715231 -2.93857995" xyz="-0.0043044918 0.0812907302 0.0367863551"/>
+    <!-- <origin rpy="-0.08267713  0.17715231 -2.93857995" xyz="-0.0043044918 0.0812907302 0.0367863551"/> -->
+    <origin rpy="-0.1 0.17715231 -2.85" xyz="-0.0043044918 0.0812907302 0.0367863551"/>
     <parent link="r_palm"/>
     <child link="r_Iproximal"/>
     <axis xyz="0 0 1"/>
@@ -334,7 +336,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointI2" type="revolute">
-    <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.15" xyz="0 -0.0258749732 0"/>
     <parent link="r_Iproximal"/>
     <child link="r_Imiddle"/>
     <axis xyz="0 0 1"/>
@@ -356,7 +359,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointI3" type="revolute">
-    <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.05" xyz="0 -0.0258749732 0"/>
     <parent link="r_Imiddle"/>
     <child link="r_Itip"/>
     <axis xyz="0 0 1"/>
@@ -395,7 +399,8 @@
   <!-- if sensor used, append respective sensor -->
   <!-- NICOL revolute joint -->
   <joint name="jointM1" type="revolute">
-    <origin rpy="-0.02 0.06 -2.92246721" xyz="-0.0012008743 0.0828960623 0.0118294206"/>
+    <!-- <origin rpy="-0.02 0.06 -2.92246721" xyz="-0.0012008743 0.0828960623 0.0118294206"/> -->
+    <origin rpy="0.0 0.06 -2.85" xyz="-0.0012008743 0.0828960623 0.0118294206"/>
     <parent link="r_palm"/>
     <child link="r_Mproximal"/>
     <axis xyz="0 0 1"/>
@@ -417,7 +422,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointM2" type="revolute">
-    <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.15" xyz="0 -0.0258749732 0"/>
     <parent link="r_Mproximal"/>
     <child link="r_Mmiddle"/>
     <axis xyz="0 0 1"/>
@@ -439,7 +445,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointM3" type="revolute">
-    <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.05" xyz="0 -0.0258749732 0"/>
     <parent link="r_Mmiddle"/>
     <child link="r_Mtip"/>
     <axis xyz="0 0 1"/>
@@ -478,7 +485,8 @@
   <!-- if sensor used, append respective sensor -->
   <!-- NICOL revolute joint -->
   <joint name="jointR1" type="revolute">
-    <origin rpy="0.06 -0.04 -2.92922802" xyz="-0.0011171786 0.0818708881 -0.0130285291"/>
+    <!-- <origin rpy="0.06 -0.04 -2.92922802" xyz="-0.0011171786 0.0818708881 -0.0130285291"/> -->
+     <origin rpy="0.0 -0.04 -2.9" xyz="-0.0011171786 0.0818708881 -0.0130285291"/>
     <parent link="r_palm"/>
     <child link="r_Rproximal"/>
     <axis xyz="0 0 1"/>
@@ -500,7 +508,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointR2" type="revolute">
-    <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.0" xyz="0 -0.0258749732 0"/>
     <parent link="r_Rproximal"/>
     <child link="r_Rmiddle"/>
     <axis xyz="0 0 1"/>
@@ -522,7 +531,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointR3" type="revolute">
-    <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.0" xyz="0 -0.0258749732 0"/>
     <parent link="r_Rmiddle"/>
     <child link="r_Rtip"/>
     <axis xyz="0 0 1"/>
@@ -561,7 +571,8 @@
   <!-- if sensor used, append respective sensor -->
   <!-- NICOL revolute joint -->
   <joint name="jointL1" type="revolute">
-    <origin rpy="0.14 -0.17  -2.95156384" xyz="-0.0031705239 0.0731417977 -0.0376310382"/>
+    <!-- <origin rpy="0.14 -0.17  -2.95156384" xyz="-0.0031705239 0.0731417977 -0.0376310382"/> -->
+     <origin rpy="0.2 -0.17  -2.9" xyz="-0.0031705239 0.0731417977 -0.0376310382"/>
     <parent link="r_palm"/>
     <child link="r_Lproximal"/>
     <axis xyz="0 0 1"/>
@@ -583,7 +594,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointL2" type="revolute">
-    <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 -0.015" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.1" xyz="0 -0.0258749732 0"/>
     <parent link="r_Lproximal"/>
     <child link="r_Lmiddle"/>
     <axis xyz="0 0 1"/>
@@ -605,7 +617,8 @@
   <!-- NICOL link  -->
   <!-- NICOL revolute joint -->
   <joint name="jointL3" type="revolute">
-    <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/>
+    <!-- <origin rpy="0 0 0" xyz="0 -0.0258749732 0"/> -->
+    <origin rpy="0 0 0.0" xyz="0 -0.0258749732 0"/>
     <parent link="r_Lmiddle"/>
     <child link="r_Ltip"/>
     <axis xyz="0 0 1"/>

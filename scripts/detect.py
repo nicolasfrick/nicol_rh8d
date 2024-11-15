@@ -584,8 +584,9 @@ class KeypointDetect(DetectBase):
 		if tf is not None:
 			info_dict.update(tf)
 
-		with open(fn, "w") as fw:
-			yaml.dump(info_dict, fw, default_flow_style=None, sort_keys=False)
+		if self.save_record and not self.test:
+			with open(fn, "w") as fw:
+				yaml.dump(info_dict, fw, default_flow_style=None, sort_keys=False)
 
 	def initRH8DFK(self, urdf_pth: str) -> list:
 		# init pybullet
@@ -1447,7 +1448,7 @@ class KeypointDetect(DetectBase):
 					self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 
 			# save drawings and original
-			if self.save_record and marker_det:
+			if self.save_record and not self.test and marker_det:
 				try:
 					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.data_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
 					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.data_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
