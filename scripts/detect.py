@@ -708,7 +708,7 @@ class KeypointDetect(DetectBase):
 		self.head_depth_frame_id = self.head_camera_name.replace('color', 'depth').replace('/', '_')
 
 		# sync callback
-		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=1000, slop=self.sync_slop)
+		self.sync = ApproximateTimeSynchronizer(self.subs, queue_size=10, slop=self.sync_slop)
 		self.sync.registerCallback(self.recCB)
 		for s in self.subs:
 			print("Subscribed to topic", s.topic)
