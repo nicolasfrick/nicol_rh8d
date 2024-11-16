@@ -1,0 +1,33 @@
+mono_joint:
+  wrist_abduction: 
+    input: 'joint7'
+    output: 'joint7'
+  wrist_flexion: 
+    input: 'joint8'
+    output: 'joint8'
+  thumb_abduction: 
+    input: 'jointT0'
+    output: 'jointT0'
+
+thumb:
+  input: ['jointT0', 'jointT1']
+  output: ['jointT1', 'jointT2', 'jointT3']
+  tool: 'joint_Tbumper'
+    
+finger:
+  index_flexion: 
+    input: 'jointI1'
+    output: ['jointI1', 'jointI2', 'jointI3']
+    tool: 'joint_Ibumper'
+  middle_flexion: 
+    input: 'jointM1'
+    output: ['jointM1', 'jointM2', 'jointM3']
+    tool: 'joint_Mbumper'
+  ring_flexion: 
+    input: 'jointL1R1'
+    output: ['jointR1', 'jointR2', 'jointR3']
+    tool: 'joint_Rbumper'
+  little_flexion: 
+    input: 'jointL1R1'
+    output: ['jointL1', 'jointL2', 'jointL3']
+    tool: 'joint_Lbumper'

@@ -1,9 +1,13 @@
 import matplotlib
 import numpy as np
+import pandas as pd
 from typing import Tuple
 from matplotlib import gridspec
 import matplotlib.pyplot as plt
+from util import *
 matplotlib.use('agg')
+
+PLT_CLRS = ['r', 'g', 'b', 'y', 'c']
 
 fig, ax_3d, ax_z, ax_y, ax_x = None,None,None,None,None
 euler_ax = []
@@ -151,5 +155,49 @@ class KeypointPlot():
 
 		return np.array(self.fig.canvas.renderer.buffer_rgba())
 	
+def plotTrainingData(file_pth: str) -> None:
+	matplotlib.use('TkAgg') 
+	data_pth = os.path.join(DATA_PTH, 'keypoint/train', file_pth)
+	df = pd.read_json(data_pth, orient='index')      
+
+	cols = ["cmd", "angle"]
+	if 'thumb' in file_pth and not 'mono' in file_pth:
+		cols = ["cmd1", "cmd2", "angle1", "angle2", "angle3"]
+	elif 'poly' in file_pth:
+		cols = ["cmd", "angle1", "angle2", "angle3"]
+
+	df[cols].plot(title=file_pth.split('/')[1].replace('.json', ''), grid=True, kind="line")
+	plt.xlabel("Index")
+	plt.ylabel("Values")
+	plt.grid()
+	plt.show()
+
+def plotTrainingDataLogScale(file_pth: str) -> None:
+	matplotlib.use('TkAgg') 
+	data_pth = os.path.join(DATA_PTH, 'keypoint/train', file_pth)
+	df = pd.read_json(data_pth, orient='index')      
+
+	cols = ["cmd", "angle"]
+	if 'thumb' in file_pth and not 'mono' in file_pth:
+		cols = ["cmd1", "cmd2", "angle1", "angle2", "angle3"]
+	elif 'poly' in file_pth:
+		cols = ["cmd", "angle1", "angle2", "angle3"]
+
+	fig, ax1 = plt.subplots()
+	# linear scale
+	ax1.plot(df.index, df[cols[1]], label=cols[1], color=PLT_CLRS[-1])
+	ax1.tick_params(axis='y', labelcolor=PLT_CLRS[-1])
+	# linear or log scale
+	for i, c in enumerate(cols):
+		ax = ax1.twinx()
+		ax.plot(df.index, df[c], label=c, color=PLT_CLRS[i%len(PLT_CLRS)])
+		if 'cmd' in c:
+			ax.set_yscale('log')
+		ax.tick_params(axis='y', labelcolor=PLT_CLRS[i%len(PLT_CLRS)])
+
+	plt.title("")
+	plt.grid()
+	plt.show()
+	
 if __name__ == "__main__":
-	pass
+	plotTrainingData('poly/thumb.json')

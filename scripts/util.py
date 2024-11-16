@@ -4,7 +4,7 @@ import cv2
 import yaml
 import subprocess
 import numpy as np
-# import pandas as pd	
+import pandas as pd
 from enum import Enum
 from typing import Tuple
 from cv2 import Rodrigues
@@ -307,8 +307,8 @@ def visTiff(pth: str) -> None:
    plt.show()
 
 def extract_number(filename: str) -> int:
-    match = re.search(r'(\d+)', filename)
-    return int(match.group(1)) if match else float('inf')
+	match = re.search(r'(\d+)', filename)
+	return int(match.group(1)) if match else float('inf')
 
 def img2Video(img_path: str, output_name: str, img_format: str='.jpg', video_format: str='mp4v', fps: float=30):
 	
@@ -332,17 +332,228 @@ def img2Video(img_path: str, output_name: str, img_format: str='.jpg', video_for
 
 	video.release()
 	cv2.destroyAllWindows()
+	
+def readDetectionDataset(filepth: str) -> dict:
+	"""Read data from json and return a dictionary with
+		 joints as keys and pd.DataFrame as values.
+	"""
+	df = pd.read_json(filepth, orient='index')                                           
+	df_dict = { joint: 
+		 					pd.DataFrame.from_dict(data, orient='index')	# we want integer index
+										.reset_index(drop=False).rename(columns={'index': 'old_index'}).astype({'old_index': int}).set_index('old_index')
+											for joint, data in df.iloc[0].items() }		
+	return df_dict
+	
+def  joinDetectionDataset(pth1: str, pth2: str, save_pth: str) -> None:
+	"""Read two dataframes of dictionaries and join them with a 
+	     common index  = [0, n1-1, n1, n2-1]
+	"""
+	df1 = readDetectionDataset(pth1)
+	df2 = readDetectionDataset(pth2)
+	df_dict_concat = {}
+
+	for joint, df_dict in df1.items():
+		n1 = df_dict.index.max() + 1
+		df2[joint].index = df2[joint].index + n1
+		df_dict_concat.update( {joint:  pd.concat([df_dict, df2[joint]])} )
+	
+	det_df = pd.DataFrame({joint: [df] for joint, df in df_dict_concat.items()})
+	det_df.to_json(save_pth, orient="index", indent=4)
+
+def joinDF(pth1: str, pth2: str, save_pth: str) -> None:
+	"""Read two dataframes and joint them with a
+		common index  = [0, n1-1, n1, n2-1]
+	"""
+	df1 = pd.read_json(pth1, orient='index')      
+	df2 = pd.read_json(pth2, orient='index')      
+
+	n1 = df1.index.max() + 1
+	df2.index = df2.index + n1
+	df_concat = pd.concat([df1, df2])
+
+	df_concat.to_json(save_pth, orient="index", indent=4)
+
+def joinTrainingData() -> None:
+	"""Create all joined datasets for training."""
+	data_pth = os.path.join(DATA_PTH, 'keypoint')
+
+	# join detections
+	joinDetectionDataset(os.path.join(data_pth,'11_11_13_30/detection_11_11_13_30_wp_0_to_2004.json'), 
+												os.path.join(data_pth,'11_15_10_46/detection_11_15_10_46_wp_2003_to_7387.json'),
+												os.path.join(data_pth, 'joined/detections_10013.json'))
+
+	joinDetectionDataset(os.path.join(data_pth,'11_11_13_30/kpts3D_11_11_13_30_wp_0_to_2004.json'), 
+												os.path.join(data_pth,'11_15_10_46/kpts3D_11_15_10_46_wp_2003_to_7387.json'),
+												os.path.join(data_pth, 'joined/keypoints_10013.json'))
+
+	# join tcp fk
+	joinDF(os.path.join(data_pth, '11_11_13_30/tcp_tf_11_11_13_30_wp_0_to_2004.json'),
+					os.path.join(data_pth, '11_15_10_46/tcp_tf_11_15_10_46_wp_2003_to_7387.json'),
+					os.path.join(data_pth, 'joined/tcp_tf_10013.json'))
+
+def trainingDataMono() -> None:
+	"""Load joined datasets and create training data for a 
+	 	mono joint. Find valid entries out of the detection frame.
+	"""
+	# data
+	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+
+	# net setup
+	config = loadNetConfig('mono_joint')
+	train_cols = ['cmd', 'dir', 'quat', 'angle']
+
+	# data excl. nan entries
+	for net, cfg in config.items():
+		# get detection
+		joint = cfg['output']
+		detection_df = detection_dct[joint]
+		# remove nan entries
+		df_filtered = detection_df.dropna(how='all')
+		valid_indices = df_filtered.index.to_list()
+
+		# create training data
+		train_df = pd.DataFrame(columns=train_cols)
+		for idx in valid_indices:
+			row = detection_df.iloc[idx]
+			data = {'cmd': row.loc['cmd'], 
+		   					'dir': row.loc['direction'], 
+							'quat': fk_df.iloc[idx]['quat'], 
+							'angle': row.loc['angle']}
+			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
+		train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/mono/' + net + '.json'), orient="index", indent=4)
+
+def trainingDataFinger() -> None:
+	"""Load joined datasets and create training data
+		for multiple joints. Find a common set of valid entries 
+		out of the detection frames.
+	"""
+	# load recordings
+	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+	
+	train_cols = ['cmd', 'dir', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
+	config = loadNetConfig('finger')
+
+	for net, cfg in config.items():
+		tool = cfg['tool']
+		out_joints = cfg['output']
+		print("Creating dataset for", net, "with input:", cfg['input'], "output:", out_joints, "tool:", tool)
+
+		# assuming 3 joints 
+		detection_df1 = detection_dct[out_joints[0]]
+		valid_detection_df1 = detection_df1.dropna(how='all')
+		inv_idxs1 = detection_df1.index.difference(valid_detection_df1.index).tolist()
+		print(out_joints[0], "has", len(inv_idxs1), "invalid indices")
+
+		detection_df2 = detection_dct[out_joints[1]]
+		valid_detection_df2 = detection_df2.dropna(how='all')
+		inv_idxs2 = detection_df2.index.difference(valid_detection_df2.index).tolist()
+		print(out_joints[1], "has", len(inv_idxs2), "invalid indices")
+
+		detection_df3 = detection_dct[out_joints[2]]
+		valid_detection_df3 = detection_df3.dropna(how='all')
+		inv_idxs3 = detection_df3.index.difference(valid_detection_df3.index).tolist()
+		print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
+
+		# find intersecting indices where entries are valid
+		common_indices = valid_detection_df1.index.intersection(valid_detection_df2.index).intersection(valid_detection_df3.index).to_list()
+		invalid_indices = detection_df1.index.difference(common_indices)
+		print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df1.index))
+
+		# create training data
+		train_df = pd.DataFrame(columns=train_cols)
+		for idx in common_indices:
+			row1 = detection_df1.iloc[idx]
+			row2 = detection_df2.iloc[idx]
+			row3 = detection_df3.iloc[idx]
+			assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd'])
+			assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction'])
+			data = { 'cmd': row1.loc['cmd'],
+							'dir': row1.loc['direction'],
+							'quat': fk_df.iloc[idx]['quat'], 
+							'angle1': row1.loc['angle'], 
+							'angle2': row2.loc['angle'], 
+							'angle3': row3.loc['angle'], 
+							'trans': keypoints_dct[tool]['trans'][idx]}
+			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
+		train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/poly/' + net + '.json'), orient="index", indent=4)
+		print()
+
+def trainingDataThumb() -> None:
+	"""Load joined datasets and create training data
+		 for multiple in and output joints. Find a common
+		 set of valid entries out of the detection frames.
+	"""
+	# load recordings
+	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+	
+	train_cols = ['cmd1', 'cmd2', 'dir1', 'dir2', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
+	config = loadNetConfig('thumb')
+
+	tool = config['tool']
+	in_joints = config['input']
+	out_joints = config['output']
+	print("Creating dataset for thumb", "with input:", in_joints, "output:", out_joints, "tool:", tool)
+	# base joint
+	detection_df0 = detection_dct[in_joints[0]] # in_joints[1] is direct actuator of out_joints
+	valid_detection_df0 = detection_df0.dropna(how='all')
+	inv_idxs0 = detection_df0.index.difference(valid_detection_df0.index).tolist()
+	print(in_joints[0], "has", len(inv_idxs0), "invalid indices")
+	
+	# assuming 3 joints 
+	detection_df1 = detection_dct[out_joints[0]]
+	valid_detection_df1 = detection_df1.dropna(how='all')
+	inv_idxs1 = detection_df1.index.difference(valid_detection_df1.index).tolist()
+	print(out_joints[0], "has", len(inv_idxs1), "invalid indices")
+	
+	detection_df2 = detection_dct[out_joints[1]]
+	valid_detection_df2 = detection_df2.dropna(how='all')
+	inv_idxs2 = detection_df2.index.difference(valid_detection_df2.index).tolist()
+	print(out_joints[1], "has", len(inv_idxs2), "invalid indices")
+	
+	detection_df3 = detection_dct[out_joints[2]]
+	valid_detection_df3 = detection_df3.dropna(how='all')
+	inv_idxs3 = detection_df3.index.difference(valid_detection_df3.index).tolist()
+	print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
+	
+	# find intersecting indices where entries are valid
+	common_indices = valid_detection_df0.index.intersection(valid_detection_df1.index).intersection(valid_detection_df2.index).intersection(valid_detection_df3.index).to_list()
+	invalid_indices = detection_df0.index.difference(common_indices)
+	print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df0.index))
+
+	# create training data
+	train_df = pd.DataFrame(columns=train_cols)
+	for idx in common_indices:
+		row0 = detection_df0.iloc[idx]
+		row1 = detection_df1.iloc[idx]
+		row2 = detection_df2.iloc[idx]
+		row3 = detection_df3.iloc[idx]
+		assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd']) # same actuator
+		assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction']) # same actuator
+		data = { 'cmd1': row0.loc['cmd'],
+						'cmd2': row1.loc['cmd'],
+						'dir1': row0.loc['direction'],
+						'dir2': row1.loc['direction'],
+						'quat': fk_df.iloc[idx]['quat'], 
+						'angle1': row1.loc['angle'], 
+						'angle2': row2.loc['angle'], 
+						'angle3': row3.loc['angle'], 
+						'trans': keypoints_dct[tool]['trans'][idx]}
+		train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
+	train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/poly/thumb.json'), orient="index", indent=4)
 
 if __name__ == "__main__":
-	# cv2.namedWindow("gs", cv2.WINDOW_NORMAL)
-	# img = cv2.imread(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/test_img.jpg'), cv2.IMREAD_COLOR)
-	# img = greenScreen(img)
-	# cv2.imshow("gs", img)
-	# while 1:
-	# 	if cv2.waitKey(1) == ord('q'):
-	# 		break
-	# cv2.destroyAllWindows()
-
 	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))
 	
-	img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
+	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
+
+	# trainingDataMono()
+	# trainingDataFinger()
+	trainingDataThumb()
