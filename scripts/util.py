@@ -38,8 +38,11 @@ KEYPT_TOP_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'top_cam')
 KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
 
 # training
-TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'train')
+TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint/train')
 MLP_LOG_PTH = os.path.join(TRAIN_PTH, 'mlp/log')
+MONO_TRAIN_COLS = ['cmd', 'dir', 'quat', 'angle']
+FINGER_TRAIN_COLS = ['cmd', 'dir', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
+THUMB_TRAIN_COLS = ['cmd1', 'cmd2', 'dir1', 'dir2', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
 	
 def mkDirs() -> None:
 	if not os.path.exists(REC_DIR):
@@ -84,6 +87,17 @@ class RotTypes(Enum):
 	EULER='xyz_euler'
 	MAT='matrix'
 	QUAT='quaternions'
+	
+class Normalization(Enum):
+	NONE='none'
+	Z_SCORE='z_score'
+	MINMAX_POS='minmax_pos'
+	MINMAX_CENTERED='minmax_centered'
+NORMALIZATION_MAP={  Normalization.NONE.value : Normalization.NONE, 
+	                                                Normalization.Z_SCORE.value : Normalization.Z_SCORE, 
+													Normalization.MINMAX_POS.value : Normalization.MINMAX_POS, 
+													Normalization.MINMAX_CENTERED.value : Normalization.MINMAX_CENTERED, 
+												}
 
 def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.ndarray:
 	if rot_type == out_type:
@@ -391,7 +405,7 @@ def joinTrainingData() -> None:
 					os.path.join(data_pth, '11_15_10_46/tcp_tf_11_15_10_46_wp_2003_to_7387.json'),
 					os.path.join(data_pth, 'joined/tcp_tf_10013.json'))
 
-def trainingDataMono() -> None:
+def trainingDataMono(folder: str) -> None:
 	"""Load joined datasets and create training data for a 
 	 	mono joint. Find valid entries out of the detection frame.
 	"""
@@ -402,7 +416,6 @@ def trainingDataMono() -> None:
 
 	# net setup
 	config = loadNetConfig('mono_joint')
-	train_cols = ['cmd', 'dir', 'quat', 'angle']
 
 	# data excl. nan entries
 	for net, cfg in config.items():
@@ -414,7 +427,7 @@ def trainingDataMono() -> None:
 		valid_indices = df_filtered.index.to_list()
 
 		# create training data
-		train_df = pd.DataFrame(columns=train_cols)
+		train_df = pd.DataFrame(columns=MONO_TRAIN_COLS)
 		for idx in valid_indices:
 			row = detection_df.iloc[idx]
 			data = {'cmd': row.loc['cmd'], 
@@ -422,9 +435,9 @@ def trainingDataMono() -> None:
 							'quat': fk_df.iloc[idx]['quat'], 
 							'angle': row.loc['angle']}
 			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
-		train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/mono/' + net + '.json'), orient="index", indent=4)
+		train_df.to_json(os.path.join(TRAIN_PTH, folder, net + '_mono.json'), orient="index", indent=4)
 
-def trainingDataFinger() -> None:
+def trainingDataFinger(folder: str) -> None:
 	"""Load joined datasets and create training data
 		for multiple joints. Find a common set of valid entries 
 		out of the detection frames.
@@ -435,7 +448,6 @@ def trainingDataFinger() -> None:
 	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
 	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
 	
-	train_cols = ['cmd', 'dir', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
 	config = loadNetConfig('finger')
 
 	for net, cfg in config.items():
@@ -465,7 +477,7 @@ def trainingDataFinger() -> None:
 		print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df1.index))
 
 		# create training data
-		train_df = pd.DataFrame(columns=train_cols)
+		train_df = pd.DataFrame(columns=FINGER_TRAIN_COLS)
 		for idx in common_indices:
 			row1 = detection_df1.iloc[idx]
 			row2 = detection_df2.iloc[idx]
@@ -480,10 +492,10 @@ def trainingDataFinger() -> None:
 							'angle3': row3.loc['angle'], 
 							'trans': keypoints_dct[tool]['trans'][idx]}
 			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
-		train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/poly/' + net + '.json'), orient="index", indent=4)
+		train_df.to_json(os.path.join(TRAIN_PTH, folder, net + '_poly.json'), orient="index", indent=4)
 		print()
 
-def trainingDataThumb() -> None:
+def trainingDataThumb(folder: str) -> None:
 	"""Load joined datasets and create training data
 		 for multiple in and output joints. Find a common
 		 set of valid entries out of the detection frames.
@@ -494,7 +506,6 @@ def trainingDataThumb() -> None:
 	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
 	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
 	
-	train_cols = ['cmd1', 'cmd2', 'dir1', 'dir2', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
 	config = loadNetConfig('thumb')
 
 	tool = config['tool']
@@ -529,7 +540,7 @@ def trainingDataThumb() -> None:
 	print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df0.index))
 
 	# create training data
-	train_df = pd.DataFrame(columns=train_cols)
+	train_df = pd.DataFrame(columns=THUMB_TRAIN_COLS)
 	for idx in common_indices:
 		row0 = detection_df0.iloc[idx]
 		row1 = detection_df1.iloc[idx]
@@ -547,13 +558,13 @@ def trainingDataThumb() -> None:
 						'angle3': row3.loc['angle'], 
 						'trans': keypoints_dct[tool]['trans'][idx]}
 		train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
-	train_df.to_json(os.path.join(DATA_PTH, 'keypoint/train/poly/thumb.json'), orient="index", indent=4)
+	train_df.to_json(os.path.join(TRAIN_PTH, folder, 'thumb_flexion_poly.json'), orient="index", indent=4)
 
 if __name__ == "__main__":
 	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))
 	
 	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
 
-	# trainingDataMono()
-	# trainingDataFinger()
-	trainingDataThumb()
+	# trainingDataMono('10013')
+	# trainingDataFinger('10013')
+	trainingDataThumb('10013')

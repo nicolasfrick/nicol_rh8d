@@ -200,4 +200,4 @@ def plotTrainingDataLogScale(file_pth: str) -> None:
 	plt.show()
 	
 if __name__ == "__main__":
-	plotTrainingData('poly/thumb.json')
+	plotTrainingData('thumb_flexion_poly.json')
