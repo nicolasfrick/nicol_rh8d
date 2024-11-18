@@ -5,7 +5,6 @@ inventor/lockfile.lck
 *.code-workspace
 .vscode
 *log
-datasets/detection/keypoint/11_15_10_46
-datasets/detection/keypoint/11_11_13_30
+datasets/detection/keypoint/detections
 datasets/detection/keypoint/joined
 datasets/detection/keypoint/train
