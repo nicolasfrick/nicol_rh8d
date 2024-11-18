@@ -106,6 +106,7 @@ class TrainingData():
 	def prepare(self, df: pd.DataFrame, cols: list) -> None:
 		# load and normalize data
 		self.loadData(df, cols)
+		print()
 		print( "Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,", \
 					len(self.y_angles.keys()), "target angle data frames, one input orientation and target translation data frame.\n")
 		
@@ -387,7 +388,7 @@ class Trainer():
 							) -> None:
 		
 		self.epochs = epochs
-		self.model_type = model_type
+		self.ModelType = model_type
 		self.input_dim = input_dim
 		self.output_dim = output_dim
 		self.num_layers = num_layers
@@ -400,20 +401,37 @@ class Trainer():
 		self.y_test_tensor = y_test_tensor
 		self.y_val_tensor = y_val_tensor
 
-		print(f"Initialized Trainer. Consider running:  tensorboard --logdir={MLP_LOG_PTH}")
+		print(f"Initialized Trainer. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}")
 
-	def objective(self, trial: optuna.Trial) -> None:
+	def objective(self, trial: optuna.Trial) -> Any:
 		# suggest hyperparameters
-		hidden_dim = trial.suggest_int('hidden_dim', self.hidden_dim[self.LOW], self.hidden_dim[self.HIGH], step=self.hidden_dim[self.STEP])
-		num_layers = trial.suggest_int('num_layers', self.num_layers[self.LOW], self.num_layers[self.HIGH], step=self.num_layers[self.STEP])
-		learning_rate = trial.suggest_float('learning_rate', self.learning_rate[self.LOW], self.learning_rate[self.HIGH])
+		hidden_dim = trial.suggest_int('hidden_dim', 
+								 									  self.hidden_dim[self.LOW], 
+																	  self.hidden_dim[self.HIGH], 
+																	  step=self.hidden_dim[self.STEP],
+																	  )
+		num_layers = trial.suggest_int('num_layers', 
+								 									  self.num_layers[self.LOW], 
+																	  self.num_layers[self.HIGH], 
+																	  step=self.num_layers[self.STEP],
+																	  )
+		learning_rate = trial.suggest_float('learning_rate', 
+									  										 self.learning_rate[self.LOW], 
+																			 self.learning_rate[self.HIGH],
+																			 )
 		
 		# instantiate the model and move to device
-		model = self.model_type(input_dim=self.input_dim, hidden_dim=hidden_dim, output_dim=self.output_dim, num_layers=num_layers).to(DEVICE)
+		model = self.ModelType( input_dim=self.input_dim, 
+						  								 hidden_dim=hidden_dim, 
+														 output_dim=self.output_dim, 
+														 num_layers=num_layers,
+														 ).to(DEVICE)
 		
 		# Criterion and Optimizer
 		criterion = nn.MSELoss()
-		optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+		optimizer = optim.Adam(model.parameters(),
+						 								 lr=learning_rate,
+						 								)
 		
 		# TensorBoard logging setup
 		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
@@ -441,6 +459,25 @@ class Trainer():
 		
 		writer.close()
 		return val_loss
+	
+	def test(self, trial: optuna.Trial, model_pth: str) -> Any:
+		# load model to DEVICE
+		model = self.ModelType(input_dim=self.input_dim,
+																	hidden_dim=trial.params['hidden_dim'],
+																	output_dim=self.output_dim,
+																	num_layers=trial.params['num_layers'],
+																	).to(DEVICE)
+
+		# load model weights 
+		model.load_state_dict(torch.load(model_pth))
+
+		# evaluate on the test set
+		model.eval()
+		with torch.no_grad():
+			test_outputs = model(self.X_test_tensor)
+			test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
+
+		return test_loss
 
 if __name__ == '__main__':
 	pattern = os.path.join(DATA_PTH, 'keypoint/train/10013', f'*mono*')
@@ -453,13 +490,13 @@ if __name__ == '__main__':
 										y_train_tensor=td.y_train_tensor,
 										y_test_tensor=td.y_test_tensor,
 										y_val_tensor=td.y_val_tensor,
-										epochs=10,
+										epochs=100,
 										model_type=MLP,
 										input_dim=td.num_features,
 										output_dim=td.num_targets,
-										num_layers=(6,10,1),
-										hidden_dim=(1,3,1),
-										learning_rate=(1e-4, 1e-2, 1e-3),
+										num_layers=(1,31,2),
+										hidden_dim=(1,20,1),
+										learning_rate=(1e-4, 1e-2),
 									)
 	
 	# run optuna optimization
@@ -469,7 +506,7 @@ if __name__ == '__main__':
 	# Retrieve the best trial
 	print('Best trial:')
 	trial = study.best_trial
-	print('  Value: ', trial.value)
-	print('  Params: ')
+	print('Value: ', trial.value)
+	print('Params: ')
 	for key, value in trial.params.items():
 		print(f'{key}: {value}')
