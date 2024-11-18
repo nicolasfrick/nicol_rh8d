@@ -12,13 +12,13 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Any
 from util import *
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class DataLoader():
+class TrainingData():
 	"""
 		Load training data and apply normalization.
 		Split normalized data and move to DEVICE.
@@ -116,12 +116,13 @@ class DataLoader():
 		print("Loaded features", self.feature_names, "and targets", self.target_names, "to device:", DEVICE)
 		print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.test_size)}%),")
 		print(f"{len(self.X_test_tensor)} test ({100*(1-self.test_size)*(self.validation_size)}%) and {len(self.X_val_tensor)} validation ({100*(self.test_size)*(self.validation_size)}%) samples")
+		print()
 
 	def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 		"""Stack normalized data to a feature vector X and
 			  a target vector y.
 		"""
-		# quaternions first
+		# quaternions first, always present
 		X = self.X_quats.copy()
 		self.feature_names = ["x", "y", "z", "w"]
 		# stack commands
@@ -133,13 +134,21 @@ class DataLoader():
 			self.feature_names.append(name)
 			X = np.hstack([X, X_dir.reshape(-1, 1)])
 
-		# translation first
-		y = self.y_trans.copy()
-		self.target_names =  ["x", "y", "z"]
+		# translation first if present
+		y = None
+		if self.y_trans is not None:
+			self.target_names =  ["x", "y", "z"]
+			y = self.y_trans.copy()
 		# stack angles
 		for name, y_angle in self.y_angles.items():
-			self.target_names.append(name)
-			y = np.hstack([y, y_angle.reshape(-1, 1)])
+			if y is None:
+				# no trans, angle1 is 1st elmt
+				self.target_names =  [name]
+				y = y_angle.copy()
+				y = y.reshape(-1, 1)
+			else:
+				self.target_names.append(name)
+				y = np.hstack([y, y_angle.reshape(-1, 1)])
 
 		self.num_features = len(self.feature_names)
 		self.num_targets = len(self.target_names)
@@ -157,14 +166,14 @@ class DataLoader():
 		X_test, X_val, y_test, y_val = train_test_split(X_tmp, y_tmp, test_size=self.validation_size, random_state=self.random_state)
 
 		# map features to tensors and move to device
-		self.X_train_tensor = torch.from_numpy(X_train).to(DEVICE)
-		self.X_test_tensor = torch.from_numpy(X_test).to(DEVICE)
-		self.X_val_tensor = torch.from_numpy(X_val).to(DEVICE)
+		self.X_train_tensor = torch.from_numpy(X_train).float().to(DEVICE)
+		self.X_test_tensor = torch.from_numpy(X_test).float().to(DEVICE)
+		self.X_val_tensor = torch.from_numpy(X_val).float().to(DEVICE)
 
 		# map targets to tensors and move to device
-		self.y_train_tensor = torch.from_numpy(y_train).to(DEVICE)
-		self.y_test_tensor = torch.from_numpy(y_test).to(DEVICE)
-		self.y_val_tensor = torch.from_numpy(y_val).to(DEVICE)
+		self.y_train_tensor = torch.from_numpy(y_train).float().to(DEVICE)
+		self.y_test_tensor = torch.from_numpy(y_test).float().to(DEVICE)
+		self.y_val_tensor = torch.from_numpy(y_val).float().to(DEVICE)
 
 	def loadData(self, df: pd.DataFrame, cols: list) -> None:
 		"""Fill datastructures with traning data, possibly apply normalization.
@@ -292,7 +301,26 @@ class DataLoader():
 		return scaler
 		
 class MLP(nn.Module):
-	def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+	"""
+		Create a standard feedforward net.
+		
+		@property input_dim
+		@type int
+		@property hidden_dim
+		@type int
+		@property output_dim
+		@type int
+		@property num_layers
+		@type int
+
+	"""
+	def __init__(self, 
+			  				input_dim: int, 
+							hidden_dim: int, 
+							output_dim: int, 
+							num_layers: int,
+							) -> None:
+		
 		super(MLP, self).__init__()
 		layers = []
 		layers.append(nn.Linear(input_dim, hidden_dim))
@@ -307,19 +335,81 @@ class MLP(nn.Module):
 		return self.model(x)
 	
 class Trainer():
+	"""Training class for MLP task
 
-	def __init__(self):
-		pass
+			@param X_train_tensor
+			@type np.ndarray
+			@param X_test_tensor
+			@type np.ndarray
+			@param X_val_tensor
+			@type np.ndarray
+			@param y_train_tensor
+			@type np.ndarray
+			@param y_test_tensor
+			@type np.ndarray
+			@param y_val_tensor
+			@type np.ndarray
+			@param epochs
+			@type int
+			@param model_type
+			@type Any
+			@param input_dim
+			@type int
+			@param output_dim
+			@type int
+			@param num_layers
+			@type Tuple
+			@param hidden_dim
+			@type Tuple
+			@param learning_rate
+			@type Tuple
+	
+	"""
 
-	# Objective function for Optuna
-	def objective(self, trial):
-		# Suggest hyperparameters
-		hidden_dim = trial.suggest_int('hidden_dim', 32, 512, step=32)
-		num_layers = trial.suggest_int('num_layers', 1, 3)
-		learning_rate = trial.suggest_loguniform('learning_rate', 1e-4, 1e-2)
+	LOW = 0
+	HIGH = 1
+	STEP = 2
+
+	def __init__(self,
+							X_train_tensor: np.ndarray,
+							X_test_tensor: np.ndarray,
+							X_val_tensor: np.ndarray,
+							y_train_tensor: np.ndarray,
+							y_test_tensor: np.ndarray,
+							y_val_tensor: np.ndarray,
+			  				epochs: Optional[int]=50,
+			  				model_type: Optional[Any]=MLP,
+							input_dim: Optional[int]=6,
+							output_dim: Optional[int]=6,
+			  				num_layers: Optional[Tuple]=(1, 10, 1),
+							hidden_dim: Optional[Tuple]=(1, 32, 2),
+							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
+							) -> None:
 		
-		# Instantiate the model and move to device
-		model = MLP(input_dim=2, hidden_dim=hidden_dim, output_dim=6, num_layers=num_layers).to(DEVICE)
+		self.epochs = epochs
+		self.model_type = model_type
+		self.input_dim = input_dim
+		self.output_dim = output_dim
+		self.num_layers = num_layers
+		self.hidden_dim = hidden_dim
+		self.learning_rate = learning_rate
+		self.X_train_tensor = X_train_tensor
+		self.X_test_tensor = X_test_tensor
+		self.X_val_tensor = X_val_tensor
+		self.y_train_tensor = y_train_tensor
+		self.y_test_tensor = y_test_tensor
+		self.y_val_tensor = y_val_tensor
+
+		print(f"Initialized Trainer. Consider running:  tensorboard --logdir={MLP_LOG_PTH}")
+
+	def objective(self, trial: optuna.Trial) -> None:
+		# suggest hyperparameters
+		hidden_dim = trial.suggest_int('hidden_dim', self.hidden_dim[self.LOW], self.hidden_dim[self.HIGH], step=self.hidden_dim[self.STEP])
+		num_layers = trial.suggest_int('num_layers', self.num_layers[self.LOW], self.num_layers[self.HIGH], step=self.num_layers[self.STEP])
+		learning_rate = trial.suggest_float('learning_rate', self.learning_rate[self.LOW], self.learning_rate[self.HIGH])
+		
+		# instantiate the model and move to device
+		model = self.model_type(input_dim=self.input_dim, hidden_dim=hidden_dim, output_dim=self.output_dim, num_layers=num_layers).to(DEVICE)
 		
 		# Criterion and Optimizer
 		criterion = nn.MSELoss()
@@ -331,11 +421,11 @@ class Trainer():
 		
 		# Training loop
 		model.train()
-		epochs = 50
+		epochs = self.epochs
 		for epoch in range(epochs):
 			optimizer.zero_grad()
-			outputs = model(X_train_tensor)
-			loss = criterion(outputs, y_train_tensor)
+			outputs = model(self.X_train_tensor)
+			loss = criterion(outputs, self.y_train_tensor)
 			loss.backward()
 			optimizer.step()
 			
@@ -345,27 +435,41 @@ class Trainer():
 			# Validation
 			model.eval()
 			with torch.no_grad():
-				val_outputs = model(X_val_tensor)
-				val_loss = criterion(val_outputs, y_val_tensor).item()
+				val_outputs = model(self.X_val_tensor)
+				val_loss = criterion(val_outputs, self.y_val_tensor).item()
 				writer.add_scalar('Loss/val', val_loss, epoch)
 		
 		writer.close()
 		return val_loss
 
-	def run(self):
-		# Run Optuna optimization
-		study = optuna.create_study(direction='minimize')
-		study.optimize(self.objective, n_trials=2000)
-
-		# Retrieve the best trial
-		print('Best trial:')
-		trial = study.best_trial
-		print('  Value: ', trial.value)
-		print('  Params: ')
-		for key, value in trial.params.items():
-			print(f'    {key}: {value}')
-
 if __name__ == '__main__':
-	pattern = os.path.join(DATA_PTH, 'keypoint/train/10013', f'*poly*')
+	pattern = os.path.join(DATA_PTH, 'keypoint/train/10013', f'*mono*')
 	data_files = glob.glob(pattern, recursive=False)
-	dl = DataLoader(data_file=data_files[0])
+
+	td = TrainingData(data_file=data_files[0])
+	trainer = Trainer(  X_train_tensor=td.X_train_tensor,
+										X_test_tensor=td.X_test_tensor,
+										X_val_tensor=td.X_val_tensor,
+										y_train_tensor=td.y_train_tensor,
+										y_test_tensor=td.y_test_tensor,
+										y_val_tensor=td.y_val_tensor,
+										epochs=10,
+										model_type=MLP,
+										input_dim=td.num_features,
+										output_dim=td.num_targets,
+										num_layers=(6,10,1),
+										hidden_dim=(1,3,1),
+										learning_rate=(1e-4, 1e-2, 1e-3),
+									)
+	
+	# run optuna optimization
+	study = optuna.create_study(direction='minimize')
+	study.optimize(trainer.objective, n_trials=2000, show_progress_bar=True, )
+
+	# Retrieve the best trial
+	print('Best trial:')
+	trial = study.best_trial
+	print('  Value: ', trial.value)
+	print('  Params: ')
+	for key, value in trial.params.items():
+		print(f'{key}: {value}')
