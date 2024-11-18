@@ -447,6 +447,7 @@ class KeypointDetect(DetectBase):
 		self.subs = []
 		self.topic_wait_secs = topic_wait_secs
 		self.vis_ros_tf = vis_ros_tf
+		self.waypoint_start_idx = waypoint_start_idx
 
 		# message buffers
 		self.det_img_buffer = deque(maxlen=self.filter_iters)
@@ -488,9 +489,7 @@ class KeypointDetect(DetectBase):
 		# load waypoints
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "datasets/detection/keypoint/waypoints", waypoint_set)
 		self.waypoint_df = pd.read_json(fl, orient='index')
-		if waypoint_start_idx > 0:
-			self.waypoint_df = self.waypoint_df.iloc[waypoint_start_idx :]
-			
+
 		# load camera extrinsics
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camera_poses.yaml")
 		with open(fl, 'r') as fr:
@@ -1750,8 +1749,9 @@ class KeypointDetect(DetectBase):
 				if not self.self_reset_angles:
 					if not self.initAngles():
 						return
-				
-				for idx in self.waypoint_df.index.tolist():
+
+				idx = self.waypoint_start_idx
+				while idx < self.waypoint_df.last_valid_index():
 					if not rospy.is_shutdown():
 						# get waypoint
 						waypoint = self.waypoint_df.iloc[idx]
@@ -1792,6 +1792,8 @@ class KeypointDetect(DetectBase):
 
 						if idx % 10 == 0:
 							self.writeData()
+
+						idx += 1
 
 		except None as e:
 			rospy.logerr(e)
