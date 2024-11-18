@@ -1,9 +1,11 @@
 import os
 import re
 import cv2
+import glob
 import yaml
 import subprocess
 import numpy as np
+import tifffile as tiff
 import pandas as pd
 from enum import Enum
 from typing import Tuple
@@ -22,8 +24,8 @@ KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
 KEYPT_FK_PTH = os.path.join(DATA_PTH, 'keypoint/kptsFK_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
-# REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
-REC_DIR = '/data/rh8d_dataset'
+REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+# REC_DIR = '/data/rh8d_dataset'
 # quadrature encoder
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
 QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
@@ -94,7 +96,7 @@ class Normalization(Enum):
 	MINMAX_POS='minmax_pos'
 	MINMAX_CENTERED='minmax_centered'
 NORMALIZATION_MAP={  Normalization.NONE.value : Normalization.NONE, 
-	                                                Normalization.Z_SCORE.value : Normalization.Z_SCORE, 
+													Normalization.Z_SCORE.value : Normalization.Z_SCORE, 
 													Normalization.MINMAX_POS.value : Normalization.MINMAX_POS, 
 													Normalization.MINMAX_CENTERED.value : Normalization.MINMAX_CENTERED, 
 												}
@@ -320,6 +322,31 @@ def visTiff(pth: str) -> None:
    plt.axis('off')
    plt.show()
 
+def compressTiff(pth: str) -> None:
+	# read tiff
+	image_array = tiff.imread(pth)
+	split = pth.split('/')
+	filename = split[-1].replace(".tiff", "")
+	save_pth = split[:-1]
+	save_pth = "/".join(save_pth)
+	# lossless compression and save np array
+	np.savez_compressed(os.path.join(save_pth, filename + '.npz'), array=image_array)
+
+def visCompressedPC(pth: str) -> None:
+	data = np.load(pth)
+	image_array = data['array']
+	cv2.imshow('PC vis', image_array)
+	cv2.waitKey(0)
+	cv2.destroyAllWindows()
+
+def compressTiffFromFolder(folder_pth: str) -> None:
+	pattern = os.path.join(folder_pth, f'*.tiff*')
+	data_files = glob.glob(pattern, recursive=False)
+	for file in data_files:
+		print("Compressing", file)
+		compressTiff(file)
+	print("Compressed", len(data_files), "tiff images")
+
 def extract_number(filename: str) -> int:
 	match = re.search(r'(\d+)', filename)
 	return int(match.group(1)) if match else float('inf')
@@ -360,7 +387,7 @@ def readDetectionDataset(filepth: str) -> dict:
 	
 def  joinDetectionDataset(pth1: str, pth2: str, save_pth: str) -> None:
 	"""Read two dataframes of dictionaries and join them with a 
-	     common index  = [0, n1-1, n1, n2-1]
+		 common index  = [0, n1-1, n1, n2-1]
 	"""
 	df1 = readDetectionDataset(pth1)
 	df2 = readDetectionDataset(pth2)
@@ -561,10 +588,13 @@ def trainingDataThumb(folder: str) -> None:
 	train_df.to_json(os.path.join(TRAIN_PTH, folder, 'thumb_flexion_poly.json'), orient="index", indent=4)
 
 if __name__ == "__main__":
-	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/top_cam/20.tiff"))
+	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
+	# compressTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
+	# visCompressedPC(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.npz"))
+	compressTiffFromFolder(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam"))
 	
 	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
 
 	# trainingDataMono('10013')
 	# trainingDataFinger('10013')
-	trainingDataThumb('10013')
+	# trainingDataThumb('10013')
