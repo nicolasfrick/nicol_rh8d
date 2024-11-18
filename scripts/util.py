@@ -347,6 +347,22 @@ def compressTiffFromFolder(folder_pth: str) -> None:
 		compressTiff(file)
 	print("Compressed", len(data_files), "tiff images")
 
+def mvImgs(folder_pth: str, file_type: str, increment: int):
+	# find all files with type file_type
+    files = [f for f in os.listdir(folder_pth) if f.endswith(file_type)]
+    # revert order, assuming file names are integers
+    files.sort(key=lambda x: int(os.path.splitext(x)[0]), reverse=True)
+    
+    for file in files:
+        # extract the numeric part
+        current_num = int(os.path.splitext(file)[0])
+        # increment filename
+        new_filename = f"{current_num+increment}{file_type}"
+        
+        # rename
+        os.rename(os.path.join(folder_pth, file), os.path.join(folder_pth, new_filename))
+        print(f"Renamed {file} to {new_filename}")
+
 def extract_number(filename: str) -> int:
 	match = re.search(r'(\d+)', filename)
 	return int(match.group(1)) if match else float('inf')
@@ -591,7 +607,8 @@ if __name__ == "__main__":
 	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# compressTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# visCompressedPC(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.npz"))
-	compressTiffFromFolder(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam"))
+	# compressTiffFromFolder(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam"))
+	mvImgs('/home/nic/rh8d_dataset/keypoint_17_18_21/head_cam', '.jpg', 100)
 	
 	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
 
