@@ -166,10 +166,18 @@ def plotTrainingData(file_pth: str) -> None:
 	elif 'poly' in file_pth:
 		cols = ["cmd", "angle1", "angle2", "angle3"]
 
-	df[cols].plot(title=file_pth.split('/')[1].replace('.json', ''), grid=True, kind="line")
+	fig, ax = plt.subplots()
+	df[cols].plot(title=file_pth.split('/')[1].replace('.json', ''), ax=ax, grid=True, kind="line", marker='.', markersize=4)
+	
+	# secondary y-axis
+	ax2 = ax.twinx()
+	ax2.set_ylabel('Mapped actuator range')
+	ax2.set_yticks(np.linspace(-np.pi, np.pi, endpoint=True, num=10))
+	# ax2.set_yticklabels(['20%', '40%', '60%', '80%', '100%'])
+
 	plt.xlabel("Index")
 	plt.ylabel("Values")
-	plt.grid()
+	# plt.grid()
 	plt.show()
 
 def plotTrainingDataLogScale(file_pth: str) -> None:
@@ -200,4 +208,4 @@ def plotTrainingDataLogScale(file_pth: str) -> None:
 	plt.show()
 	
 if __name__ == "__main__":
-	plotTrainingData('thumb_flexion_poly.json')
+	plotTrainingData('10013/index_flexion_poly.json')

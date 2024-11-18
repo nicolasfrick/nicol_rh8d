@@ -111,7 +111,6 @@ class DataLoader():
 		
 		# stack training data
 		(X, y) = self.stackData()
-
 		# split and move data
 		self.splitData(X, y)
 		print("Loaded features", self.feature_names, "and targets", self.target_names, "to device:", DEVICE)
