@@ -24,8 +24,8 @@ KEYPT_3D_PTH = os.path.join(DATA_PTH, 'keypoint/kpts3D_' + dt_now + '.json')
 KEYPT_FK_PTH = os.path.join(DATA_PTH, 'keypoint/kptsFK_' + dt_now + '.json')
 # image records
 JPG_QUALITY = 60
-# REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
-REC_DIR = '/data/rh8d_dataset'
+REC_DIR = os.path.join(os.path.expanduser('~'), 'rh8d_dataset')
+# REC_DIR = '/data/rh8d_dataset'
 # quadrature encoder
 QDEC_REC_DIR = os.path.join(REC_DIR, 'qdec')
 QDEC_ORIG_REC_DIR = os.path.join(QDEC_REC_DIR, 'orig')
@@ -342,10 +342,14 @@ def visCompressedPC(pth: str) -> None:
 def compressTiffFromFolder(folder_pth: str) -> None:
 	pattern = os.path.join(folder_pth, f'*.tiff*')
 	data_files = glob.glob(pattern, recursive=False)
+	cnt_all = len(data_files)
+	cnt = 0
 	for file in data_files:
-		print("Compressing", file)
+		if cnt % 100 == 0:
+			print("Compressing", cnt, "of", cnt_all, " ", file)
 		compressTiff(file)
-	print("Compressed", len(data_files), "tiff images")
+		cnt += 1
+	print("Compressed", cnt_all, "tiff images, clean with: rm *.tiff")
 
 def mvImgs(folder_pth: str, file_type: str, increment: int):
 	# find all files with type file_type
@@ -607,8 +611,8 @@ if __name__ == "__main__":
 	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# compressTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# visCompressedPC(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.npz"))
-	# compressTiffFromFolder(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam"))
-	mvImgs('/home/nic/rh8d_dataset/keypoint_17_18_21/head_cam', '.jpg', 100)
+	compressTiffFromFolder('/data/rh8d_dataset/keypoint_test/orig')
+	# mvImgs('/data/rh8d_dataset/keypoint_11_11_13_30_wp_0_to_2004_no_add_imgs/orig', '.jpg', 100)
 	
 	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
 
