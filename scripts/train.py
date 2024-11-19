@@ -14,6 +14,8 @@ from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from typing import Optional, Union, Tuple, Any
+from send2trash import send2trash
+from send2trash.plat_other import HOMETRASH_B
 from util import *
 
 # torch at cuda or cpu
@@ -65,10 +67,9 @@ class TrainingData():
 		self.file_name =  split[-1]
 		self.folder_pth = "/".join(split[: -1])
 		self.name = self.file_name.replace('.json', '')
-		self.scaler_pth = self.folder_pth + "/" + self.name + "_scalers/"
+		self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name)
 		if not os.path.exists(self.scaler_pth):
-			os.mkdir(self.scaler_pth)
-			print("Making directory", self.scaler_pth)
+			os.makedirs(self.scaler_pth, exist_ok=True) 
 
 		# dataframe
 		data_pth = os.path.join(DATA_PTH, 'keypoint/train', data_file)
@@ -117,8 +118,12 @@ class TrainingData():
 		self.splitData(X, y)
 
 		print("Loaded features", self.feature_names, "and targets", self.target_names, "to device:", DEVICE)
-		print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.test_size)}%),")
-		print(f"{len(self.X_test_tensor)} test ({100*(1-self.test_size)*(self.validation_size)}%) and {len(self.X_val_tensor)} validation ({100*(self.test_size)*(self.validation_size)}%) samples")
+		pct_train = 100*(1-self.test_size)
+		pct_test = 100*(self.test_size)
+		pct_val = self.validation_size * pct_test
+		pct_test -= pct_val
+		print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({pct_train}%),")
+		print(f"{len(self.X_test_tensor)} test ({pct_test}%) and {len(self.X_val_tensor)} validation ({pct_val}%) samples")
 		print()
 
 	def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -290,13 +295,13 @@ class TrainingData():
 	
 	def saveScalers(self) -> None:
 		for name, scaler in self.X_cmds_scalers.items():
-			pth = self.scaler_pth + name + ".pkl"
+			pth = os.path.join(self.scaler_pth, name + ".pkl")
 			joblib.dump(scaler, pth)
 		for name, scaler in self.y_angles_scalers.items():
-			pth = self.scaler_pth + name + ".pkl"
+			pth = os.path.join(self.scaler_pth, name + ".pkl")
 			joblib.dump(scaler, pth)
 		for name, scaler in self.y_trans_scalers.items():
-			pth = self.scaler_pth + name + ".pkl"
+			pth = os.path.join(self.scaler_pth, name + ".pkl")
 			joblib.dump(scaler, pth)
 
 	def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
@@ -379,6 +384,8 @@ class Trainer():
 			@type bool
 			@param weight_decay
 			@type float
+			@param name
+			@type str
 	
 	"""
 
@@ -403,6 +410,7 @@ class Trainer():
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
 							log_domain: Optional[bool]=False,
 							weight_decay: Optional[float]=0,
+							name: Optional[str]='',
 							) -> None:
 		
 		self.epochs = epochs
@@ -418,12 +426,18 @@ class Trainer():
 		self.y_train_tensor = y_train_tensor
 		self.y_test_tensor = y_test_tensor
 		self.y_val_tensor = y_val_tensor
-		self.best_model_path = None
 		self.dropout_rate = dropout_rate
 		self.log_domain = log_domain
 		self.weight_decay = weight_decay
+		
+		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
+		if not os.path.exists(self.chkpt_path):
+			os.makedirs(self.chkpt_path, exist_ok=True) 
+		if not os.path.exists(MLP_LOG_PTH):
+			os.mkdir(MLP_LOG_PTH)
 
-		print(f"Initialized Trainer. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}")
+		print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
+		print("Saving checkpoints in folder", self.chkpt_path)
 
 	def objective(self, trial: optuna.Trial) -> Any:
 		# suggest hyperparameters
@@ -477,7 +491,7 @@ class Trainer():
 		model.train()
 		epochs = self.epochs
 		best_val_loss = np.inf
-		self.best_model_path = os.path.join(MLP_CHKPT_PTH, f"trial_{trial.number}.pth")
+		self.best_model_path = os.path.join(self.chkpt_path, f"trial_{trial.number}.pth")
 
 		for epoch in range(epochs):
 			optimizer.zero_grad()
@@ -506,23 +520,26 @@ class Trainer():
 	
 	def test(self, trial: optuna.Trial) -> Any:
 		hidden_dim = trial.params['hidden_dim']
-		num_layers=trial.params['num_layers']
+		num_layers = trial.params['num_layers']
+		learning_rate = trial.params['learning_rate']
+		dropout_rate = trial.params['dropout_rate']
 
 		# load model to DEVICE
 		model = self.ModelType(input_dim=self.input_dim,
 														hidden_dim=hidden_dim,
 														output_dim=self.output_dim,
 														num_layers=num_layers,
-														dropout_rate=None,
+														dropout_rate=dropout_rate,
 														).to(DEVICE)
 
 		# load model weights 
 		if self.best_model_path is None:
 			print("Could not load checkpoint")
 			return None
+		print("Loading model from", self.best_model_path)
 		model.load_state_dict(torch.load(self.best_model_path))
 
-		run_name = f"test_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}"
+		run_name = f"TEST_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
 		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
 
 		# evaluate on the test set
@@ -530,7 +547,7 @@ class Trainer():
 		with torch.no_grad():
 			test_outputs = model(self.X_test_tensor)
 			test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
-			writer.add_scalar('Loss/test', test_loss.item(), )
+			writer.add_scalar('Loss/test', test_loss, )
 
 		writer.close()
 		return test_loss
@@ -613,6 +630,7 @@ class Train():
 											dropout_rate=self.dropout_rate,
 											log_domain=self.log_domain,
 											weight_decay=self.weight_decay,
+											name=td.name,
 										)
 		
 		# run optuna optimization
@@ -626,40 +644,68 @@ class Train():
 		print('Params: ')
 		for key, value in trial.params.items():
 			print(f'{key}: {value}')
-
-		print("Run test...", end=" ")
-		res = trainer.test(trial)
-		print(res)
-
 		print("Finished optimization of ", td.name)
+
+		print("Running test...")
+		res = trainer.test(trial)
+		print("Result:", res)
 		print()
 
-if __name__ == '__main__':
-	def parseIntTuple(value: str) -> Tuple:
-		t = tuple(map(int, value.split(',')))
-		if len(t) != 3:
-			raise ValueError
-		return t
-	def parseFloatTuple(value: str) ->Union[None, Tuple]:
-		if not ',' in value:
-			return None
-		t = tuple(map(float, value.split(',')))
-		if len(t) != 3:
-			raise ValueError
-		return t
-	def parseNorm(value: str) -> Normalization:
-		if not value in NORMS:
-			raise ValueError
-		return NORMALIZATION_MAP[value]
+def clean(args: Any) -> bool:
+	if args.clean_all:
+		args.clean_log=True
+		args.clean_scaler=True
+		args.clean_checkpoint=True
 	
+	#cleanup
+	if args.clean_log:
+		if os.path.exists(MLP_LOG_PTH):
+			print("Moving directory", MLP_LOG_PTH, "to", HOMETRASH_B.decode())
+			send2trash(MLP_LOG_PTH)
+	if args.clean_scaler:
+		if os.path.exists(MLP_SCLRS_PTH):
+			print("Moving directory", MLP_SCLRS_PTH,  "to", HOMETRASH_B.decode())
+			send2trash(MLP_SCLRS_PTH)
+	if args.clean_checkpoint:
+		if os.path.exists(MLP_CHKPT_PTH):
+			print("Moving directory", MLP_CHKPT_PTH, "to", HOMETRASH_B.decode())
+			send2trash(MLP_CHKPT_PTH)
+
+	return args.clean_log or args.clean_scaler or args.clean_checkpoint
+
+def parseIntTuple(value: str) -> Tuple:
+	t = tuple(map(int, value.split(',')))
+	if len(t) != 3:
+		raise ValueError
+	return t
+
+def parseFloatTuple(value: str) ->Union[None, Tuple]:
+	if not ',' in value:
+		return None
+	t = tuple(map(float, value.split(',')))
+	if len(t) != 3:
+		raise ValueError
+	return t
+
+def parseNorm(value: str) -> Normalization:
+	if not value in NORMS:
+		raise ValueError
+	return NORMALIZATION_MAP[value]
+	
+if __name__ == '__main__':
 	parser = argparse.ArgumentParser(description='Training script')
+	# cleanup
+	parser.add_argument("--clean_log", action='store_true', help='Clean log folder')
+	parser.add_argument("--clean_scaler", action='store_true', help='Clean scaler folder')
+	parser.add_argument("--clean_checkpoint", action='store_true', help='Clean checkpoints folder')
+	parser.add_argument("--clean_all", action='store_true', help='Clean all  folders with saved checkpoints, logs and scalers!')
 	# data preparation
 	data_group = parser.add_argument_group("Data Settings")
 	data_group.add_argument('--folder_pth', type=str, metavar='str', help='Folder path for the data prepared for training.', default="10013")
 	data_group.add_argument('--pattern', type=str, metavar='str', help='Search pattern for data files', default=".json")
 	data_group.add_argument('--test_size', type=float, metavar='float', help='Percentage of data split for testing.', default=0.3)
 	data_group.add_argument('--val_size', type=float, metavar='float', help='Percentage of data split (from test size) for validation.', default=0.5)
-	data_group.add_argument('--random_state', type=int, metavar='int', help='Percentage of data randomization.', default=0)
+	data_group.add_argument('--random_state', type=int, metavar='int', help='Percentage of data randomization.', default=40)
 	data_group.add_argument('--norm_quats', type=bool, metavar='bool', help='Normalize quaternions.', default=True)
 	data_group.add_argument('--trans_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	data_group.add_argument('--input_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
@@ -667,13 +713,18 @@ if __name__ == '__main__':
 	# training
 	train_group = parser.add_argument_group("Optimization Settings")
 	train_group.add_argument('--epochs', type=int, metavar='int', help='Training epochs.', default=100)
-	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 1,10,1.', default='1,10,1')
-	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 1,10,1.', default='1,10,1')
+	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
+	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
 	train_group.add_argument('--learning_rate', type=parseFloatTuple, help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 	train_group.add_argument('--dropout_rate', type=parseFloatTuple, help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
 	train_group.add_argument('--log_domain', type=bool, metavar='bool', help='Change optimizer params logarithmically.', default=False)
 	train_group.add_argument('--weight_decay', type=float, metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
 	args = parser.parse_args()
+
+	# clean only
+	if clean(args):
+		print("Cleaned.. exiting")
+		exit(0)
 
 	Train( folder_pth=args.folder_pth,
 				pattern=args.pattern,
