@@ -50,8 +50,8 @@ class TrainingData():
 
 	def __init__(self,
 							data_file: str,
-							test_size: Optional[float]=0.2, 
-							validation_size: Optional[float]=0.2,
+							test_size: Optional[float]=0.3, 
+							validation_size: Optional[float]=0.5,
 							random_state: Optional[int]=42,
 							norm_quats: Optional[bool]=True,
 							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
@@ -114,6 +114,7 @@ class TrainingData():
 		(X, y) = self.stackData()
 		# split and move data
 		self.splitData(X, y)
+
 		print("Loaded features", self.feature_names, "and targets", self.target_names, "to device:", DEVICE)
 		print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.test_size)}%),")
 		print(f"{len(self.X_test_tensor)} test ({100*(1-self.test_size)*(self.validation_size)}%) and {len(self.X_val_tensor)} validation ({100*(self.test_size)*(self.validation_size)}%) samples")
@@ -297,7 +298,7 @@ class TrainingData():
 			pth = self.scaler_pth + name + ".pkl"
 			joblib.dump(scaler, pth)
 
-	def loadScalers(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
+	def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
 		scaler = joblib.load(pth)
 		return scaler
 		
@@ -400,6 +401,7 @@ class Trainer():
 		self.y_train_tensor = y_train_tensor
 		self.y_test_tensor = y_test_tensor
 		self.y_val_tensor = y_val_tensor
+		self.best_model_path = None
 
 		print(f"Initialized Trainer. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}")
 
@@ -440,6 +442,9 @@ class Trainer():
 		# Training loop
 		model.train()
 		epochs = self.epochs
+		best_val_loss = np.inf
+		self.best_model_path = os.path.join(MLP_CHKPT_PTH, f"trial_{trial.number}.pth")
+		
 		for epoch in range(epochs):
 			optimizer.zero_grad()
 			outputs = model(self.X_train_tensor)
@@ -456,11 +461,16 @@ class Trainer():
 				val_outputs = model(self.X_val_tensor)
 				val_loss = criterion(val_outputs, self.y_val_tensor).item()
 				writer.add_scalar('Loss/val', val_loss, epoch)
+
+				# Save the model if validation loss has improved
+				if val_loss < best_val_loss:
+					best_val_loss = val_loss
+					torch.save(model.state_dict(), self.best_model_path)
 		
 		writer.close()
 		return val_loss
 	
-	def test(self, trial: optuna.Trial, model_pth: str) -> Any:
+	def test(self, trial: optuna.Trial) -> Any:
 		# load model to DEVICE
 		model = self.ModelType(input_dim=self.input_dim,
 																	hidden_dim=trial.params['hidden_dim'],
@@ -469,7 +479,10 @@ class Trainer():
 																	).to(DEVICE)
 
 		# load model weights 
-		model.load_state_dict(torch.load(model_pth))
+		if self.best_model_path is None:
+			print("Could not load checkpoint")
+			return None
+		model.load_state_dict(torch.load(self.best_model_path))
 
 		# evaluate on the test set
 		model.eval()
@@ -483,7 +496,15 @@ if __name__ == '__main__':
 	pattern = os.path.join(DATA_PTH, 'keypoint/train/10013', f'*mono*')
 	data_files = glob.glob(pattern, recursive=False)
 
-	td = TrainingData(data_file=data_files[0])
+	td = TrainingData(data_file=data_files[0],
+				   					   test_size=0.3,
+									   validation_size=0.5,
+									   random_state=42,
+									   norm_quats=True,
+									   trans_norm=Normalization.Z_SCORE,
+									   input_norm=Normalization.Z_SCORE,
+									   target_norm=Normalization.Z_SCORE,
+										)
 	trainer = Trainer(  X_train_tensor=td.X_train_tensor,
 										X_test_tensor=td.X_test_tensor,
 										X_val_tensor=td.X_val_tensor,
@@ -500,8 +521,8 @@ if __name__ == '__main__':
 									)
 	
 	# run optuna optimization
-	study = optuna.create_study(direction='minimize')
-	study.optimize(trainer.objective, n_trials=2000, show_progress_bar=True, )
+	study = optuna.create_study(direction='minimize', )
+	study.optimize(trainer.objective, n_trials=1, show_progress_bar=True, )
 
 	# Retrieve the best trial
 	print('Best trial:')
@@ -510,3 +531,7 @@ if __name__ == '__main__':
 	print('Params: ')
 	for key, value in trial.params.items():
 		print(f'{key}: {value}')
+
+	print("Run test...", end=" ")
+	res = trainer.test(trial)
+	print(res)

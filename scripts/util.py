@@ -42,6 +42,7 @@ KEYPT_HEAD_CAM_REC_DIR = os.path.join(KEYPT_REC_DIR, 'head_cam')
 # training
 TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/keypoint/train')
 MLP_LOG_PTH = os.path.join(TRAIN_PTH, 'mlp/log')
+MLP_CHKPT_PTH = os.path.join(TRAIN_PTH, 'mlp/checkpoints')
 MONO_TRAIN_COLS = ['cmd', 'dir', 'quat', 'angle']
 FINGER_TRAIN_COLS = ['cmd', 'dir', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
 THUMB_TRAIN_COLS = ['cmd1', 'cmd2', 'dir1', 'dir2', 'quat', 'angle1', 'angle2', 'angle3', 'trans']
