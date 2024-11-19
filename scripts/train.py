@@ -56,7 +56,7 @@ class TrainingData():
 							test_size: Optional[float]=0.3, 
 							validation_size: Optional[float]=0.5,
 							random_state: Optional[int]=42,
-							norm_quats: Optional[bool]=True,
+							norm_quats: Optional[bool]=False,
 							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							input_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							target_norm: Optional[Normalization]=Normalization.Z_SCORE,
@@ -429,6 +429,8 @@ class Trainer():
 		self.dropout_rate = dropout_rate
 		self.log_domain = log_domain
 		self.weight_decay = weight_decay
+		self.best_val_loss = np.inf
+		self.best_model_path = None
 		
 		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
 		if not os.path.exists(self.chkpt_path):
@@ -442,30 +444,30 @@ class Trainer():
 	def objective(self, trial: optuna.Trial) -> Any:
 		# suggest hyperparameters
 		hidden_dim = trial.suggest_int('hidden_dim', 
-								 									  self.hidden_dim[self.LOW], 
-																	  self.hidden_dim[self.HIGH], 
-																	#   step=self.hidden_dim[self.STEP] if not self.log_domain else None,
-																	#   log=self.log_domain,
+								 									  low=self.hidden_dim[self.LOW], 
+																	  high=self.hidden_dim[self.HIGH], 
+																	  step=self.hidden_dim[self.STEP] if not self.log_domain else 1,
+																	  log=self.log_domain,
 																	  )
 		num_layers = trial.suggest_int('num_layers', 
-								 									  self.num_layers[self.LOW], 
-																	  self.num_layers[self.HIGH], 
-																	#   step=self.num_layers[self.STEP] if not self.log_domain else None,
-																	#   log=self.log_domain,
+								 									  low=self.num_layers[self.LOW], 
+																	  high=self.num_layers[self.HIGH], 
+																	  step=self.num_layers[self.STEP] if not self.log_domain else 1,
+																	  log=self.log_domain,
 																	  )
 		learning_rate = trial.suggest_float('learning_rate', 
-									  										 self.learning_rate[self.LOW], 
-																			 self.learning_rate[self.HIGH],
-																			#  step=self.learning_rate[self.STEP] if not self.log_domain else None,
-																			#  log=self.log_domain,
+									  										 low=self.learning_rate[self.LOW], 
+																			 high=self.learning_rate[self.HIGH],
+																			 step=self.learning_rate[self.STEP] if not self.log_domain else 1,
+																			 log=self.log_domain,
 																			 )
 		dropout_rate = self.dropout_rate
 		if dropout_rate is not None:
 			dropout_rate = trial.suggest_float('dropout_rate', 
-																				self.dropout_rate[self.LOW], 
-																				self.dropout_rate[self.HIGH], 
-																				# step=self.dropout_rate[self.STEP] if not self.log_domain else None,
-																				# log=self.log_domain,
+																				low=self.dropout_rate[self.LOW], 
+																				high=self.dropout_rate[self.HIGH], 
+																				step=self.dropout_rate[self.STEP] if not self.log_domain else 1,
+																				log=self.log_domain,
 																				)
 		
 		# instantiate the model and move to device
@@ -484,16 +486,12 @@ class Trainer():
 						 								)
 		
 		# TensorBoard logging setup
-		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
+		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
 		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
 		
 		# train
 		model.train()
-		epochs = self.epochs
-		best_val_loss = np.inf
-		self.best_model_path = os.path.join(self.chkpt_path, f"trial_{trial.number}.pth")
-
-		for epoch in range(epochs):
+		for epoch in range(self.epochs):
 			optimizer.zero_grad()
 			outputs = model(self.X_train_tensor)
 			loss = criterion(outputs, self.y_train_tensor)
@@ -511,8 +509,10 @@ class Trainer():
 				writer.add_scalar('Loss/val', val_loss, epoch)
 
 				# save the model if validation loss has improved
-				if val_loss < best_val_loss:
-					best_val_loss = val_loss
+				if val_loss < self.best_val_loss:
+					self.best_val_loss = val_loss
+					loss_str = f"{val_loss:.4f}".replace(".", "_")
+					self.best_model_path = os.path.join(self.chkpt_path, f"loss_{loss_str}_{run_name}.pth")
 					torch.save(model.state_dict(), self.best_model_path)
 		
 		writer.close()
@@ -559,6 +559,8 @@ class Train():
 			@type str
 			@param pattern
 			@type str
+			@param optim_trials
+			@type int
 
 	"""
 	def __init__(self,
@@ -567,7 +569,7 @@ class Train():
 							test_size: Optional[float]=0.3, 
 							validation_size: Optional[float]=0.5,
 							random_state: Optional[int]=42,
-							norm_quats: Optional[bool]=True,
+							norm_quats: Optional[bool]=False,
 							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							input_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							target_norm: Optional[Normalization]=Normalization.Z_SCORE,
@@ -578,6 +580,7 @@ class Train():
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
 							log_domain: Optional[bool]=False,
 							weight_decay: Optional[float]=0,
+							optim_trials: Optional[int]=100,
 							) -> None:
 		
 		# load training data per configuration
@@ -598,6 +601,7 @@ class Train():
 		self.dropout_rate = dropout_rate 
 		self.log_domain = log_domain 
 		self.weight_decay = weight_decay 
+		self.optim_trials = optim_trials
 
 	def run(self) -> None:
 		for fl in self.data_files:
@@ -635,7 +639,7 @@ class Train():
 		
 		# run optuna optimization
 		study = optuna.create_study(direction='minimize', )
-		study.optimize(trainer.objective, n_trials=1, show_progress_bar=True, )
+		study.optimize(trainer.objective, n_trials=self.optim_trials, show_progress_bar=True, )
 
 		# Retrieve the best trial
 		print('Best trial:')
@@ -706,18 +710,19 @@ if __name__ == '__main__':
 	data_group.add_argument('--test_size', type=float, metavar='float', help='Percentage of data split for testing.', default=0.3)
 	data_group.add_argument('--val_size', type=float, metavar='float', help='Percentage of data split (from test size) for validation.', default=0.5)
 	data_group.add_argument('--random_state', type=int, metavar='int', help='Percentage of data randomization.', default=40)
-	data_group.add_argument('--norm_quats', type=bool, metavar='bool', help='Normalize quaternions.', default=True)
+	data_group.add_argument('--norm_quats', action='store_true', help='Normalize quaternions.')
 	data_group.add_argument('--trans_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	data_group.add_argument('--input_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	data_group.add_argument('--target_norm', type=parseNorm,  help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	# training
 	train_group = parser.add_argument_group("Optimization Settings")
 	train_group.add_argument('--epochs', type=int, metavar='int', help='Training epochs.', default=100)
+	train_group.add_argument('--optim_trials', type=int, metavar='int', help='Number of optimization trials.', default=100)
 	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
 	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
 	train_group.add_argument('--learning_rate', type=parseFloatTuple, help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 	train_group.add_argument('--dropout_rate', type=parseFloatTuple, help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
-	train_group.add_argument('--log_domain', type=bool, metavar='bool', help='Change optimizer params logarithmically.', default=False)
+	train_group.add_argument('--log_domain', action='store_true', help='Change optimizer params logarithmically.')
 	train_group.add_argument('--weight_decay', type=float, metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
 	args = parser.parse_args()
 
@@ -742,4 +747,5 @@ if __name__ == '__main__':
 				dropout_rate=args.dropout_rate,
 				log_domain=args.log_domain,
 				weight_decay=args.weight_decay,
+				optim_trials=args.optim_trials,
 				).run()
