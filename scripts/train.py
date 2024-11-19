@@ -430,28 +430,28 @@ class Trainer():
 		hidden_dim = trial.suggest_int('hidden_dim', 
 								 									  self.hidden_dim[self.LOW], 
 																	  self.hidden_dim[self.HIGH], 
-																	  step=self.hidden_dim[self.STEP] if not self.log_domain else None,
-																	  log=self.log_domain,
+																	#   step=self.hidden_dim[self.STEP] if not self.log_domain else None,
+																	#   log=self.log_domain,
 																	  )
 		num_layers = trial.suggest_int('num_layers', 
 								 									  self.num_layers[self.LOW], 
 																	  self.num_layers[self.HIGH], 
-																	  step=self.num_layers[self.STEP] if not self.log_domain else None,
-																	  log=self.log_domain,
+																	#   step=self.num_layers[self.STEP] if not self.log_domain else None,
+																	#   log=self.log_domain,
 																	  )
 		learning_rate = trial.suggest_float('learning_rate', 
 									  										 self.learning_rate[self.LOW], 
 																			 self.learning_rate[self.HIGH],
-																			 step=self.learning_rate[self.STEP] if not self.log_domain else None,
-																			 log=self.log_domain,
+																			#  step=self.learning_rate[self.STEP] if not self.log_domain else None,
+																			#  log=self.log_domain,
 																			 )
 		dropout_rate = self.dropout_rate
 		if dropout_rate is not None:
 			dropout_rate = trial.suggest_float('dropout_rate', 
 																				self.dropout_rate[self.LOW], 
 																				self.dropout_rate[self.HIGH], 
-																				step=self.dropout_rate[self.STEP] if not self.log_domain else None,
-																				log=self.log_domain,
+																				# step=self.dropout_rate[self.STEP] if not self.log_domain else None,
+																				# log=self.log_domain,
 																				)
 		
 		# instantiate the model and move to device
@@ -513,6 +513,7 @@ class Trainer():
 														hidden_dim=hidden_dim,
 														output_dim=self.output_dim,
 														num_layers=num_layers,
+														dropout_rate=None,
 														).to(DEVICE)
 
 		# load model weights 
@@ -649,29 +650,29 @@ if __name__ == '__main__':
 	def parseNorm(value: str) -> Normalization:
 		if not value in NORMS:
 			raise ValueError
-		return NORMAL_TYPES_MAP[str]
+		return NORMALIZATION_MAP[value]
 	
 	parser = argparse.ArgumentParser(description='Training script')
 	# data preparation
 	data_group = parser.add_argument_group("Data Settings")
-	data_group.add_argument('--folder_pth', metavar='str', help='Folder path for the data prepared for training.', default="10013")
-	data_group.add_argument('--pattern', metavar='str', help='Search pattern for data files', default=".json")
-	data_group.add_argument('--test_size', metavar='float', help='Percentage of data split for testing.', default=0.3, )
-	data_group.add_argument('--val_size', metavar='float', help='Percentage of data split (from test size) for validation.', default=0.5)
-	data_group.add_argument('--random_state', metavar='int', help='Percentage of data randomization.', default=0)
-	data_group.add_argument('--norm_quats', metavar='bool', help='Normalize quaternions.', default=True)
+	data_group.add_argument('--folder_pth', type=str, metavar='str', help='Folder path for the data prepared for training.', default="10013")
+	data_group.add_argument('--pattern', type=str, metavar='str', help='Search pattern for data files', default=".json")
+	data_group.add_argument('--test_size', type=float, metavar='float', help='Percentage of data split for testing.', default=0.3)
+	data_group.add_argument('--val_size', type=float, metavar='float', help='Percentage of data split (from test size) for validation.', default=0.5)
+	data_group.add_argument('--random_state', type=int, metavar='int', help='Percentage of data randomization.', default=0)
+	data_group.add_argument('--norm_quats', type=bool, metavar='bool', help='Normalize quaternions.', default=True)
 	data_group.add_argument('--trans_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	data_group.add_argument('--input_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	data_group.add_argument('--target_norm', type=parseNorm,  help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 	# training
 	train_group = parser.add_argument_group("Optimization Settings")
-	train_group.add_argument('--epochs', metavar='int', help='Training epochs.', default=100)
+	train_group.add_argument('--epochs', type=int, metavar='int', help='Training epochs.', default=100)
 	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 1,10,1.', default='1,10,1')
 	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 1,10,1.', default='1,10,1')
 	train_group.add_argument('--learning_rate', type=parseFloatTuple, help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 	train_group.add_argument('--dropout_rate', type=parseFloatTuple, help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
-	train_group.add_argument('--log_domain', metavar='bool', help='Change optimizer params logarithmically.', default=False)
-	train_group.add_argument('--weight_decay', metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
+	train_group.add_argument('--log_domain', type=bool, metavar='bool', help='Change optimizer params logarithmically.', default=False)
+	train_group.add_argument('--weight_decay', type=float, metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
 	args = parser.parse_args()
 
 	Train( folder_pth=args.folder_pth,
