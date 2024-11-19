@@ -376,6 +376,8 @@ class Trainer():
 			@type Union[None, Tuple]
 			@param log_domain
 			@type bool
+			@param weight_decay
+			@type float
 	
 	"""
 
@@ -399,6 +401,7 @@ class Trainer():
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
 							log_domain: Optional[bool]=False,
+							weight_decay: Optional[float]=0,
 							) -> None:
 		
 		self.epochs = epochs
@@ -417,6 +420,7 @@ class Trainer():
 		self.best_model_path = None
 		self.dropout_rate = dropout_rate
 		self.log_domain = log_domain
+		self.weight_decay = weight_decay
 
 		print(f"Initialized Trainer. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}")
 
@@ -461,6 +465,7 @@ class Trainer():
 		criterion = nn.MSELoss()
 		optimizer = optim.Adam(model.parameters(),
 						 								 lr=learning_rate,
+														  weight_decay=self.weight_decay,
 						 								)
 		
 		# TensorBoard logging setup
@@ -547,6 +552,8 @@ if __name__ == '__main__':
 										hidden_dim=(1,20,1),
 										learning_rate=(1e-4, 1e-2),
 										dropout_rate=(0.0, 0.4, 0.01),
+										log_domain=False,
+										weight_decay=0.01,
 									)
 	
 	# run optuna optimization
