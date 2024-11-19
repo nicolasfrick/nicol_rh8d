@@ -314,6 +314,8 @@ class MLP(nn.Module):
 		@type int
 		@property num_layers
 		@type int
+		@property dropout_rate
+		@type Union[None, float]
 
 	"""
 	def __init__(self, 
@@ -321,15 +323,20 @@ class MLP(nn.Module):
 							hidden_dim: int, 
 							output_dim: int, 
 							num_layers: int,
+							dropout_rate: Union[None, float],
 							) -> None:
 		
 		super(MLP, self).__init__()
 		layers = []
 		layers.append(nn.Linear(input_dim, hidden_dim))
 		layers.append(nn.ReLU())
+		if dropout_rate is not None:
+			layers.append(nn.Dropout(p=dropout_rate))
 		for _ in range(num_layers - 1):
 			layers.append(nn.Linear(hidden_dim, hidden_dim))
 			layers.append(nn.ReLU())
+			if dropout_rate is not None:
+				layers.append(nn.Dropout(p=dropout_rate))
 		layers.append(nn.Linear(hidden_dim, output_dim))
 		self.model = nn.Sequential(*layers)
 	
@@ -365,6 +372,10 @@ class Trainer():
 			@type Tuple
 			@param learning_rate
 			@type Tuple
+			@property dropout_rate
+			@type Union[None, Tuple]
+			@param log_domain
+			@type bool
 	
 	"""
 
@@ -386,6 +397,8 @@ class Trainer():
 			  				num_layers: Optional[Tuple]=(1, 10, 1),
 							hidden_dim: Optional[Tuple]=(1, 32, 2),
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
+							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
+							log_domain: Optional[bool]=False,
 							) -> None:
 		
 		self.epochs = epochs
@@ -402,6 +415,8 @@ class Trainer():
 		self.y_test_tensor = y_test_tensor
 		self.y_val_tensor = y_val_tensor
 		self.best_model_path = None
+		self.dropout_rate = dropout_rate
+		self.log_domain = log_domain
 
 		print(f"Initialized Trainer. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}")
 
@@ -410,23 +425,36 @@ class Trainer():
 		hidden_dim = trial.suggest_int('hidden_dim', 
 								 									  self.hidden_dim[self.LOW], 
 																	  self.hidden_dim[self.HIGH], 
-																	  step=self.hidden_dim[self.STEP],
+																	  step=self.hidden_dim[self.STEP] if not self.log_domain else None,
+																	  log=self.log_domain,
 																	  )
 		num_layers = trial.suggest_int('num_layers', 
 								 									  self.num_layers[self.LOW], 
 																	  self.num_layers[self.HIGH], 
-																	  step=self.num_layers[self.STEP],
+																	  step=self.num_layers[self.STEP] if not self.log_domain else None,
+																	  log=self.log_domain,
 																	  )
 		learning_rate = trial.suggest_float('learning_rate', 
 									  										 self.learning_rate[self.LOW], 
 																			 self.learning_rate[self.HIGH],
+																			 step=self.learning_rate[self.STEP] if not self.log_domain else None,
+																			 log=self.log_domain,
 																			 )
+		dropout_rate = self.dropout_rate
+		if dropout_rate is not None:
+			dropout_rate = trial.suggest_float('dropout_rate', 
+																				self.dropout_rate[self.LOW], 
+																				self.dropout_rate[self.HIGH], 
+																				step=self.dropout_rate[self.STEP] if not self.log_domain else None,
+																				log=self.log_domain,
+																				)
 		
 		# instantiate the model and move to device
 		model = self.ModelType( input_dim=self.input_dim, 
 						  								 hidden_dim=hidden_dim, 
 														 output_dim=self.output_dim, 
 														 num_layers=num_layers,
+														 dropout_rate=dropout_rate,
 														 ).to(DEVICE)
 		
 		# Criterion and Optimizer
@@ -444,7 +472,7 @@ class Trainer():
 		epochs = self.epochs
 		best_val_loss = np.inf
 		self.best_model_path = os.path.join(MLP_CHKPT_PTH, f"trial_{trial.number}.pth")
-		
+
 		for epoch in range(epochs):
 			optimizer.zero_grad()
 			outputs = model(self.X_train_tensor)
@@ -518,6 +546,7 @@ if __name__ == '__main__':
 										num_layers=(1,31,2),
 										hidden_dim=(1,20,1),
 										learning_rate=(1e-4, 1e-2),
+										dropout_rate=(0.0, 0.4, 0.01),
 									)
 	
 	# run optuna optimization
