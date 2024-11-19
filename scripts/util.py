@@ -101,6 +101,7 @@ NORMALIZATION_MAP={  Normalization.NONE.value : Normalization.NONE,
 													Normalization.MINMAX_POS.value : Normalization.MINMAX_POS, 
 													Normalization.MINMAX_CENTERED.value : Normalization.MINMAX_CENTERED, 
 												}
+NORMS = f"{Normalization.NONE.value}, {Normalization.MINMAX_CENTERED.value}, {Normalization.MINMAX_POS.value}, {Normalization.Z_SCORE.value}"
 
 def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.ndarray:
 	if rot_type == out_type:

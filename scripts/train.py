@@ -5,6 +5,7 @@ import glob
 import torch
 import joblib
 import optuna
+import argparse
 import numpy as np
 import pandas as pd
 import torch.nn as nn
@@ -532,50 +533,161 @@ class Trainer():
 
 		writer.close()
 		return test_loss
+	
+class Train():
+	""" Train all configurations found in the given folder having the specified pattern.
+
+			@param folder_pth
+			@type str
+			@param pattern
+			@type str
+
+	"""
+	def __init__(self,
+			  				folder_pth: Optional[str] = '10013',
+							pattern: Optional[str]='mono',
+							test_size: Optional[float]=0.3, 
+							validation_size: Optional[float]=0.5,
+							random_state: Optional[int]=42,
+							norm_quats: Optional[bool]=True,
+							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
+							input_norm: Optional[Normalization]=Normalization.Z_SCORE,
+							target_norm: Optional[Normalization]=Normalization.Z_SCORE,
+			  				epochs: Optional[int]=50,
+			  				num_layers: Optional[Tuple]=(1, 10, 1),
+							hidden_dim: Optional[Tuple]=(1, 32, 2),
+							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
+							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
+							log_domain: Optional[bool]=False,
+							weight_decay: Optional[float]=0,
+							) -> None:
+		
+		# load training data per configuration
+		pattern = os.path.join(DATA_PTH, 'keypoint/train', folder_pth, f'*{pattern}*')
+		self.data_files = glob.glob(pattern, recursive=False)
+
+		self.test_size = test_size 
+		self.validation_size = validation_size 
+		self.random_state = random_state 
+		self.norm_quats = norm_quats 
+		self.trans_norm = trans_norm 
+		self.input_norm = input_norm 
+		self.target_norm = target_norm 
+		self.epochs = epochs 
+		self.num_layers = num_layers 
+		self.hidden_dim = hidden_dim 
+		self.learning_rate = learning_rate 
+		self.dropout_rate = dropout_rate 
+		self.log_domain = log_domain 
+		self.weight_decay = weight_decay 
+
+	def run(self) -> None:
+		for fl in self.data_files:
+			self.runStudy(fl)
+
+	def runStudy(self, file_pth: str) -> None:
+		td = TrainingData(data_file=file_pth,
+											test_size=self.test_size,
+											validation_size=self.validation_size,
+											random_state=self.random_state,
+											norm_quats=self.norm_quats,
+											trans_norm=self.trans_norm,
+											input_norm=self.input_norm,
+											target_norm=self.target_norm,
+										)
+		
+		trainer = Trainer(  X_train_tensor=td.X_train_tensor,
+											X_test_tensor=td.X_test_tensor,
+											X_val_tensor=td.X_val_tensor,
+											y_train_tensor=td.y_train_tensor,
+											y_test_tensor=td.y_test_tensor,
+											y_val_tensor=td.y_val_tensor,
+											epochs=self.epochs,
+											model_type=MLP,
+											input_dim=td.num_features,
+											output_dim=td.num_targets,
+											num_layers=self.num_layers,
+											hidden_dim=self.hidden_dim,
+											learning_rate=self.learning_rate,
+											dropout_rate=self.dropout_rate,
+											log_domain=self.log_domain,
+											weight_decay=self.weight_decay,
+										)
+		
+		# run optuna optimization
+		study = optuna.create_study(direction='minimize', )
+		study.optimize(trainer.objective, n_trials=1, show_progress_bar=True, )
+
+		# Retrieve the best trial
+		print('Best trial:')
+		trial = study.best_trial
+		print('Value: ', trial.value)
+		print('Params: ')
+		for key, value in trial.params.items():
+			print(f'{key}: {value}')
+
+		print("Run test...", end=" ")
+		res = trainer.test(trial)
+		print(res)
+
+		print("Finished optimization of ", td.name)
+		print()
 
 if __name__ == '__main__':
-	pattern = os.path.join(DATA_PTH, 'keypoint/train/10013', f'*mono*')
-	data_files = glob.glob(pattern, recursive=False)
-
-	td = TrainingData(data_file=data_files[0],
-				   					   test_size=0.3,
-									   validation_size=0.5,
-									   random_state=42,
-									   norm_quats=True,
-									   trans_norm=Normalization.Z_SCORE,
-									   input_norm=Normalization.Z_SCORE,
-									   target_norm=Normalization.Z_SCORE,
-										)
-	trainer = Trainer(  X_train_tensor=td.X_train_tensor,
-										X_test_tensor=td.X_test_tensor,
-										X_val_tensor=td.X_val_tensor,
-										y_train_tensor=td.y_train_tensor,
-										y_test_tensor=td.y_test_tensor,
-										y_val_tensor=td.y_val_tensor,
-										epochs=100,
-										model_type=MLP,
-										input_dim=td.num_features,
-										output_dim=td.num_targets,
-										num_layers=(1,31,2),
-										hidden_dim=(1,20,1),
-										learning_rate=(1e-4, 1e-2),
-										dropout_rate=(0.0, 0.4, 0.01),
-										log_domain=False,
-										weight_decay=0.01,
-									)
+	def parseIntTuple(value: str) -> Tuple:
+		t = tuple(map(int, value.split(',')))
+		if len(t) != 3:
+			raise ValueError
+		return t
+	def parseFloatTuple(value: str) ->Union[None, Tuple]:
+		if not ',' in value:
+			return None
+		t = tuple(map(float, value.split(',')))
+		if len(t) != 3:
+			raise ValueError
+		return t
+	def parseNorm(value: str) -> Normalization:
+		if not value in NORMS:
+			raise ValueError
+		return NORMAL_TYPES_MAP[str]
 	
-	# run optuna optimization
-	study = optuna.create_study(direction='minimize', )
-	study.optimize(trainer.objective, n_trials=1, show_progress_bar=True, )
+	parser = argparse.ArgumentParser(description='Training script')
+	# data preparation
+	data_group = parser.add_argument_group("Data Settings")
+	data_group.add_argument('--folder_pth', metavar='str', help='Folder path for the data prepared for training.', default="10013")
+	data_group.add_argument('--pattern', metavar='str', help='Search pattern for data files', default=".json")
+	data_group.add_argument('--test_size', metavar='float', help='Percentage of data split for testing.', default=0.3, )
+	data_group.add_argument('--val_size', metavar='float', help='Percentage of data split (from test size) for validation.', default=0.5)
+	data_group.add_argument('--random_state', metavar='int', help='Percentage of data randomization.', default=0)
+	data_group.add_argument('--norm_quats', metavar='bool', help='Normalize quaternions.', default=True)
+	data_group.add_argument('--trans_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+	data_group.add_argument('--input_norm', type=parseNorm, help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+	data_group.add_argument('--target_norm', type=parseNorm,  help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+	# training
+	train_group = parser.add_argument_group("Optimization Settings")
+	train_group.add_argument('--epochs', metavar='int', help='Training epochs.', default=100)
+	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 1,10,1.', default='1,10,1')
+	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 1,10,1.', default='1,10,1')
+	train_group.add_argument('--learning_rate', type=parseFloatTuple, help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
+	train_group.add_argument('--dropout_rate', type=parseFloatTuple, help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
+	train_group.add_argument('--log_domain', metavar='bool', help='Change optimizer params logarithmically.', default=False)
+	train_group.add_argument('--weight_decay', metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
+	args = parser.parse_args()
 
-	# Retrieve the best trial
-	print('Best trial:')
-	trial = study.best_trial
-	print('Value: ', trial.value)
-	print('Params: ')
-	for key, value in trial.params.items():
-		print(f'{key}: {value}')
-
-	print("Run test...", end=" ")
-	res = trainer.test(trial)
-	print(res)
+	Train( folder_pth=args.folder_pth,
+				pattern=args.pattern,
+				test_size=args.test_size,
+				validation_size=args.val_size,
+				random_state=args.random_state,
+				norm_quats=args.norm_quats,
+				trans_norm=args.trans_norm,
+				input_norm=args.input_norm,
+				target_norm=args.target_norm,
+				epochs=args.epochs,
+				num_layers=args.num_layers,
+				hidden_dim=args.hidden_dim,
+				learning_rate=args.learning_rate,
+				dropout_rate=args.dropout_rate,
+				log_domain=args.log_domain,
+				weight_decay=args.weight_decay,
+				).run()
