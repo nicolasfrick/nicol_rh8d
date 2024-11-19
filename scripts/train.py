@@ -461,7 +461,7 @@ class Trainer():
 														 dropout_rate=dropout_rate,
 														 ).to(DEVICE)
 		
-		# Criterion and Optimizer
+		# loss criterion and optimizer
 		criterion = nn.MSELoss()
 		optimizer = optim.Adam(model.parameters(),
 						 								 lr=learning_rate,
@@ -472,7 +472,7 @@ class Trainer():
 		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
 		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
 		
-		# Training loop
+		# train
 		model.train()
 		epochs = self.epochs
 		best_val_loss = np.inf
@@ -485,17 +485,17 @@ class Trainer():
 			loss.backward()
 			optimizer.step()
 			
-			# Log the training loss
+			# log training loss
 			writer.add_scalar('Loss/train', loss.item(), epoch)
 			
-			# Validation
+			# validation
 			model.eval()
 			with torch.no_grad():
 				val_outputs = model(self.X_val_tensor)
 				val_loss = criterion(val_outputs, self.y_val_tensor).item()
 				writer.add_scalar('Loss/val', val_loss, epoch)
 
-				# Save the model if validation loss has improved
+				# save the model if validation loss has improved
 				if val_loss < best_val_loss:
 					best_val_loss = val_loss
 					torch.save(model.state_dict(), self.best_model_path)
@@ -504,12 +504,15 @@ class Trainer():
 		return val_loss
 	
 	def test(self, trial: optuna.Trial) -> Any:
+		hidden_dim = trial.params['hidden_dim']
+		num_layers=trial.params['num_layers']
+
 		# load model to DEVICE
 		model = self.ModelType(input_dim=self.input_dim,
-																	hidden_dim=trial.params['hidden_dim'],
-																	output_dim=self.output_dim,
-																	num_layers=trial.params['num_layers'],
-																	).to(DEVICE)
+														hidden_dim=hidden_dim,
+														output_dim=self.output_dim,
+														num_layers=num_layers,
+														).to(DEVICE)
 
 		# load model weights 
 		if self.best_model_path is None:
@@ -517,12 +520,17 @@ class Trainer():
 			return None
 		model.load_state_dict(torch.load(self.best_model_path))
 
+		run_name = f"test_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}"
+		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
+
 		# evaluate on the test set
 		model.eval()
 		with torch.no_grad():
 			test_outputs = model(self.X_test_tensor)
 			test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
+			writer.add_scalar('Loss/test', test_loss.item(), )
 
+		writer.close()
 		return test_loss
 
 if __name__ == '__main__':
