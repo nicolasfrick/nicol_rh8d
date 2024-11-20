@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
+from optuna.trial import FrozenTrial
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -431,7 +432,6 @@ class Trainer():
 		self.log_domain = log_domain
 		self.weight_decay = weight_decay
 		self.best_val_loss = np.inf
-		self.best_model_path = None
 		
 		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name, dt_now)
 		if not os.path.exists(self.chkpt_path):
@@ -510,17 +510,16 @@ class Trainer():
 				val_loss = criterion(val_outputs, self.y_val_tensor).item()
 				writer.add_scalar('Loss/val', val_loss, epoch)
 
-				# save the model if validation loss has improved
+				# save the model weights if validation loss has improved
 				if val_loss < self.best_val_loss:
 					self.best_val_loss = val_loss
-					loss_str = f"{val_loss:.4f}".replace(".", "_")
-					self.best_model_path = os.path.join(self.chkpt_path, f"loss_{loss_str}_{run_name}.pth")
-					torch.save(model.state_dict(), self.best_model_path)
+					chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+					torch.save(model.state_dict(), chkpt_pth)
 		
 		writer.close()
 		return val_loss
 	
-	def test(self, trial: optuna.Trial) -> Any:
+	def test(self, trial: FrozenTrial) -> float:
 		hidden_dim = trial.params['hidden_dim']
 		num_layers = trial.params['num_layers']
 		learning_rate = trial.params['learning_rate']
@@ -535,15 +534,12 @@ class Trainer():
 														).to(DEVICE)
 
 		# load model weights 
-		print("Loading model from", self.best_model_path)
-		if self.best_model_path is None:
-			print("Could not load checkpoint")
-			return None
-		if str(trial.number) not in self.best_model_path:
-			print("Wrong model for trial", trial.number)
-		model.load_state_dict(torch.load(self.best_model_path))
+		chkpt_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
+		chkpt_pth = os.path.join(self.chkpt_path, f'{chkpt_name}.pth')
+		print("Loading checkpoint from", chkpt_pth)
+		model.load_state_dict(torch.load(chkpt_pth))
 
-		run_name = f"TEST_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
+		run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
 		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
 
 		# evaluate on the test set
@@ -554,7 +550,7 @@ class Trainer():
 			writer.add_scalar('Loss/test', test_loss, )
 
 		writer.close()
-		return test_loss
+		return test_loss, chkpt_pth
 	
 class Train():
 	""" Train all configurations found in the given folder having the specified pattern.
@@ -656,11 +652,11 @@ class Train():
 		print("Finished optimization of ", td.name)
 
 		print("Running test...")
-		res = trainer.test(trial)
+		(res, chkpt_pth) = trainer.test(trial)
 		print("Result:", res)
 		print()
 
-		self.log.update( {td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res, 'params': trial.params, 'checkpoint': trainer.best_model_path, 'scalers': td.scaler_pth}} )
+		self.log.update( {td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res, 'params': trial.params, 'checkpoint': chkpt_pth, 'scalers': td.scaler_pth}} )
 		with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "w") as json_file:
 			json.dump(self.log, json_file, indent=4) 
 
