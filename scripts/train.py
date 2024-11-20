@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import json
 import glob
 import torch
 import joblib
@@ -67,7 +68,7 @@ class TrainingData():
 		self.file_name =  split[-1]
 		self.folder_pth = "/".join(split[: -1])
 		self.name = self.file_name.replace('.json', '')
-		self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name)
+		self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name, dt_now)
 		if not os.path.exists(self.scaler_pth):
 			os.makedirs(self.scaler_pth, exist_ok=True) 
 
@@ -432,11 +433,12 @@ class Trainer():
 		self.best_val_loss = np.inf
 		self.best_model_path = None
 		
-		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
+		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name, dt_now)
 		if not os.path.exists(self.chkpt_path):
 			os.makedirs(self.chkpt_path, exist_ok=True) 
-		if not os.path.exists(MLP_LOG_PTH):
-			os.mkdir(MLP_LOG_PTH)
+		self.log_pth = os.path.join(MLP_LOG_PTH, dt_now)
+		if not os.path.exists(self.log_pth):
+			os.makedirs(self.log_pth,  exist_ok=True) 
 
 		print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 		print("Saving checkpoints in folder", self.chkpt_path)
@@ -487,7 +489,7 @@ class Trainer():
 		
 		# TensorBoard logging setup
 		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
-		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
+		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
 		
 		# train
 		model.train()
@@ -533,14 +535,16 @@ class Trainer():
 														).to(DEVICE)
 
 		# load model weights 
+		print("Loading model from", self.best_model_path)
 		if self.best_model_path is None:
 			print("Could not load checkpoint")
 			return None
-		print("Loading model from", self.best_model_path)
+		if str(trial.number) not in self.best_model_path:
+			print("Wrong model for trial", trial.number)
 		model.load_state_dict(torch.load(self.best_model_path))
 
 		run_name = f"TEST_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}"
-		writer = SummaryWriter(log_dir=os.path.join(MLP_LOG_PTH, run_name))
+		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
 
 		# evaluate on the test set
 		model.eval()
@@ -602,6 +606,7 @@ class Train():
 		self.log_domain = log_domain 
 		self.weight_decay = weight_decay 
 		self.optim_trials = optim_trials
+		self.log = {}
 
 	def run(self) -> None:
 		for fl in self.data_files:
@@ -654,6 +659,10 @@ class Train():
 		res = trainer.test(trial)
 		print("Result:", res)
 		print()
+
+		self.log.update( {td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res, 'params': trial.params, 'checkpoint': trainer.best_model_path, 'scalers': td.scaler_pth}} )
+		with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "w") as json_file:
+			json.dump(self.log, json_file, indent=4) 
 
 def clean(args: Any) -> bool:
 	if args.clean_all:
