@@ -22,6 +22,9 @@ from util import *
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+NUM_DEV = torch.cuda.device_count()
+NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
+CUDA_DEV = 0
 
 class TrainingData():
 	"""
@@ -512,9 +515,11 @@ class Trainer():
 
 				# save the model weights if validation loss has improved
 				if val_loss < self.best_val_loss:
+					print("improved", val_loss, self.best_val_loss)
 					self.best_val_loss = val_loss
 					chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
 					torch.save(model.state_dict(), chkpt_pth)
+					print("Saving", chkpt_pth)
 		
 		writer.close()
 		return val_loss
@@ -523,7 +528,7 @@ class Trainer():
 		hidden_dim = trial.params['hidden_dim']
 		num_layers = trial.params['num_layers']
 		learning_rate = trial.params['learning_rate']
-		dropout_rate = trial.params['dropout_rate']
+		dropout_rate = trial.params.get('dropout_rate')
 
 		# load model to DEVICE
 		model = self.ModelType(input_dim=self.input_dim,
@@ -643,8 +648,8 @@ class Train():
 		study.optimize(trainer.objective, n_trials=self.optim_trials, show_progress_bar=True, )
 
 		# Retrieve the best trial
-		print('Best trial:')
 		trial = study.best_trial
+		print('Best trial:', trial.number)
 		print('Value: ', trial.value)
 		print('Params: ')
 		for key, value in trial.params.items():
