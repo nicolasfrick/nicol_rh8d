@@ -5,8 +5,8 @@ import pandas as pd
 from sklearn.metrics import root_mean_squared_error
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
 
-DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/detection_1.json')
-RES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/results_1.json')
+DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/detection_2.json')
+RES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/results_2.json')
 
 def mpjpe(ground_truth: np.ndarray, predicted: np.ndarray) -> float:
     """
