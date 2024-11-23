@@ -317,6 +317,60 @@ def greenScreen(img: cv2.typing.MatLike):
 	f = np.where(f == 0, repl, f)
 	return f
 
+def mosaicImg(num: int, save_pth: str, target_size: Tuple=(1920, 1080)) -> None:
+	jpg = str(num)+'.jpg'
+	npz = str(num)+'.npz'
+	pth = os.path.join(REC_DIR, 'joined')
+
+	imgs = [os.path.join(pth, 'orig', jpg),
+		 		   os.path.join(pth, 'head_cam', jpg),
+					os.path.join(pth, 'top_cam', jpg), 
+					os.path.join(pth, 'left_eye', jpg),
+					os.path.join(pth, 'right_eye', jpg)
+		 		]
+	npzs = [os.path.join(pth, 'orig', npz),
+					os.path.join(pth, 'head_cam', npz),
+					os.path.join(pth, 'top_cam', npz),
+		 			]
+	
+	images = [cv2.imread(path) for path in imgs]
+	depth_images = 	[cv2.cvtColor(np.load(path)['array'], cv2.COLOR_GRAY2BGR) for path in npzs]
+
+	h, w = images[0].shape[:2]
+	r = target_size[0] / float(w)
+	dim = (target_size[0], int(h * r))
+	resized_images = [cv2.resize(img, dim, interpolation=cv2.INTER_AREA) for img in images]
+
+	h, w = depth_images[0].shape[:2]
+	r = target_size[0] / float(w)
+	dim = (target_size[0], int(h * r))
+	resized_depth_images = [cv2.resize(img, dim, interpolation=cv2.INTER_AREA) for img in depth_images]
+
+	tmp = []
+	for idx in range(len(resized_images)):
+		tmp.append(resized_images[idx])
+		if idx < len(resized_depth_images):
+			tmp.append(resized_depth_images[idx])
+	resized_images = tmp
+
+	resized_images = [img.astype(np.uint8) for img in resized_images]
+	while len(resized_images) < 8: # pad black
+		resized_images.append(np.zeros_like(resized_images[0]))
+
+	rows = [
+		np.hstack(resized_images[:2]),  # first row: 2 images
+		np.hstack(resized_images[2:4]),   # second row: 2 images
+		np.hstack(resized_images[4:6]),   # third row: 2 images
+		np.hstack(resized_images[6:]),   # fourth row: 2 images
+	]
+	mosaic = np.vstack(rows)  # combine vertically
+
+	cv2.namedWindow("Mosaic", cv2.WINDOW_NORMAL)
+	cv2.imwrite(save_pth, mosaic)
+	cv2.imshow("Mosaic", mosaic)
+	if cv2.waitKey(0) == 'q':
+		cv2.destroyAllWindows()
+
 def visTiff(pth: str) -> None:
    img = cv2.imread(pth, cv2.IMREAD_UNCHANGED)
    # only for matplotlib to display
@@ -356,19 +410,19 @@ def compressTiffFromFolder(folder_pth: str) -> None:
 
 def mvImgs(folder_pth: str, file_type: str, increment: int):
 	# find all files with type file_type
-    files = [f for f in os.listdir(folder_pth) if f.endswith(file_type)]
-    # revert order, assuming file names are integers
-    files.sort(key=lambda x: int(os.path.splitext(x)[0]), reverse=True)
-    
-    for file in files:
-        # extract the numeric part
-        current_num = int(os.path.splitext(file)[0])
-        # increment filename
-        new_filename = f"{current_num+increment}{file_type}"
-        
-        # rename
-        os.rename(os.path.join(folder_pth, file), os.path.join(folder_pth, new_filename))
-        print(f"Renamed {file} to {new_filename}")
+	files = [f for f in os.listdir(folder_pth) if f.endswith(file_type)]
+	# revert order, assuming file names are integers
+	files.sort(key=lambda x: int(os.path.splitext(x)[0]), reverse=True)
+	
+	for file in files:
+		# extract the numeric part
+		current_num = int(os.path.splitext(file)[0])
+		# increment filename
+		new_filename = f"{current_num+increment}{file_type}"
+		
+		# rename
+		os.rename(os.path.join(folder_pth, file), os.path.join(folder_pth, new_filename))
+		print(f"Renamed {file} to {new_filename}")
 
 def extract_number(filename: str) -> int:
 	match = re.search(r'(\d+)', filename)
@@ -614,7 +668,7 @@ if __name__ == "__main__":
 	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# compressTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
 	# visCompressedPC(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.npz"))
-	compressTiffFromFolder('/data/rh8d_dataset/keypoint_test/orig')
+	# compressTiffFromFolder('/data/rh8d_dataset/keypoint_test/orig')
 	# mvImgs('/data/rh8d_dataset/keypoint_11_11_13_30_wp_0_to_2004_no_add_imgs/orig', '.jpg', 100)
 	
 	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
@@ -622,3 +676,5 @@ if __name__ == "__main__":
 	# trainingDataMono('10013')
 	# trainingDataFinger('10013')
 	# trainingDataThumb('10013')
+
+	mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
