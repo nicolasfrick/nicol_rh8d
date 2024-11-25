@@ -1,7 +1,7 @@
 import matplotlib
 import numpy as np
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, Optional, Union
 from matplotlib import gridspec
 import matplotlib.pyplot as plt
 from util import *
@@ -122,7 +122,15 @@ class KeypointPlot():
 		self.ax_3d.quiver(origin[0], origin[1], origin[2], y_axis[0], y_axis[1], y_axis[2], color='g', length=self.scale, label=f'{label}_y')
 		self.ax_3d.quiver(origin[0], origin[1], origin[2], z_axis[0], z_axis[1], z_axis[2], color='b', length=self.scale, label=f'{label}_z')
 
-	def plotKeypoints(self, fk_dict: dict, parent_joint: str, pause=0.0, cla=False) -> np.ndarray:
+	def plotKeypoints(self, 
+				   						fk_dict: dict, 
+										parent_joint: str, 
+										pause: Optional[float]=0.0, 
+										cla: Optional[bool]=False, 
+										line: Optional[bool]=True, 
+										elev: Optional[Union[float, None]]=None, 
+										azim: Optional[Union[float, None]]=None, 
+										) -> np.ndarray:
 		if cla:
 			self.clear()
 
@@ -132,6 +140,10 @@ class KeypointPlot():
 		self.ax_3d.set_xlim([self.x_llim, self.x_hlim])
 		self.ax_3d.set_ylim([self.y_llim, self.y_hlim])
 		self.ax_3d.set_zlim([self.z_llim, self.z_hlim])
+		if elev is not None and azim is not None:
+			self.ax_3d.view_init(elev=elev, azim=azim)
+			self.ax_3d.view_init(elev=elev, azim=azim)
+			self.ax_3d.view_init(elev=elev, azim=azim)
 
 		last_center_point = self.root_center_point
 		for joint, fk in fk_dict.items():
@@ -140,7 +152,7 @@ class KeypointPlot():
 			self._plotKeypoint(trans, fk['rot_mat'], joint)
 
 			# connect cs
-			if last_center_point is not None:
+			if last_center_point is not None and line:
 				self.ax_3d.plot([last_center_point[0], trans[0]], [last_center_point[1], trans[1]], [last_center_point[2], trans[2]], color=fk['color'], linewidth=self.linewidth)
 			last_center_point = trans
 
@@ -157,7 +169,7 @@ class KeypointPlot():
 	
 def plotTrainingData(file_pth: str) -> None:
 	matplotlib.use('TkAgg') 
-	data_pth = os.path.join(DATA_PTH, 'keypoint/train', file_pth)
+	data_pth = os.path.join(DATA_PTH, 'keypoint/train/config', file_pth)
 	df = pd.read_json(data_pth, orient='index')      
 
 	cols = ["cmd", "angle"]
@@ -182,7 +194,7 @@ def plotTrainingData(file_pth: str) -> None:
 
 def plotTrainingDataLogScale(file_pth: str) -> None:
 	matplotlib.use('TkAgg') 
-	data_pth = os.path.join(DATA_PTH, 'keypoint/train', file_pth)
+	data_pth = os.path.join(DATA_PTH, 'keypoint/train/config', file_pth)
 	df = pd.read_json(data_pth, orient='index')      
 
 	cols = ["cmd", "angle"]
@@ -207,5 +219,50 @@ def plotTrainingDataLogScale(file_pth: str) -> None:
 	plt.grid()
 	plt.show()
 	
+def plotKeypoints(net: str, start: int=0, end: int=10000) -> None:
+	# load keypoints
+	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json')) 
+	# get tcp name
+	cfg = loadNetConfig('finger')
+	tcp = cfg[net]['relative_to']
+
+	# plot data
+	cv2.namedWindow("Keypoints", cv2.WINDOW_NORMAL)
+	keypt_plot = KeypointPlot(x_llim=0.0, 
+														x_hlim=0.075,
+														y_llim=-0.1,
+														y_hlim=0.03,
+														z_llim=-0.04,
+														z_hlim=0.06,)
+	try:
+		for idx in range(start, end):
+			keypt_dict = {}
+			keypt_plot.clear()
+
+			# get keypoint tcp as root tf
+			tcp_trans = keypoints_dct[tcp].loc[idx, 'trans']
+			tcp_rot_mat =  keypoints_dct[tcp].loc[idx, 'rot_mat']
+			if tcp_trans is None or tcp_rot_mat is None:
+				continue
+			(inv_tcp_trans, inv_tcp_rot_mat) = invPersp(tcp_trans, tcp_rot_mat, RotTypes.MAT)
+			T_tcp_root = pose2Matrix(inv_tcp_trans, inv_tcp_rot_mat, RotTypes.MAT)
+
+			for joint in keypoints_dct:
+				trans = keypoints_dct[joint].loc[idx, 'trans']
+				rot_mat =  keypoints_dct[joint].loc[idx, 'rot_mat']
+				if trans is not None and rot_mat is not None and joint not in ['joint7', 'joint8']:
+					T_root_keypt = pose2Matrix(np.array(trans), np.array(rot_mat), RotTypes.MAT) 
+					T_tcp_keypt = T_tcp_root @ T_root_keypt 
+					keypt_dict.update( {joint: {'trans': T_tcp_keypt[:3, 3], 'rot_mat': T_tcp_keypt[:3, :3], 'color': 'b'}} )
+
+			buffer = keypt_plot.plotKeypoints(keypt_dict, tcp, pause=0.1, line=False, elev=10, azim=10)
+			cv2.imshow("Keypoints", cv2.cvtColor(buffer, cv2.COLOR_RGBA2BGR))
+			if cv2.waitKey(1) == 'q':
+				return
+	finally:
+		cv2.destroyAllWindows()
+
 if __name__ == "__main__":
-	plotTrainingData('10013/index_flexion_poly.json')
+	# plotTrainingData('index_flexion_poly.json')
+	plotKeypoints('index_flexion', 0, 1000)
