@@ -430,7 +430,7 @@ def extract_number(filename: str) -> int:
 
 def img2Video(img_path: str, output_name: str, img_format: str='.jpg', video_format: str='mp4v', fps: float=30):
 	
-	images = [img for img in os.listdir(img_path) if img.endswith(img_format)]
+	images = [img for img in os.listdir(img_path) if img.endswith(img_format) and not 'plot3D_' in img]
 	images.sort(key=extract_number) 
 	print("Converting", len(images), "images to video", output_name, "with format", video_format, "from", img_path)
 
@@ -491,32 +491,14 @@ def joinDF(pth1: str, pth2: str, save_pth: str) -> None:
 
 	df_concat.to_json(save_pth, orient="index", indent=4)
 
-def joinTrainingData() -> None:
-	"""Create all joined datasets for training."""
-	data_pth = os.path.join(DATA_PTH, 'keypoint')
-
-	# join detections
-	joinDetectionDataset(os.path.join(data_pth,'11_11_13_30/detection_11_11_13_30_wp_0_to_2004.json'), 
-												os.path.join(data_pth,'11_15_10_46/detection_11_15_10_46_wp_2003_to_7387.json'),
-												os.path.join(data_pth, 'joined/detections_10013.json'))
-
-	joinDetectionDataset(os.path.join(data_pth,'11_11_13_30/kpts3D_11_11_13_30_wp_0_to_2004.json'), 
-												os.path.join(data_pth,'11_15_10_46/kpts3D_11_15_10_46_wp_2003_to_7387.json'),
-												os.path.join(data_pth, 'joined/keypoints_10013.json'))
-
-	# join tcp fk
-	joinDF(os.path.join(data_pth, '11_11_13_30/tcp_tf_11_11_13_30_wp_0_to_2004.json'),
-					os.path.join(data_pth, '11_15_10_46/tcp_tf_11_15_10_46_wp_2003_to_7387.json'),
-					os.path.join(data_pth, 'joined/tcp_tf_10013.json'))
-
 def trainingDataMono(folder: str) -> None:
 	"""Load joined datasets and create training data for a 
 	 	mono joint. Find valid entries out of the detection frame.
 	"""
 	# data
 	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
-	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')      
 
 	# net setup
 	config = loadNetConfig('mono_joint')
@@ -529,14 +511,16 @@ def trainingDataMono(folder: str) -> None:
 		# remove nan entries
 		df_filtered = detection_df.dropna(how='all')
 		valid_indices = df_filtered.index.to_list()
+		invalid_indices = detection_df.index.difference(valid_indices)
+		print(net, "has", len(invalid_indices), "invalid indices,", len(valid_indices), "valid indices,", len(detection_df), "overall")
 
 		# create training data
 		train_df = pd.DataFrame(columns=MONO_TRAIN_COLS)
 		for idx in valid_indices:
-			row = detection_df.iloc[idx]
+			row = detection_df.loc[idx]
 			data = {'cmd': row.loc['cmd'], 
 		   					'dir': row.loc['direction'], 
-							'quat': fk_df.iloc[idx]['quat'], 
+							'quat': fk_df.loc[idx, 'quat'], 
 							'angle': row.loc['angle']}
 			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
 		train_df.to_json(os.path.join(TRAIN_PTH, folder, net + '_mono.json'), orient="index", indent=4)
@@ -548,9 +532,9 @@ def trainingDataFinger(folder: str) -> None:
 	"""
 	# load recordings
 	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
-	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
-	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json'))
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')      
 	
 	config = loadNetConfig('finger')
 
@@ -583,14 +567,14 @@ def trainingDataFinger(folder: str) -> None:
 		# create training data
 		train_df = pd.DataFrame(columns=FINGER_TRAIN_COLS)
 		for idx in common_indices:
-			row1 = detection_df1.iloc[idx]
-			row2 = detection_df2.iloc[idx]
-			row3 = detection_df3.iloc[idx]
+			row1 = detection_df1.loc[idx]
+			row2 = detection_df2.loc[idx]
+			row3 = detection_df3.loc[idx]
 			assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd'])
 			assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction'])
 			data = { 'cmd': row1.loc['cmd'],
 							'dir': row1.loc['direction'],
-							'quat': fk_df.iloc[idx]['quat'], 
+							'quat': fk_df.loc[idx]['quat'], 
 							'angle1': row1.loc['angle'], 
 							'angle2': row2.loc['angle'], 
 							'angle3': row3.loc['angle'], 
@@ -606,9 +590,9 @@ def trainingDataThumb(folder: str) -> None:
 	"""
 	# load recordings
 	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detections_10013.json'))
-	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'keypoints_10013.json'))
-	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf_10013.json'), orient='index')      
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json'))
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')      
 	
 	config = loadNetConfig('thumb')
 
@@ -646,17 +630,17 @@ def trainingDataThumb(folder: str) -> None:
 	# create training data
 	train_df = pd.DataFrame(columns=THUMB_TRAIN_COLS)
 	for idx in common_indices:
-		row0 = detection_df0.iloc[idx]
-		row1 = detection_df1.iloc[idx]
-		row2 = detection_df2.iloc[idx]
-		row3 = detection_df3.iloc[idx]
+		row0 = detection_df0.loc[idx]
+		row1 = detection_df1.loc[idx]
+		row2 = detection_df2.loc[idx]
+		row3 = detection_df3.loc[idx]
 		assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd']) # same actuator
 		assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction']) # same actuator
 		data = { 'cmd1': row0.loc['cmd'],
 						'cmd2': row1.loc['cmd'],
 						'dir1': row0.loc['direction'],
 						'dir2': row1.loc['direction'],
-						'quat': fk_df.iloc[idx]['quat'], 
+						'quat': fk_df.loc[idx]['quat'], 
 						'angle1': row1.loc['angle'], 
 						'angle2': row2.loc['angle'], 
 						'angle3': row3.loc['angle'], 
@@ -665,16 +649,10 @@ def trainingDataThumb(folder: str) -> None:
 	train_df.to_json(os.path.join(TRAIN_PTH, folder, 'thumb_flexion_poly.json'), orient="index", indent=4)
 
 if __name__ == "__main__":
-	# visTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
-	# compressTiff(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.tiff"))
-	# visCompressedPC(os.path.join(REC_DIR, "keypoint_17_03_57/head_cam/0.npz"))
-	# compressTiffFromFolder('/data/rh8d_dataset/keypoint_test/orig')
-	# mvImgs('/data/rh8d_dataset/keypoint_11_11_13_30_wp_0_to_2004_no_add_imgs/orig', '.jpg', 100)
-	
-	# img2Video(os.path.join(REC_DIR, "qdec_record_2/det"), os.path.join(REC_DIR, "qdec_record_2/det/qdec_detection_2.mp4"), fps=25)
+	# img2Video(os.path.join(REC_DIR, "joined/det"), os.path.join(REC_DIR, "movies/detection.mp4"), fps=25)
 
-	# trainingDataMono('10013')
-	# trainingDataFinger('10013')
-	# trainingDataThumb('10013')
+	trainingDataMono('config')
+	# trainingDataFinger('config')
+	# trainingDataThumb('config')
 
-	mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
+	# mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
