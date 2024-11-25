@@ -532,17 +532,18 @@ def trainingDataFinger(folder: str) -> None:
 	"""
 	# load recordings
 	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json'))
-	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))
-	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')      
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json')) # contains nans
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json')) # contains nans
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index') # contains no nans
 	
+	# dataset config
 	config = loadNetConfig('finger')
 
 	for net, cfg in config.items():
 		tool = cfg['tool']
 		tcp = cfg['relative_to']
 		out_joints = cfg['output']
-		print("Creating dataset for", net, "with input:", cfg['input'], "output:", out_joints, "tool:", tool)
+		print("Creating dataset for", net, "with input:", cfg['input'], "output:", out_joints, "tool:", tool, "relative to", tcp)
 
 		# assuming 3 joints 
 		detection_df1 = detection_dct[out_joints[0]]
@@ -560,8 +561,23 @@ def trainingDataFinger(folder: str) -> None:
 		inv_idxs3 = detection_df3.index.difference(valid_detection_df3.index).tolist()
 		print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
 
+		# keypoints
+		tip_keypoints_df = keypoints_dct[tool]
+		valid_tip_keypoints = tip_keypoints_df.dropna(subset=["trans", "rot_mat"], how="all")
+		inv_tipidxs = tip_keypoints_df.index.difference(valid_tip_keypoints.index).tolist()
+		print(tool, "has", len(inv_tipidxs), "invalid indices")
+
+		tcp_keypoints_df = keypoints_dct[tcp]
+		valid_tcp_keypoints = tcp_keypoints_df.dropna(subset=["trans", "rot_mat"], how="all")
+		inv_tcpidxs = tcp_keypoints_df.index.difference(valid_tcp_keypoints.index).tolist()
+		print(tcp, "has", len(inv_tcpidxs), "invalid indices")
+
 		# find intersecting indices where entries are valid
-		common_indices = valid_detection_df1.index.intersection(valid_detection_df2.index).intersection(valid_detection_df3.index).to_list()
+		common_indices = valid_detection_df1.index\
+												.intersection(valid_detection_df2.index)\
+													.intersection(valid_detection_df3.index)\
+														.intersection(valid_tip_keypoints.index)\
+															.intersection(valid_tcp_keypoints.index).to_list()
 		invalid_indices = detection_df1.index.difference(common_indices)
 		print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df1.index))
 
@@ -579,7 +595,8 @@ def trainingDataFinger(folder: str) -> None:
 			tcp_trans = keypoints_dct[tcp]['trans'][idx]
 			tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
 			T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
-			T_tcp_root = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+			(tvec, rot_mat) = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+			T_tcp_root = pose2Matrix(tvec, rot_mat, RotTypes.MAT)
 			T_tcp_tip = T_tcp_root @ T_root_tip
 			# add training data
 			data = { 'cmd': row1.loc['cmd'],
@@ -600,17 +617,18 @@ def trainingDataThumb(folder: str) -> None:
 	"""
 	# load recordings
 	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json'))
-	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))
-	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')      
+	detection_dct = readDetectionDataset(os.path.join(data_pth, 'detection.json')) # contains nans
+	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json')) # contains nans
+	fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index') # contains no nans
 	
+	# dataset config
 	config = loadNetConfig('thumb')
 
 	tool = config['tool']
 	tcp = config['relative_to']
 	in_joints = config['input']
 	out_joints = config['output']
-	print("Creating dataset for thumb", "with input:", in_joints, "output:", out_joints, "tool:", tool)
+	print("Creating dataset for thumb", "with input:", in_joints, "output:", out_joints, "tool:", tool, "relative to", tcp)
 	# base joint
 	detection_df0 = detection_dct[in_joints[0]] # in_joints[1] is direct actuator of out_joints
 	valid_detection_df0 = detection_df0.dropna(how='all')
@@ -632,9 +650,25 @@ def trainingDataThumb(folder: str) -> None:
 	valid_detection_df3 = detection_df3.dropna(how='all')
 	inv_idxs3 = detection_df3.index.difference(valid_detection_df3.index).tolist()
 	print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
+
+	# keypoints
+	tip_keypoints_df = keypoints_dct[tool]
+	valid_tip_keypoints = tip_keypoints_df.dropna(subset=["trans", "rot_mat"], how="all")
+	inv_tipidxs = tip_keypoints_df.index.difference(valid_tip_keypoints.index).tolist()
+	print(tool, "has", len(inv_tipidxs), "invalid indices")
+
+	tcp_keypoints_df = keypoints_dct[tcp]
+	valid_tcp_keypoints = tcp_keypoints_df.dropna(subset=["trans", "rot_mat"], how="all")
+	inv_tcpidxs = tcp_keypoints_df.index.difference(valid_tcp_keypoints.index).tolist()
+	print(tcp, "has", len(inv_tcpidxs), "invalid indices")
 	
 	# find intersecting indices where entries are valid
-	common_indices = valid_detection_df0.index.intersection(valid_detection_df1.index).intersection(valid_detection_df2.index).intersection(valid_detection_df3.index).to_list()
+	common_indices = valid_detection_df0.index\
+											.intersection(valid_detection_df1.index)\
+												.intersection(valid_detection_df2.index)\
+													.intersection(valid_detection_df3.index)\
+														.intersection(valid_tip_keypoints.index)\
+															.intersection(valid_tcp_keypoints.index).to_list()
 	invalid_indices = detection_df0.index.difference(common_indices)
 	print("Ignoring", len(invalid_indices), "invalid indices, found", len(common_indices), "valid indices out of", len(detection_df0.index))
 
@@ -653,7 +687,8 @@ def trainingDataThumb(folder: str) -> None:
 		tcp_trans = keypoints_dct[tcp]['trans'][idx]
 		tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
 		T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
-		T_tcp_root = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+		(tvec, rot_mat) = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+		T_tcp_root = pose2Matrix(tvec, rot_mat, RotTypes.MAT)
 		T_tcp_tip = T_tcp_root @ T_root_tip
 		# add training data
 		data = { 'cmd1': row0.loc['cmd'],
@@ -671,8 +706,8 @@ def trainingDataThumb(folder: str) -> None:
 if __name__ == "__main__":
 	# img2Video(os.path.join(REC_DIR, "joined/det"), os.path.join(REC_DIR, "movies/detection.mp4"), fps=25)
 
-	trainingDataMono('config')
+	# trainingDataMono('config')
 	# trainingDataFinger('config')
-	# trainingDataThumb('config')
+	trainingDataThumb('config')
 
 	# mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
