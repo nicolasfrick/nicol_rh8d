@@ -1,9 +1,12 @@
+import os
+import glob
 import matplotlib
 import numpy as np
 import pandas as pd
-from typing import Tuple, Optional, Union
-from matplotlib import gridspec
 import matplotlib.pyplot as plt
+from matplotlib import gridspec
+from typing import Tuple, Optional, Union
+from scipy.interpolate import UnivariateSpline
 from util import *
 matplotlib.use('agg')
 
@@ -167,19 +170,31 @@ class KeypointPlot():
 
 		return np.array(self.fig.canvas.renderer.buffer_rgba())
 	
-def plotTrainingData(file_pth: str) -> None:
+def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True) -> None:
 	matplotlib.use('TkAgg') 
-	data_pth = os.path.join(DATA_PTH, 'keypoint/train/config', file_pth)
+
 	df = pd.read_json(data_pth, orient='index')      
 
 	cols = ["cmd", "angle"]
-	if 'thumb' in file_pth and not 'mono' in file_pth:
+	if 'thumb' in data_pth and not 'mono' in data_pth:
 		cols = ["cmd1", "cmd2", "angle1", "angle2", "angle3"]
-	elif 'poly' in file_pth:
+	elif 'poly' in data_pth:
 		cols = ["cmd", "angle1", "angle2", "angle3"]
 
 	fig, ax = plt.subplots()
-	df[cols].plot(title=file_pth.split('/')[1].replace('.json', ''), ax=ax, grid=True, kind="line", marker='.', markersize=4)
+	df[cols].plot(title=data_pth.split('/')[-1].replace('.json', ''), ax=ax, grid=True, kind="line", marker='.', markersize=4)
+	
+	# rotation magnitude
+	quats = np.array([np.array(lst) for lst in df['quat']])
+	angle_radians = 2 * np.arccos(quats[:, 3]) # rotation angle in radians
+	angle_radians -= 4
+	# spline smoothing
+	x = np.arange(len(angle_radians))
+	spline = UnivariateSpline(x, angle_radians, s=300) 
+	smoothed = spline(x)
+	# plot
+	ax.plot(df.index.to_list(), smoothed, label="magnitude of rotation")
+	ax.legend()
 	
 	# secondary y-axis
 	ax2 = ax.twinx()
@@ -189,7 +204,9 @@ def plotTrainingData(file_pth: str) -> None:
 
 	plt.xlabel("Index")
 	plt.ylabel("Values")
-	# plt.grid()
+	plt.grid(visible=grid)
+	if save_pth is not None:
+		fig.savefig(save_pth, format='svg')
 	plt.show()
 
 def plotTrainingDataLogScale(file_pth: str) -> None:
@@ -263,6 +280,17 @@ def plotKeypoints(net: str, start: int=0, end: int=10000) -> None:
 	finally:
 		cv2.destroyAllWindows()
 
+def plotAllTrainingData(save: bool=False) -> None:
+	data_pth = os.path.join(DATA_PTH, 'keypoint/train/config')
+	pattern = os.path.join(data_pth, f'*.json*')
+	data_files = glob.glob(pattern, recursive=False)
+	save_files = [None for _ in range(len(data_files))]
+	if save:
+		save_files = [os.path.join(REC_DIR, os.path.basename(fl)).replace('json', 'svg') for fl in data_files]
+
+	for dfile, sfile in zip(data_files, save_files):
+		plotTrainingData(dfile, sfile)
+
 if __name__ == "__main__":
-	# plotTrainingData('index_flexion_poly.json')
-	plotKeypoints('index_flexion', 0, 1000)
+	# plotKeypoints('index_flexion', 0, 1000)
+	plotAllTrainingData()

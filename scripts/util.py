@@ -705,9 +705,8 @@ def trainingDataThumb(folder: str) -> None:
 
 if __name__ == "__main__":
 	# img2Video(os.path.join(REC_DIR, "joined/det"), os.path.join(REC_DIR, "movies/detection.mp4"), fps=25)
-
-	# trainingDataMono('config')
-	# trainingDataFinger('config')
-	trainingDataThumb('config')
-
 	# mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
+
+	trainingDataMono('config')
+	trainingDataFinger('config')
+	trainingDataThumb('config')
