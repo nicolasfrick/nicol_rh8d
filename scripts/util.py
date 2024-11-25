@@ -540,6 +540,7 @@ def trainingDataFinger(folder: str) -> None:
 
 	for net, cfg in config.items():
 		tool = cfg['tool']
+		tcp = cfg['relative_to']
 		out_joints = cfg['output']
 		print("Creating dataset for", net, "with input:", cfg['input'], "output:", out_joints, "tool:", tool)
 
@@ -572,13 +573,22 @@ def trainingDataFinger(folder: str) -> None:
 			row3 = detection_df3.loc[idx]
 			assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd'])
 			assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction'])
+			# we want tf tip relative to tcp
+			tip_trans = keypoints_dct[tool]['trans'][idx]
+			tip_rot = keypoints_dct[tool]['rot_mat'][idx]
+			tcp_trans = keypoints_dct[tcp]['trans'][idx]
+			tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
+			T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
+			T_tcp_root = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+			T_tcp_tip = T_tcp_root @ T_root_tip
+			# add training data
 			data = { 'cmd': row1.loc['cmd'],
 							'dir': row1.loc['direction'],
 							'quat': fk_df.loc[idx]['quat'], 
 							'angle1': row1.loc['angle'], 
 							'angle2': row2.loc['angle'], 
 							'angle3': row3.loc['angle'], 
-							'trans': keypoints_dct[tool]['trans'][idx]}
+							'trans': T_tcp_tip[:3, 3]}
 			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
 		train_df.to_json(os.path.join(TRAIN_PTH, folder, net + '_poly.json'), orient="index", indent=4)
 		print()
@@ -597,6 +607,7 @@ def trainingDataThumb(folder: str) -> None:
 	config = loadNetConfig('thumb')
 
 	tool = config['tool']
+	tcp = config['relative_to']
 	in_joints = config['input']
 	out_joints = config['output']
 	print("Creating dataset for thumb", "with input:", in_joints, "output:", out_joints, "tool:", tool)
@@ -636,6 +647,15 @@ def trainingDataThumb(folder: str) -> None:
 		row3 = detection_df3.loc[idx]
 		assert(row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd']) # same actuator
 		assert(row1.loc['direction'] == row2.loc['direction'] == row3.loc['direction']) # same actuator
+		# we want tf tip relative to tcp
+		tip_trans = keypoints_dct[tool]['trans'][idx]
+		tip_rot = keypoints_dct[tool]['rot_mat'][idx]
+		tcp_trans = keypoints_dct[tcp]['trans'][idx]
+		tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
+		T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
+		T_tcp_root = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+		T_tcp_tip = T_tcp_root @ T_root_tip
+		# add training data
 		data = { 'cmd1': row0.loc['cmd'],
 						'cmd2': row1.loc['cmd'],
 						'dir1': row0.loc['direction'],
@@ -644,7 +664,7 @@ def trainingDataThumb(folder: str) -> None:
 						'angle1': row1.loc['angle'], 
 						'angle2': row2.loc['angle'], 
 						'angle3': row3.loc['angle'], 
-						'trans': keypoints_dct[tool]['trans'][idx]}
+						'trans': T_tcp_tip[:3, 3]}
 		train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
 	train_df.to_json(os.path.join(TRAIN_PTH, folder, 'thumb_flexion_poly.json'), orient="index", indent=4)
 

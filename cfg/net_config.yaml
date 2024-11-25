@@ -13,21 +13,26 @@ thumb:
   input: ['jointT0', 'jointT1']
   output: ['jointT1', 'jointT2', 'jointT3']
   tool: 'joint_Tbumper'
+  relative_to: 'joint_r_laser'
     
 finger:
   index_flexion: 
     input: 'jointI1'
     output: ['jointI1', 'jointI2', 'jointI3']
     tool: 'joint_Ibumper'
+    relative_to: 'joint_r_laser'
   middle_flexion: 
     input: 'jointM1'
     output: ['jointM1', 'jointM2', 'jointM3']
     tool: 'joint_Mbumper'
+    relative_to: 'joint_r_laser'
   ring_flexion: 
     input: 'jointL1R1'
     output: ['jointR1', 'jointR2', 'jointR3']
     tool: 'joint_Rbumper'
+    relative_to: 'joint_r_laser'
   little_flexion: 
     input: 'jointL1R1'
     output: ['jointL1', 'jointL2', 'jointL3']
     tool: 'joint_Lbumper'
+    relative_to: 'joint_r_laser'
