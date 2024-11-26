@@ -435,6 +435,7 @@ class Trainer():
 		self.log_domain = log_domain
 		self.weight_decay = weight_decay
 		self.best_val_loss = np.inf
+		self.best_chkpt_pth = None
 		
 		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name, dt_now)
 		if not os.path.exists(self.chkpt_path):
@@ -514,12 +515,25 @@ class Trainer():
 				writer.add_scalar('Loss/val', val_loss, epoch)
 
 				# save the model weights if validation loss has improved
+				# if val_loss < self.best_val_loss:
+				# 	print("improved", val_loss, self.best_val_loss)
+				# 	self.best_val_loss = val_loss
+				# 	chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+				# 	torch.save(model.state_dict(), chkpt_pth)
+				# 	print("Saving", chkpt_pth)
 				if val_loss < self.best_val_loss:
-					print("improved", val_loss, self.best_val_loss)
 					self.best_val_loss = val_loss
-					chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
-					torch.save(model.state_dict(), chkpt_pth)
-					print("Saving", chkpt_pth)
+					chkpt = {
+						'epoch': epoch,
+						'model_state_dict': model.state_dict(),
+						'optimizer_state_dict': optimizer.state_dict(),
+						'best_val_loss': self.best_val_loss,
+					}
+					self.best_chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+					torch.save(chkpt, self.best_chkpt_pth)
+					# validate
+					torch.load(self.best_chkpt_pth)
+					print(f"Saved checkpoint to {self.best_chkpt_pth}")
 		
 		writer.close()
 		return val_loss
@@ -539,10 +553,9 @@ class Trainer():
 														).to(DEVICE)
 
 		# load model weights 
-		chkpt_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
-		chkpt_pth = os.path.join(self.chkpt_path, f'{chkpt_name}.pth')
-		print("Loading checkpoint from", chkpt_pth)
-		model.load_state_dict(torch.load(chkpt_pth))
+		print("Loading checkpoint from", self.best_chkpt_pth)
+		chkpt = torch.load(self.best_chkpt_pth)
+		model.load_state_dict(chkpt['model_state_dict'])
 
 		run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
 		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
@@ -555,7 +568,7 @@ class Trainer():
 			writer.add_scalar('Loss/test', test_loss, )
 
 		writer.close()
-		return test_loss, chkpt_pth
+		return test_loss, self.best_chkpt_pth
 	
 class Train():
 	""" Train all configurations found in the given folder having the specified pattern.
@@ -569,7 +582,7 @@ class Train():
 
 	"""
 	def __init__(self,
-			  				folder_pth: Optional[str] = '10013',
+			  				folder_pth: Optional[str] = 'config',
 							pattern: Optional[str]='mono',
 							test_size: Optional[float]=0.3, 
 							validation_size: Optional[float]=0.5,
