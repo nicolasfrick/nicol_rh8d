@@ -11,24 +11,22 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
-import pytorch_lightning as pl
+import lightning.pytorch as pl
 from optuna.trial import FrozenTrial
-from sklearn.model_selection import KFold
-from typing import Optional, Union, Tuple, Any
+from typing import Optional, Union, Tuple, List, Any
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.model_selection import train_test_split
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
+from torch.utils.data import DataLoader, TensorDataset
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers import TensorBoardLogger
+from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from optuna.integration import PyTorchLightningPruningCallback
-from torch.utils.data import DataLoader, TensorDataset, random_split
 from util import *
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_DEV = torch.cuda.device_count()
 NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
-print("\nNum GPUs available:", NUM_DEV, ",", NAME_DEV)
 
 class TrainingData():
 	"""
@@ -117,7 +115,6 @@ class TrainingData():
 	def prepare(self, df: pd.DataFrame, cols: list) -> None:
 		# load and normalize data
 		self.loadData(df, cols)
-		print()
 		print( "Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,", \
 					len(self.y_angles.keys()), "target angle data frames, one input orientation and target translation data frame.\n")
 		
@@ -133,11 +130,10 @@ class TrainingData():
 		pct_test -= pct_val
 		print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({pct_train}%),")
 		print(f"{len(self.X_test_tensor)} test ({pct_test}%) and {len(self.X_val_tensor)} validation ({pct_val}%) samples")
-		print()
 
 	def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 		"""Stack normalized data to a feature vector X and
-			  a target vector y.
+				a target vector y.
 		"""
 		# quaternions first, always present
 		X = self.X_quats.copy()
@@ -175,7 +171,7 @@ class TrainingData():
 
 	def splitData(self, X: np.ndarray, y: np.ndarray) -> None:
 		"""Split features X and targets y into a  train, test 
-			  and validation set and move to the present DEVICE.
+				and validation set and move to the present DEVICE.
 		"""
 		# split off training data
 		X_train, X_tmp, y_train, y_tmp = train_test_split(X, y, test_size=self.test_size, random_state=self.random_state)
@@ -221,11 +217,12 @@ class TrainingData():
 				raise NotImplementedError
 			
 	def normalizeData(self, 
-				   						data: np.ndarray, 
-				   						norm: Normalization, 
+					 					data: np.ndarray, 
+					 					norm: Normalization, 
 										scaler_dict: dict, 
 										scaler_name: str,
-										reshape: Tuple=(-1, 1)) -> np.ndarray:
+										reshape: Tuple=(-1, 1),
+										) -> np.ndarray:
 		
 		normalized_data = data.copy()
 		if reshape is not None: 
@@ -316,8 +313,8 @@ class TrainingData():
 	def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
 		scaler = joblib.load(pth)
 		return scaler
-		
-class MLP(pl.LightningModule):
+	
+class MLP(nn.Module):
 	"""
 		Create a standard feedforward net.
 		
@@ -334,23 +331,16 @@ class MLP(pl.LightningModule):
 
 	"""
 	def __init__(self, 
-			  				input_dim: int, 
+								input_dim: int, 
 								hidden_dim: int, 
 								output_dim: int, 
 								num_layers: int,
 								dropout_rate: Union[None, float],
-								lr: float,
-								weight_decay: float,
 								) -> None:
 		
-		super(MLP, self).__init__()
-		# log hyperparameters
-		self.save_hyperparameters()  
-		
-		self.lr = lr
-		self.weight_decay = weight_decay
+		super().__init__()
 
-		layers = []
+		layers: List[nn.Module] = []
 		# input
 		layers.append(nn.Linear(input_dim, hidden_dim))
 		layers.append(nn.ReLU())
@@ -367,74 +357,137 @@ class MLP(pl.LightningModule):
 
 		# model
 		self.model = nn.Sequential(*layers)
+	
+	# overwrite
+	def forward(self, data: torch.Tensor) -> torch.Tensor:
+		return self.model(data)
+		
+class WrappedMLP(pl.LightningModule):
+	"""
+		Lightning wrapper for the MLP impl.
+		
+		@property lr
+		@type float
+		@property weight_decay
+		@type float
 
+	"""
+	def __init__(self, 
+								input_dim: int, 
+								hidden_dim: int, 
+								output_dim: int, 
+								num_layers: int,
+								dropout_rate: Union[None, float],
+								lr: float,
+								weight_decay: float,
+								) -> None:
+		
+		super().__init__()
+
+		self.model = MLP(input_dim=input_dim, 
+					 						hidden_dim=hidden_dim, 
+											output_dim=output_dim, 
+											num_layers=num_layers, 
+											dropout_rate=dropout_rate,
+										)
+		
+		# auto save hparams
+		self.save_hyperparameters()
 		# loss
 		self.loss_fn = nn.MSELoss()
 	
-	def forward(self, x: np.ndarray) -> Any:
-		return self.model(x)
+	# overwrite
+	def forward(self, data: torch.Tensor) -> torch.Tensor:
+		return self.model(data)
 
-	def training_step(self, batch: np.ndarray, batch_idx: int):
-		x, y = batch
-		preds = self(x)
+	# overwrite
+	def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
+		X, y = batch
+		preds = self(X)
 		loss = self.loss_fn(preds, y)
 		self.log('train_loss', loss, on_step=False, on_epoch=True, prog_bar=True, )
 		return loss
 
-	def validation_step(self, batch: np.ndarray, batch_idx: int):
-		x, y = batch
-		preds = self(x)
+	# overwrite
+	def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
+		X, y = batch
+		preds = self(X)
 		val_loss = self.loss_fn(preds, y)
 		self.log('val_loss', val_loss, on_step=False, on_epoch=True, prog_bar=True, )
 		return val_loss
 
-	def configure_optimizers(self):
-		return optim.Adam(self.parameters(), lr=self.lr, weight_decay=self.weight_decay)
+	# overwrite
+	def configure_optimizers(self) -> optim.Optimizer:
+		return optim.Adam(self.model.parameters(), 
+											lr=self.hparams.lr, 
+											weight_decay=self.hparams.weight_decay, 
+											)
 
 class MLPDataModule(pl.LightningDataModule):
-    def __init__(self, 
-				 			X_train: np.ndarray, 
-							y_train: np.ndarray, 
-							X_val: np.ndarray, 
-							y_val: np.ndarray, 
-							batch_size: int
-							) -> None:
+		def __init__(self, 
+									X_train: torch.Tensor, 
+									y_train: torch.Tensor, 
+									X_val: torch.Tensor, 
+									y_val: torch.Tensor, 
+									X_test: torch.Tensor, 
+									y_test: torch.Tensor, 
+									batch_size: int,
+									) -> None:
 
-        super(MLPDataModule, self).__init__()
-        self.X_train = X_train
-        self.y_train = y_train
-        self.X_val = X_val
-        self.y_val = y_val
-        self.batch_size = batch_size
+				super().__init__()
+				self.X_train = X_train
+				self.y_train = y_train
+				self.X_val = X_val
+				self.y_val = y_val
+				self.X_test = X_test
+				self.y_test = y_test
+				self.batch_size = batch_size
 
-    def setup(self, stage=None):
-        dataset = TensorDataset(self.X_train, self.y_train)
-        n_val = int(0.2 * len(dataset))
-        n_train = len(dataset) - n_val
-        self.train_set, self.val_set = random_split(dataset, [n_train, n_val])
+		# overwrite
+		def train_dataloader(self) -> DataLoader:
+				dataset = TensorDataset(self.X_train, self.y_train)
+				return DataLoader(dataset, 
+					  							batch_size=self.batch_size, 
+													shuffle=True, 
+													pin_memory=False, 
+													num_workers=0, 
+													)
 
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True)
-
-    def val_dataloader(self) -> DataLoader:
-        dataset = TensorDataset(self.X_val, self.y_val)
-        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False)
+		# overwrite
+		def val_dataloader(self) -> DataLoader:
+				dataset = TensorDataset(self.X_val, self.y_val)
+				return DataLoader(dataset, 
+					  							batch_size=self.batch_size, 
+													shuffle=False, 
+													pin_memory=False, 
+													num_workers=0, 
+													)
+		
+		# overwrite
+		def test_dataloader(self) -> DataLoader:
+				dataset = TensorDataset(self.X_test, self.y_test)
+				return DataLoader(dataset, 
+					  							batch_size=self.batch_size, 
+													shuffle=False, 
+													pin_memory=False, 
+													num_workers=0, 
+													)
 
 class Trainer():
-	"""Training class for MLP task
+	"""Training class for optimization task
 
 			@param X_train_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param X_test_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param X_val_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param y_train_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param y_test_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param y_val_tensor
-			@type np.ndarray
+			@type torch.Tensor
 			@param epochs
 			@type int
 			@param model_type
@@ -448,6 +501,8 @@ class Trainer():
 			@param hidden_dim
 			@type Tuple
 			@param learning_rate
+			@type Tuple
+			@param batch_size
 			@type Tuple
 			@property dropout_rate
 			@type Union[None, Tuple]
@@ -465,17 +520,17 @@ class Trainer():
 	STEP = 2
 
 	def __init__(self,
-							X_train_tensor: np.ndarray,
-							X_test_tensor: np.ndarray,
-							X_val_tensor: np.ndarray,
-							y_train_tensor: np.ndarray,
-							y_test_tensor: np.ndarray,
-							y_val_tensor: np.ndarray,
-			  			epochs: Optional[int]=50,
-			  			model_type: Optional[Any]=MLP,
+							X_train_tensor: torch.Tensor,
+							X_test_tensor: torch.Tensor,
+							X_val_tensor: torch.Tensor,
+							y_train_tensor: torch.Tensor,
+							y_test_tensor: torch.Tensor,
+							y_val_tensor: torch.Tensor,
+							epochs: Optional[int]=50,
+							model_type: Optional[Any]=WrappedMLP,
 							input_dim: Optional[int]=6,
 							output_dim: Optional[int]=6,
-			  			num_layers: Optional[Tuple]=(1, 10, 1),
+							num_layers: Optional[Tuple]=(1, 10, 1),
 							hidden_dim: Optional[Tuple]=(1, 32, 2),
 							batch_size: Optional[Tuple]=(16, 32, 64),
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
@@ -510,131 +565,128 @@ class Trainer():
 			os.makedirs(self.chkpt_path, exist_ok=True) 
 		self.log_pth = os.path.join(MLP_LOG_PTH, name)
 		if not os.path.exists(self.log_pth):
-			os.makedirs(self.log_pth,  exist_ok=True) 
+			os.makedirs(self.log_pth, exist_ok=True) 
 
 		print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
-		print("Saving checkpoints in folder", self.chkpt_path)
+		print("Saving checkpoints in directory", self.chkpt_path)
 
-	def mini_batch_objective(self, trial: optuna.Trial) -> Any:
-		# suggest hyperparameters
+	def suggestHParams(self, trial: optuna.Trial) -> Tuple[int, int, float, Union[None, float], int]:
 		hidden_dim = trial.suggest_int('hidden_dim', 
-								 									  low=self.hidden_dim[self.LOW], 
-																	  high=self.hidden_dim[self.HIGH], 
-																	  step=self.hidden_dim[self.STEP] if not self.log_domain else 1,
-																	  log=self.log_domain,
-																	  )
+								 										low=self.hidden_dim[self.LOW], 
+																		high=self.hidden_dim[self.HIGH], 
+																		step=self.hidden_dim[self.STEP] if not self.log_domain else 1,
+																		log=self.log_domain,
+																		)
 		num_layers = trial.suggest_int('num_layers', 
-								 									  low=self.num_layers[self.LOW], 
-																	  high=self.num_layers[self.HIGH], 
-																	  step=self.num_layers[self.STEP] if not self.log_domain else 1,
-																	  log=self.log_domain,
-																	  )
+								 										low=self.num_layers[self.LOW], 
+																		high=self.num_layers[self.HIGH], 
+																		step=self.num_layers[self.STEP] if not self.log_domain else 1,
+																		log=self.log_domain,
+																		)
 		learning_rate = trial.suggest_float('learning_rate', 
-									  										 low=self.learning_rate[self.LOW], 
-																			 high=self.learning_rate[self.HIGH],
-																			 step=self.learning_rate[self.STEP] if not self.log_domain else 1,
-																			 log=self.log_domain,
-																			 )
-		batch_size = trial.suggest_categorical('batch_size', self.batch_size)
-		dropout_rate = self.dropout_rate
-		if dropout_rate is not None:
-			dropout_rate = trial.suggest_float('dropout_rate', 
-																				low=self.dropout_rate[self.LOW], 
-																				high=self.dropout_rate[self.HIGH], 
-																				step=self.dropout_rate[self.STEP] if not self.log_domain else 1,
+																				low=self.learning_rate[self.LOW], 
+																				high=self.learning_rate[self.HIGH],
+																				step=self.learning_rate[self.STEP] if not self.log_domain else 1,
 																				log=self.log_domain,
 																				)
+		dropout_rate = None if self.dropout_rate is None \
+										else trial.suggest_float('dropout_rate', 
+																							low=self.dropout_rate[self.LOW], 
+																							high=self.dropout_rate[self.HIGH], 
+																							step=self.dropout_rate[self.STEP] if not self.log_domain else 1,
+																							log=self.log_domain,
+																							)
+		batch_size = trial.suggest_categorical('batch_size', self.batch_size)
+
+		return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size
+
+	def miniBatchObjective(self, trial: optuna.trial.Trial) -> float:
+		"""	Train with mini-batch gradient descent, automatic checkpointing and 
+				tensorboard logging.
+		"""
+		# suggest hyperparameters
+		(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size) = self.suggestHParams(trial)
 		
 		# prep data
-		data_module = MLPDataModule(self.X_train_tensor, 
-							  											self.y_train_tensor,
-							  											self.X_val_tensor, 
-																		self.y_val_tensor, 
-																		batch_size=batch_size)
+		data_module = MLPDataModule(X_train=self.X_train_tensor, 
+																y_train=self.y_train_tensor,
+																X_val=self.X_val_tensor, 
+																y_val=self.y_val_tensor, 
+																X_test=self.X_test_tensor,
+																y_test=self.y_test_tensor,
+																batch_size=batch_size,
+																)
 		
-		# instantiate the model and move to device
+		# instantiate the model
 		model = self.ModelType(input_dim=self.input_dim, 
-						  						hidden_dim=hidden_dim, 
-													output_dim=self.output_dim, 
-													num_layers=num_layers,
-													dropout_rate=dropout_rate,
-													lr=learning_rate,
-													weight_decay=self.weight_decay,
-													)
+														hidden_dim=hidden_dim, 
+														output_dim=self.output_dim, 
+														num_layers=num_layers,
+														dropout_rate=dropout_rate,
+														lr=learning_rate,
+														weight_decay=self.weight_decay,
+														)
 		
-		self.checkpoint_callback = ModelCheckpoint(monitor='val_loss',  # Metric to monitor
-																								mode='min',          # Save the model when val_loss is minimized
-																								save_top_k=1,        # Save only the best model
-																								dirpath='checkpoints',  # Directory to save the checkpoints
-																								filename='best-model-{epoch:02d}-{val_loss:.2f}'
-																								)
+		# inst. logger
+		logger = TensorBoardLogger(self.log_pth, 
+							 									name=f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),
+															)
 		
-		logger = TensorBoardLogger("lightning_logs", name="optuna_logs")
+		# automatic checkpointing
+		self.checkpoint_callback = ModelCheckpoint(monitor='val_loss',  
+																								mode='min',         
+																								save_top_k=1,        
+																								dirpath=self.chkpt_path,
+																								filename='best_model_{epoch:02d}_{val_loss:.2f}',
+																							)
 
-		trainer = pl.Trainer(max_epochs=50,
-											logger=logger,
-											callbacks=[self.checkpoint_callback, 
-					  											PyTorchLightningPruningCallback(trial, monitor="val_loss"),
-																],
-											enable_progress_bar=True,
-											)	
+		trainer = pl.Trainer(max_epochs=self.epochs,
+													logger=logger,
+													log_every_n_steps=5,
+													callbacks=[self.checkpoint_callback, 
+																		 PyTorchLightningPruningCallback(trial, monitor="val_loss"),
+																		],
+													enable_progress_bar=True,
+													enable_checkpointing=True,
+													devices=1, 
+													strategy="auto",
+													precision=32, 
+													accelerator="gpu",
+												)	
+		# hyperparameters = dict(n_layers=n_layers, dropout=dropout, output_dims=output_dims)
+		# trainer.logger.log_hyperparams(hyperparameters)
 		
 		# train
-		trainer.fit(model, data_module)
+		trainer.fit(model, datamodule=data_module)
 
 		return trainer.callback_metrics["val_loss"].item()
 	
-	def mini_batch_test(self, trial: FrozenTrial) -> float:
-		# evaluate on the test set
-		model = MLP.load_from_checkpoint(self.checkpoint_callback.best_model_path)
+	def miniBatchTest(self, trial: FrozenTrial) -> float:
+		model_pth = self.checkpoint_callback.best_model_path
+		model = self.ModelType.load_from_checkpoint(model_pth)
 		model.eval()
 		with torch.no_grad():
 			test_outputs = model(self.X_test_tensor)
 			test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
 
-		return test_loss, self.best_chkpt_pth
+		return test_loss, model_pth
 	
-	def batch_objective(self, trial: optuna.Trial) -> Any:
+	def batchObjective(self, trial: optuna.Trial) -> Any:
 		"""	Train with batch gradient descent, manual checkpointing and
-				tensorboard logging.
+				manual tensorboard logging.
 		"""
 
 		# suggest hyperparameters
-		hidden_dim = trial.suggest_int('hidden_dim', 
-								 									  low=self.hidden_dim[self.LOW], 
-																	  high=self.hidden_dim[self.HIGH], 
-																	  step=self.hidden_dim[self.STEP] if not self.log_domain else 1,
-																	  log=self.log_domain,
-																	  )
-		num_layers = trial.suggest_int('num_layers', 
-								 									  low=self.num_layers[self.LOW], 
-																	  high=self.num_layers[self.HIGH], 
-																	  step=self.num_layers[self.STEP] if not self.log_domain else 1,
-																	  log=self.log_domain,
-																	  )
-		learning_rate = trial.suggest_float('learning_rate', 
-									  										 low=self.learning_rate[self.LOW], 
-																			 high=self.learning_rate[self.HIGH],
-																			 step=self.learning_rate[self.STEP] if not self.log_domain else 1,
-																			 log=self.log_domain,
-																			 )
-		dropout_rate = self.dropout_rate
-		if dropout_rate is not None:
-			dropout_rate = trial.suggest_float('dropout_rate', 
-																				low=self.dropout_rate[self.LOW], 
-																				high=self.dropout_rate[self.HIGH], 
-																				step=self.dropout_rate[self.STEP] if not self.log_domain else 1,
-																				log=self.log_domain,
-																				)
+		(hidden_dim, num_layers, learning_rate, dropout_rate, _) = self.suggestHParams(trial)
 		
 		# instantiate the model and move to device
 		model = self.ModelType(input_dim=self.input_dim, 
-						  						hidden_dim=hidden_dim, 
-													output_dim=self.output_dim, 
-													num_layers=num_layers,
-													dropout_rate=dropout_rate,
-													lr=learning_rate,
-													weight_decay=self.weight_decay,
+														hidden_dim=hidden_dim, 
+														output_dim=self.output_dim, 
+														num_layers=num_layers,
+														dropout_rate=dropout_rate,
+														lr=learning_rate,
+														weight_decay=self.weight_decay,
 													).to(DEVICE)
 		
 		# loss criterion and optimizer
@@ -679,12 +731,11 @@ class Trainer():
 					torch.save(chkpt, self.best_chkpt_pth)
 					# validate
 					torch.load(self.best_chkpt_pth)
-					print(f"Saved checkpoint to {self.best_chkpt_pth}")
 		
 		writer.close()
 		return val_loss
 	
-	def batch_test(self, trial: FrozenTrial) -> float:
+	def batchTest(self, trial: FrozenTrial) -> float:
 		hidden_dim = trial.params['hidden_dim']
 		num_layers = trial.params['num_layers']
 		learning_rate = trial.params['learning_rate']
@@ -727,10 +778,12 @@ class Train():
 			@type str
 			@param optim_trials
 			@type int
+			@param pruning
+			@type bool
 
 	"""
 	def __init__(self,
-			  			folder_pth: Optional[str] = 'config',
+							folder_pth: Optional[str] = 'config',
 							pattern: Optional[str]='mono',
 							test_size: Optional[float]=0.3, 
 							validation_size: Optional[float]=0.5,
@@ -739,14 +792,16 @@ class Train():
 							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							input_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							target_norm: Optional[Normalization]=Normalization.Z_SCORE,
-			  			epochs: Optional[int]=50,
-			  			num_layers: Optional[Tuple]=(1, 10, 1),
+							epochs: Optional[int]=50,
+							num_layers: Optional[Tuple]=(1, 10, 1),
 							hidden_dim: Optional[Tuple]=(1, 32, 2),
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
 							log_domain: Optional[bool]=False,
 							weight_decay: Optional[float]=0,
 							optim_trials: Optional[int]=100,
+							batch_size: Optional[Tuple]=(18, 32, 64),
+							pruning: Optional[bool]=False,
 							) -> None:
 		
 		# load training data per configuration
@@ -768,6 +823,8 @@ class Train():
 		self.log_domain = log_domain 
 		self.weight_decay = weight_decay 
 		self.optim_trials = optim_trials
+		self.batch_size = batch_size
+		self.pruning = pruning
 		self.log = {}
 
 	def run(self) -> None:
@@ -775,6 +832,8 @@ class Train():
 			self.runStudy(fl)
 
 	def runStudy(self, file_pth: str) -> None:
+		print(f"\n{50*'#'}")
+
 		td = TrainingData(data_file=file_pth,
 											test_size=self.test_size,
 											validation_size=self.validation_size,
@@ -785,14 +844,14 @@ class Train():
 											target_norm=self.target_norm,
 										)
 		
-		trainer = Trainer(  X_train_tensor=td.X_train_tensor,
+		trainer = Trainer(X_train_tensor=td.X_train_tensor,
 											X_test_tensor=td.X_test_tensor,
 											X_val_tensor=td.X_val_tensor,
 											y_train_tensor=td.y_train_tensor,
 											y_test_tensor=td.y_test_tensor,
 											y_val_tensor=td.y_val_tensor,
 											epochs=self.epochs,
-											model_type=MLP,
+											model_type=WrappedMLP,
 											input_dim=td.num_features,
 											output_dim=td.num_targets,
 											num_layers=self.num_layers,
@@ -801,12 +860,17 @@ class Train():
 											dropout_rate=self.dropout_rate,
 											log_domain=self.log_domain,
 											weight_decay=self.weight_decay,
+											batch_size=self.batch_size,
 											name=td.name,
 										)
 		
+		print(f"\n{50*'#'}")
+		
 		# run optuna optimization
-		study = optuna.create_study(direction='minimize', )
-		study.optimize(trainer.batch_objective, n_trials=self.optim_trials, show_progress_bar=True, )
+		study = optuna.create_study(direction='minimize', 
+							  								pruner=optuna.pruners.MedianPruner() if self.pruning else optuna.pruners.NopPruner(), 
+																)
+		study.optimize(trainer.miniBatchObjective, n_trials=self.optim_trials, show_progress_bar=True, )
 
 		# Retrieve the best trial
 		trial = study.best_trial
@@ -819,7 +883,7 @@ class Train():
 		print("Finished optimization of ", td.name)
 
 		print("Running test...")
-		(res, chkpt_pth) = trainer.batch_test(trial)
+		(res, chkpt_pth) = trainer.miniBatchTest(trial)
 		print("Result:", res)
 		print()
 
@@ -851,10 +915,12 @@ if __name__ == '__main__':
 	train_group.add_argument('--optim_trials', type=int, metavar='int', help='Number of optimization trials.', default=100)
 	train_group.add_argument('--num_layers', type=parseIntTuple, help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
 	train_group.add_argument('--hidden_dim', type=parseIntTuple, help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
+	train_group.add_argument('--batch_size', type=parseIntTuple, help='Choices for mini-batch training (int), eg. 18,32,64,128.', default='18,32,64')
 	train_group.add_argument('--learning_rate', type=parseFloatTuple, help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 	train_group.add_argument('--dropout_rate', type=parseFloatTuple, help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
 	train_group.add_argument('--log_domain', action='store_true', help='Change optimizer params logarithmically.')
 	train_group.add_argument('--weight_decay', type=float, metavar='float', help='L2 regularization weight decay value, disable with 0.', default=0.01)
+	train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization.')
 	args = parser.parse_args()
 
 	# clean only
@@ -879,4 +945,6 @@ if __name__ == '__main__':
 				log_domain=args.log_domain,
 				weight_decay=args.weight_decay,
 				optim_trials=args.optim_trials,
+				batch_size=args.batch_size,
+				pruning=args.pruning,
 				).run()
