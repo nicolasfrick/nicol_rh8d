@@ -108,6 +108,8 @@ NORMS = f"{Normalization.NONE.value}, {Normalization.MINMAX_CENTERED.value}, {No
 
 def clean(args: Any) -> bool:
 	if args.clean_all:
+		if input("Cleaning all training data? Type y to proceed cleaning") != 'y':
+			return False
 		args.clean_log=True
 		args.clean_scaler=True
 		args.clean_checkpoint=True

@@ -76,7 +76,7 @@ class TrainingData():
 		self.file_name =  split[-1]
 		self.folder_pth = "/".join(split[: -1])
 		self.name = self.file_name.replace('.json', '')
-		self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name, dt_now)
+		self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name)
 		if not os.path.exists(self.scaler_pth):
 			os.makedirs(self.scaler_pth, exist_ok=True) 
 
@@ -553,14 +553,14 @@ class Trainer():
 																		batch_size=batch_size)
 		
 		# instantiate the model and move to device
-		model = self.ModelType( input_dim=self.input_dim, 
-						  								 hidden_dim=hidden_dim, 
-														 output_dim=self.output_dim, 
-														 num_layers=num_layers,
-														 dropout_rate=dropout_rate,
-														 lr=learning_rate,
-														 weight_decay=self.weight_decay,
-														 )#.to(DEVICE)
+		model = self.ModelType(input_dim=self.input_dim, 
+						  						hidden_dim=hidden_dim, 
+													output_dim=self.output_dim, 
+													num_layers=num_layers,
+													dropout_rate=dropout_rate,
+													lr=learning_rate,
+													weight_decay=self.weight_decay,
+													)
 		
 		self.checkpoint_callback = ModelCheckpoint(monitor='val_loss',  # Metric to monitor
 																								mode='min',          # Save the model when val_loss is minimized
@@ -578,7 +578,6 @@ class Trainer():
 																],
 											enable_progress_bar=True,
 											)	
-
 		
 		# train
 		trainer.fit(model, data_module)
@@ -596,8 +595,8 @@ class Trainer():
 		return test_loss, self.best_chkpt_pth
 	
 	def batch_objective(self, trial: optuna.Trial) -> Any:
-		"""Train with batch gradient descent, manual checkpointing and
-			tensorboard logging.
+		"""	Train with batch gradient descent, manual checkpointing and
+				tensorboard logging.
 		"""
 
 		# suggest hyperparameters
@@ -693,16 +692,18 @@ class Trainer():
 
 		# load model to DEVICE
 		model = self.ModelType(input_dim=self.input_dim,
-														hidden_dim=hidden_dim,
-														output_dim=self.output_dim,
-														num_layers=num_layers,
-														dropout_rate=dropout_rate,
-														).to(DEVICE)
+													hidden_dim=hidden_dim,
+													output_dim=self.output_dim,
+													num_layers=num_layers,
+													dropout_rate=dropout_rate,
+													lr=None,
+													weight_decay=None,
+													).to(DEVICE)
 
 		# load model weights 
 		print("Loading checkpoint from", self.best_chkpt_pth)
-		chkpt = torch.load(self.best_chkpt_pth)
-		model.load_state_dict(chkpt['model_state_dict'])
+		chkpt = torch.load(self.best_chkpt_pth, weights_only=False, )
+		model.load_state_dict(chkpt['model_state_dict'],)
 
 		run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
 		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
@@ -729,7 +730,7 @@ class Train():
 
 	"""
 	def __init__(self,
-			  				folder_pth: Optional[str] = 'config',
+			  			folder_pth: Optional[str] = 'config',
 							pattern: Optional[str]='mono',
 							test_size: Optional[float]=0.3, 
 							validation_size: Optional[float]=0.5,
@@ -738,8 +739,8 @@ class Train():
 							trans_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							input_norm: Optional[Normalization]=Normalization.Z_SCORE,
 							target_norm: Optional[Normalization]=Normalization.Z_SCORE,
-			  				epochs: Optional[int]=50,
-			  				num_layers: Optional[Tuple]=(1, 10, 1),
+			  			epochs: Optional[int]=50,
+			  			num_layers: Optional[Tuple]=(1, 10, 1),
 							hidden_dim: Optional[Tuple]=(1, 32, 2),
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
@@ -805,13 +806,12 @@ class Train():
 		
 		# run optuna optimization
 		study = optuna.create_study(direction='minimize', )
-		study.optimize(trainer.objective, n_trials=self.optim_trials, show_progress_bar=True, )
+		study.optimize(trainer.batch_objective, n_trials=self.optim_trials, show_progress_bar=True, )
 
 		# Retrieve the best trial
 		trial = study.best_trial
 		print('Best trial:', trial.number)
 		print('Value: ', trial.value)
-		print("Checkpoint path:", trainer.checkpoint_callback.best_model_path)
 		print('Params: ')
 		for key, value in trial.params.items():
 			print(f'{key}: {value}')
@@ -819,7 +819,7 @@ class Train():
 		print("Finished optimization of ", td.name)
 
 		print("Running test...")
-		(res, chkpt_pth) = trainer.test(trial)
+		(res, chkpt_pth) = trainer.batch_test(trial)
 		print("Result:", res)
 		print()
 
@@ -862,7 +862,7 @@ if __name__ == '__main__':
 		print("Cleaned.. exiting")
 		exit(0)
 
-	Train( folder_pth=args.folder_pth,
+	Train(folder_pth=args.folder_pth,
 				pattern=args.pattern,
 				test_size=args.test_size,
 				validation_size=args.val_size,
