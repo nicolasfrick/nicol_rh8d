@@ -11,20 +11,27 @@ import numpy as np
 import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
+import pytorch_lightning as pl
 from optuna.trial import FrozenTrial
+from typing import Optional, Union, Tuple, Any
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.model_selection import train_test_split
+from torch.utils.data import DataLoader, TensorDataset
+from pytorch_lightning.callbacks import ModelCheckpoint
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
-from typing import Optional, Union, Tuple, Any
-from send2trash import send2trash
+from optuna.integration import PyTorchLightningPruningCallback
 from send2trash.plat_other import HOMETRASH_B
+from send2trash import send2trash
 from util import *
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_DEV = torch.cuda.device_count()
 NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
-CUDA_DEV = 0
+if NUM_DEV > 0:
+	CUDA_DEV = NAME_DEV.index('cuda:1')
+	DEVICE = torch.device('cuda:1')
+	print("Num GPUs available", NUM_DEV, ":", NAME_DEV, ", using", CUDA_DEV, ":", NAME_DEV[CUDA_DEV])
 
 class TrainingData():
 	"""
@@ -313,7 +320,7 @@ class TrainingData():
 		scaler = joblib.load(pth)
 		return scaler
 		
-class MLP(nn.Module):
+class MLP(pl.LightningModule):
 	"""
 		Create a standard feedforward net.
 		
@@ -335,25 +342,79 @@ class MLP(nn.Module):
 							output_dim: int, 
 							num_layers: int,
 							dropout_rate: Union[None, float],
+							lr: float,
+							weight_decay: float,
 							) -> None:
 		
-		super(MLP, self).__init__()
+		super().__init__()
+		# log hyperparameters
+		self.save_hyperparameters()  
+
 		layers = []
+		# input
 		layers.append(nn.Linear(input_dim, hidden_dim))
 		layers.append(nn.ReLU())
 		if dropout_rate is not None:
 			layers.append(nn.Dropout(p=dropout_rate))
+		# hidden
 		for _ in range(num_layers - 1):
 			layers.append(nn.Linear(hidden_dim, hidden_dim))
 			layers.append(nn.ReLU())
 			if dropout_rate is not None:
 				layers.append(nn.Dropout(p=dropout_rate))
+		# output
 		layers.append(nn.Linear(hidden_dim, output_dim))
+
+		# model
 		self.model = nn.Sequential(*layers)
+
+		# loss
+		self.loss_fn = nn.MSELoss()
 	
-	def forward(self, x):
+	def forward(self, x: np.ndarray) -> Any:
 		return self.model(x)
-	
+
+	def training_step(self, batch: np.ndarray, batch_idx: int):
+		x, y = batch
+		preds = self(x)
+		loss = self.loss_fn(preds, y)
+		self.log('train_loss', loss, on_step=False, on_epoch=True)
+		return loss
+
+	def validation_step(self, batch: np.ndarray, batch_idx: int):
+		x, y = batch
+		preds = self(x)
+		val_loss = self.loss_fn(preds, y)
+		self.log('val_loss', val_loss, on_step=False, on_epoch=True)
+		return val_loss
+
+	def configure_optimizers(self):
+		return optim.Adam(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
+
+class MLPDataModule(pl.LightningDataModule):
+    def __init__(self, 
+				 			X_train: np.ndarray, 
+							y_train: np.ndarray, 
+							X_val: np.ndarray, 
+							y_val: np.ndarray, 
+							batch_size: int
+							) -> None:
+
+        super().__init__()
+        self.X_train = X_train
+        self.y_train = y_train
+        self.X_val = X_val
+        self.y_val = y_val
+        self.batch_size = batch_size
+
+    def train_dataloader(self) -> DataLoader:
+        dataset = TensorDataset(self.X_train, self.y_train)
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
+    def val_dataloader(self) -> DataLoader:
+        dataset = TensorDataset(self.X_val, self.y_val)
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=False)
+
 class Trainer():
 	"""Training class for MLP task
 
@@ -411,6 +472,7 @@ class Trainer():
 							output_dim: Optional[int]=6,
 			  				num_layers: Optional[Tuple]=(1, 10, 1),
 							hidden_dim: Optional[Tuple]=(1, 32, 2),
+							batch_size: Optional[Tuple]=(16, 32, 64),
 							learning_rate: Optional[Tuple]=(1e-4, 1e-2, 1e-3),
 							dropout_rate: Optional[Union[None, Tuple]]=(0, 0.4, 0.01),
 							log_domain: Optional[bool]=False,
@@ -434,15 +496,23 @@ class Trainer():
 		self.dropout_rate = dropout_rate
 		self.log_domain = log_domain
 		self.weight_decay = weight_decay
+		self.batch_size = batch_size
 		self.best_val_loss = np.inf
 		self.best_chkpt_pth = None
 		
-		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name, dt_now)
+		self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
 		if not os.path.exists(self.chkpt_path):
 			os.makedirs(self.chkpt_path, exist_ok=True) 
-		self.log_pth = os.path.join(MLP_LOG_PTH, dt_now)
+		self.log_pth = os.path.join(MLP_LOG_PTH, name)
 		if not os.path.exists(self.log_pth):
 			os.makedirs(self.log_pth,  exist_ok=True) 
+
+		self.checkpoint_callback = ModelCheckpoint(monitor='val_loss',  # Metric to monitor
+																								mode='min',          # Save the model when val_loss is minimized
+																								save_top_k=1,        # Save only the best model
+																								dirpath='checkpoints',  # Directory to save the checkpoints
+																								filename='best-model-{epoch:02d}-{val_loss:.2f}'
+																								)
 
 		print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 		print("Saving checkpoints in folder", self.chkpt_path)
@@ -467,6 +537,7 @@ class Trainer():
 																			 step=self.learning_rate[self.STEP] if not self.log_domain else 1,
 																			 log=self.log_domain,
 																			 )
+		batch_size = trial.suggest_categorical('batch_size', self.batch_size)
 		dropout_rate = self.dropout_rate
 		if dropout_rate is not None:
 			dropout_rate = trial.suggest_float('dropout_rate', 
@@ -476,98 +547,119 @@ class Trainer():
 																				log=self.log_domain,
 																				)
 		
+		# prep data
+		data_module = MLPDataModule(self.X_train_tensor, 
+							  											self.y_train_tensor,
+							  											self.X_val_tensor, 
+																		self.y_val_tensor, 
+																		batch_size=batch_size)
+		
 		# instantiate the model and move to device
 		model = self.ModelType( input_dim=self.input_dim, 
 						  								 hidden_dim=hidden_dim, 
 														 output_dim=self.output_dim, 
 														 num_layers=num_layers,
 														 dropout_rate=dropout_rate,
-														 ).to(DEVICE)
+														 lr=learning_rate,
+														 weight_decay=self.weight_decay,
+														 )#.to(DEVICE)
 		
-		# loss criterion and optimizer
-		criterion = nn.MSELoss()
-		optimizer = optim.Adam(model.parameters(),
-						 								 lr=learning_rate,
-														  weight_decay=self.weight_decay,
-						 								)
-		
-		# TensorBoard logging setup
-		run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
-		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
-		
+		trainer = pl.Trainer(max_epochs=50,
+											logger=False,
+											callbacks=[self.checkpoint_callback,
+																 PyTorchLightningPruningCallback(trial, monitor="val_loss"),
+																]
+											)	
 		# train
-		model.train()
-		for epoch in range(self.epochs):
-			optimizer.zero_grad()
-			outputs = model(self.X_train_tensor)
-			loss = criterion(outputs, self.y_train_tensor)
-			loss.backward()
-			optimizer.step()
-			
-			# log training loss
-			writer.add_scalar('Loss/train', loss.item(), epoch)
-			
-			# validation
-			model.eval()
-			with torch.no_grad():
-				val_outputs = model(self.X_val_tensor)
-				val_loss = criterion(val_outputs, self.y_val_tensor).item()
-				writer.add_scalar('Loss/val', val_loss, epoch)
+		trainer.fit(model, data_module)
 
-				# save the model weights if validation loss has improved
-				# if val_loss < self.best_val_loss:
-				# 	print("improved", val_loss, self.best_val_loss)
-				# 	self.best_val_loss = val_loss
-				# 	chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
-				# 	torch.save(model.state_dict(), chkpt_pth)
-				# 	print("Saving", chkpt_pth)
-				if val_loss < self.best_val_loss:
-					self.best_val_loss = val_loss
-					chkpt = {
-						'epoch': epoch,
-						'model_state_dict': model.state_dict(),
-						'optimizer_state_dict': optimizer.state_dict(),
-						'best_val_loss': self.best_val_loss,
-					}
-					self.best_chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
-					torch.save(chkpt, self.best_chkpt_pth)
-					# validate
-					torch.load(self.best_chkpt_pth)
-					print(f"Saved checkpoint to {self.best_chkpt_pth}")
+		return trainer.callback_metrics["val_loss"].item()
+
+		# # loss criterion and optimizer
+		# criterion = nn.MSELoss()
+		# optimizer = optim.Adam(model.parameters(),
+		# 				 								 lr=learning_rate,
+		# 												  weight_decay=self.weight_decay,
+		# 				 								)
 		
-		writer.close()
-		return val_loss
+		# # TensorBoard logging setup
+		# run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
+		# writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
+		
+		# # train
+		# model.train()
+		# for epoch in range(self.epochs):
+		# 	optimizer.zero_grad()
+		# 	outputs = model(self.X_train_tensor)
+		# 	loss = criterion(outputs, self.y_train_tensor)
+		# 	loss.backward()
+		# 	optimizer.step()
+			
+		# 	# log training loss
+		# 	writer.add_scalar('Loss/train', loss.item(), epoch)
+			
+		# 	# validation
+		# 	model.eval()
+		# 	with torch.no_grad():
+		# 		val_outputs = model(self.X_val_tensor)
+		# 		val_loss = criterion(val_outputs, self.y_val_tensor).item()
+		# 		writer.add_scalar('Loss/val', val_loss, epoch)
+
+		# 		# save the model weights if validation loss has improved
+		# 		# if val_loss < self.best_val_loss:
+		# 		# 	print("improved", val_loss, self.best_val_loss)
+		# 		# 	self.best_val_loss = val_loss
+		# 		# 	chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+		# 		# 	torch.save(model.state_dict(), chkpt_pth)
+		# 		# 	print("Saving", chkpt_pth)
+		# 		if val_loss < self.best_val_loss:
+		# 			self.best_val_loss = val_loss
+		# 			chkpt = {
+		# 				'epoch': epoch,
+		# 				'model_state_dict': model.state_dict(),
+		# 				'optimizer_state_dict': optimizer.state_dict(),
+		# 				'best_val_loss': self.best_val_loss,
+		# 			}
+		# 			self.best_chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+		# 			torch.save(chkpt, self.best_chkpt_pth)
+		# 			# validate
+		# 			torch.load(self.best_chkpt_pth)
+		# 			print(f"Saved checkpoint to {self.best_chkpt_pth}")
+		
+		# writer.close()
+		# return val_loss
 	
 	def test(self, trial: FrozenTrial) -> float:
-		hidden_dim = trial.params['hidden_dim']
-		num_layers = trial.params['num_layers']
-		learning_rate = trial.params['learning_rate']
-		dropout_rate = trial.params.get('dropout_rate')
+		# hidden_dim = trial.params['hidden_dim']
+		# num_layers = trial.params['num_layers']
+		# learning_rate = trial.params['learning_rate']
+		# dropout_rate = trial.params.get('dropout_rate')
 
-		# load model to DEVICE
-		model = self.ModelType(input_dim=self.input_dim,
-														hidden_dim=hidden_dim,
-														output_dim=self.output_dim,
-														num_layers=num_layers,
-														dropout_rate=dropout_rate,
-														).to(DEVICE)
+		# # load model to DEVICE
+		# model = self.ModelType(input_dim=self.input_dim,
+		# 												hidden_dim=hidden_dim,
+		# 												output_dim=self.output_dim,
+		# 												num_layers=num_layers,
+		# 												dropout_rate=dropout_rate,
+		# 												).to(DEVICE)
 
-		# load model weights 
-		print("Loading checkpoint from", self.best_chkpt_pth)
-		chkpt = torch.load(self.best_chkpt_pth)
-		model.load_state_dict(chkpt['model_state_dict'])
+		# # load model weights 
+		# print("Loading checkpoint from", self.best_chkpt_pth)
+		# chkpt = torch.load(self.best_chkpt_pth)
+		# model.load_state_dict(chkpt['model_state_dict'])
 
-		run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
-		writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
+		# run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_")
+		# writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
 
 		# evaluate on the test set
+		model = MLP.load_from_checkpoint(self.checkpoint_callback.best_model_path)
 		model.eval()
 		with torch.no_grad():
 			test_outputs = model(self.X_test_tensor)
 			test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
-			writer.add_scalar('Loss/test', test_loss, )
+			# writer.add_scalar('Loss/test', test_loss, )
 
-		writer.close()
+		# writer.close()
 		return test_loss, self.best_chkpt_pth
 	
 class Train():
@@ -664,9 +756,11 @@ class Train():
 		trial = study.best_trial
 		print('Best trial:', trial.number)
 		print('Value: ', trial.value)
+		print("Checkpoint path:", trainer.checkpoint_callback.best_model_path)
 		print('Params: ')
 		for key, value in trial.params.items():
 			print(f'{key}: {value}')
+		print("Best hyperparameters:", study.best_params)
 		print("Finished optimization of ", td.name)
 
 		print("Running test...")
