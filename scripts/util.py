@@ -5,13 +5,15 @@ import glob
 import yaml
 import subprocess
 import numpy as np
-import tifffile as tiff
 import pandas as pd
 from enum import Enum
-from typing import Tuple
+import tifffile as tiff
 from cv2 import Rodrigues
 from datetime import datetime
+from send2trash import send2trash
+from typing import Tuple, Union, Any
 from matplotlib import pyplot as plt
+from send2trash.plat_other import HOMETRASH_B
 from scipy.spatial.transform import Rotation as R
 
 dt_now = datetime.now()
@@ -103,6 +105,47 @@ NORMALIZATION_MAP={  Normalization.NONE.value : Normalization.NONE,
 													Normalization.MINMAX_CENTERED.value : Normalization.MINMAX_CENTERED, 
 												}
 NORMS = f"{Normalization.NONE.value}, {Normalization.MINMAX_CENTERED.value}, {Normalization.MINMAX_POS.value}, {Normalization.Z_SCORE.value}"
+
+def clean(args: Any) -> bool:
+	if args.clean_all:
+		args.clean_log=True
+		args.clean_scaler=True
+		args.clean_checkpoint=True
+	
+	#cleanup
+	if args.clean_log:
+		if os.path.exists(MLP_LOG_PTH):
+			print("Moving directory", MLP_LOG_PTH, "to", HOMETRASH_B.decode())
+			send2trash(MLP_LOG_PTH)
+	if args.clean_scaler:
+		if os.path.exists(MLP_SCLRS_PTH):
+			print("Moving directory", MLP_SCLRS_PTH,  "to", HOMETRASH_B.decode())
+			send2trash(MLP_SCLRS_PTH)
+	if args.clean_checkpoint:
+		if os.path.exists(MLP_CHKPT_PTH):
+			print("Moving directory", MLP_CHKPT_PTH, "to", HOMETRASH_B.decode())
+			send2trash(MLP_CHKPT_PTH)
+
+	return args.clean_log or args.clean_scaler or args.clean_checkpoint
+
+def parseIntTuple(value: str) -> Tuple:
+	t = tuple(map(int, value.split(',')))
+	if len(t) != 3:
+		raise ValueError
+	return t
+
+def parseFloatTuple(value: str) ->Union[None, Tuple]:
+	if not ',' in value:
+		return None
+	t = tuple(map(float, value.split(',')))
+	if len(t) != 3:
+		raise ValueError
+	return t
+
+def parseNorm(value: str) -> Normalization:
+	if not value in NORMS:
+		raise ValueError
+	return NORMALIZATION_MAP[value]
 
 def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.ndarray:
 	if rot_type == out_type:
