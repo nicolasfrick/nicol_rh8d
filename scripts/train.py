@@ -13,6 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 import lightning.pytorch as pl
 from optuna.trial import FrozenTrial
+from optuna.storages import RDBStorage
 from typing import Optional, Union, Tuple, List, Any
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader, TensorDataset
@@ -396,7 +397,6 @@ class MLP(nn.Module):
     def forward(self, data: torch.Tensor) -> torch.Tensor:
         return self.model(data)
 
-
 class WrappedMLP(pl.LightningModule):
     """
             Lightning wrapper for the MLP impl.
@@ -437,22 +437,34 @@ class WrappedMLP(pl.LightningModule):
         return self.model(data)
 
     # overwrite
-    def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
+    def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
         X, y = batch
         preds = self(X)
         loss = self.loss_fn(preds, y)
         self.log('train_loss', loss, on_step=False,
-                 on_epoch=True, prog_bar=True, )
+                 on_epoch=True, prog_bar=True, sync_dist=True, )
         return loss
 
     # overwrite
-    def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
+    def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
         X, y = batch
         preds = self(X)
         val_loss = self.loss_fn(preds, y)
         self.log('val_loss', val_loss, on_step=False,
-                 on_epoch=True, prog_bar=True, )
+                 on_epoch=True, prog_bar=True, sync_dist=True, )
         return val_loss
+    
+    def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
+        X, y = batch
+        preds = self(X)
+        test_loss = self.loss_fn(preds, y)
+        self.log('test_loss', test_loss, on_step=False,
+                 on_epoch=True, prog_bar=True, sync_dist=True, )
+        return test_loss
+
+    # def on_test_epoch_end(self, outputs: List[torch.Tensor]) -> dict:
+    #     avg_loss = torch.stack([x for x in outputs]).mean()
+    #     return {"test_loss": avg_loss}
 
     # overwrite
     def configure_optimizers(self) -> optim.Optimizer:
@@ -461,24 +473,23 @@ class WrappedMLP(pl.LightningModule):
                           weight_decay=self.hparams.weight_decay,
                           )
 
-
 class MLPDataModule(pl.LightningDataModule):
     """ Load data for lightning trainer.
 
         @param X_train
-                                @type torch.Tensor
-                                @param y_train
-                                @type torch.Tensor
-                                @param X_val
-                                @type torch.Tensor
-                                @param y_val
-                                @type torch.Tensor
-                                @param X_test
-                                @type torch.Tensor
-                                @param y_test
-                                @type torch.Tensor
-                                @param batch_size
-                                @type int
+        @type torch.Tensor
+        @param y_train
+        @type torch.Tensor
+        @param X_val
+        @type torch.Tensor
+        @param y_val
+        @type torch.Tensor
+        @param X_test
+        @type torch.Tensor
+        @param y_test
+        @type torch.Tensor
+        @param batch_size
+        @type int
 
     """
 
@@ -514,6 +525,7 @@ class MLPDataModule(pl.LightningDataModule):
                           shuffle=True,
                           pin_memory=True,
                           num_workers=7,
+                          persistent_workers=True,
                           )
 
     # overwrite
@@ -523,6 +535,7 @@ class MLPDataModule(pl.LightningDataModule):
                           shuffle=False,
                           pin_memory=True,
                           num_workers=7,
+                          persistent_workers=True,
                           )
 
     # overwrite
@@ -532,6 +545,7 @@ class MLPDataModule(pl.LightningDataModule):
                           shuffle=False,
                           pin_memory=True,
                           num_workers=7,
+                          persistent_workers=True,
                           )
 
 
@@ -629,9 +643,12 @@ class Trainer():
         self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
         if not os.path.exists(self.chkpt_path):
             os.makedirs(self.chkpt_path, exist_ok=True)
-        self.log_pth = os.path.join(MLP_LOG_PTH, name)
+        self.log_pth = os.path.join(MLP_LOG_PTH, name, "train")
         if not os.path.exists(self.log_pth):
             os.makedirs(self.log_pth, exist_ok=True)
+        self.test_log_pth = os.path.join(MLP_LOG_PTH, name, "test")
+        if not os.path.exists(self.test_log_pth):
+            os.makedirs(self.test_log_pth, exist_ok=True)
 
         print(
             f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
@@ -672,6 +689,7 @@ class Trainer():
         """	Train with mini-batch gradient descent, automatic checkpointing and 
                         tensorboard logging.
         """
+
         # suggest hyperparameters
         (hidden_dim, num_layers, learning_rate, dropout_rate,
          batch_size) = self.suggestHParams(trial)
@@ -685,6 +703,8 @@ class Trainer():
                                     y_test=self.y_test_tensor,
                                     batch_size=batch_size,
                                     )
+        data_module.prepare_data()
+        data_module.setup()
 
         # instantiate the model
         model = self.ModelType(input_dim=self.input_dim,
@@ -707,9 +727,10 @@ class Trainer():
                                                    mode='min',
                                                    save_top_k=1,
                                                    dirpath=self.chkpt_path,
-                                                   filename='best_model_{epoch:02d}_{val_loss:.2f}',
+                                                   filename=f'best_model_trial{trial.number:02d}_{{epoch:02d}}_{{val_loss:.3f}}',
                                                    )
 
+        # train
         trainer = pl.Trainer(max_epochs=self.epochs,
                              logger=logger,
                              log_every_n_steps=5,
@@ -719,29 +740,33 @@ class Trainer():
                                         ],
                              enable_progress_bar=self.pbar,
                              enable_checkpointing=True,
-                             devices=1,
-                             strategy="auto",
-                             precision=32,
-                             accelerator="gpu",
+                             devices=NUM_DEV,
+                             strategy="ddp_spawn",
+                             precision="16-mixed",
+                             accelerator="auto",
                              )
-
-        data_module.prepare_data()
-        data_module.setup(stage='fit')
-
-        # train
+        
         trainer.fit(model, datamodule=data_module)
 
-        return trainer.callback_metrics["val_loss"].item()
+        # test
+        test_logger = TensorBoardLogger(self.test_log_pth,
+                                        name=f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),
+                                        )
+        
+        test_trainer = pl.Trainer(max_epochs=self.epochs,
+                                    logger=test_logger,
+                                    log_every_n_steps=5,
+                                    enable_progress_bar=self.pbar,
+                                    enable_checkpointing=False,
+                                    devices=1,
+                                    strategy="auto",
+                                    precision="16-mixed",
+                                    accelerator="auto",
+                                    )
 
-    def miniBatchTest(self, trial: FrozenTrial) -> float:
-        model_pth = self.checkpoint_callback.best_model_path
-        model = self.ModelType.load_from_checkpoint(model_pth)
-        model.eval()
-        with torch.no_grad():
-            test_outputs = model(self.X_test_tensor)
-            test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
+        test_trainer.test(model, datamodule=data_module, ckpt_path=trainer.checkpoint_callback.best_model_path)
 
-        return test_loss, model_pth
+        return test_trainer.callback_metrics["test_loss"].item()
 
     def batchObjective(self, trial: optuna.Trial) -> Any:
         """	Train with batch gradient descent, manual checkpointing and
@@ -845,20 +870,20 @@ class Trainer():
 class Train():
     """ Train all configurations found in the given folder having the specified pattern.
 
-          @param folder_pth
-          @type str
-          @param pattern
-          @type str
-          @param optim_trials
-          @type int
-          @param pruning
-          @type bool
-          @param bgd
-          @type bool
-          @param optuna_pbar
-                                        @type bool
-                                        @param lightning_pbar
-                                        @type bool
+        @param folder_pth
+        @type str
+        @param pattern
+        @type str
+        @param optim_trials
+        @type int
+        @param pruning
+        @type bool
+        @param bgd
+        @type bool
+        @param optuna_pbar
+        @type bool
+        @param lightning_pbar
+        @type bool
 
     """
 
@@ -957,9 +982,10 @@ class Train():
                           )
 
         print(f"\n{50*'#'}")
-
+        
         # run optuna optimization
         study = optuna.create_study(direction='minimize',
+                                    storage=RDBStorage(url="sqlite:///optuna_study.db"),
                                     pruner=optuna.pruners.MedianPruner() if self.pruning else optuna.pruners.NopPruner(),
                                     )
         study.optimize(trainer.miniBatchObjective,
@@ -975,14 +1001,9 @@ class Train():
         print("Best hyperparameters:", study.best_params)
         print("Finished optimization of ", td.name)
 
-        print("Running test...")
-        (res, chkpt_pth) = trainer.miniBatchTest(trial)
-        print("Result:", res)
-        print()
-
-        self.log.update({td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res,
-                        'params': trial.params, 'checkpoint': chkpt_pth, 'scalers': td.scaler_pth}})
-        with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "w") as json_file:
+        self.log.update({td.name: {'best_trial': trial.number, 'test_loss': trial.value,
+                        'params': trial.params, 'scalers': td.scaler_pth}})
+        with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "a") as json_file:
             json.dump(self.log, json_file, indent=4)
 
     def runBgdStudy(self, file_pth: str) -> None:
@@ -1043,7 +1064,7 @@ class Train():
 
         self.log.update({td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res,
                         'params': trial.params, 'checkpoint': chkpt_pth, 'scalers': td.scaler_pth}})
-        with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "w") as json_file:
+        with open(os.path.join(MLP_CHKPT_PTH, dt_now + "_optimization_results.json"), "a") as json_file:
             json.dump(self.log, json_file, indent=4)
 
 
