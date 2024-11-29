@@ -459,13 +459,9 @@ class WrappedMLP(pl.LightningModule):
 				X, y = batch
 				preds = self(X)
 				test_loss = self.loss_fn(preds, y)
-				self.log('test_loss', test_loss, on_step=False,
-								 on_epoch=True, prog_bar=True, sync_dist=True, )
+				self.log('test_loss', test_loss, on_step=True,
+								 on_epoch=False, prog_bar=True, sync_dist=True, )
 				return test_loss
-
-		# def on_test_epoch_end(self, outputs: List[torch.Tensor]) -> dict:
-		#     avg_loss = torch.stack([x for x in outputs]).mean()
-		#     return {"test_loss": avg_loss}
 
 		# overwrite
 		def configure_optimizers(self) -> optim.Optimizer:
@@ -560,7 +556,6 @@ class MLPDataModule(pl.LightningDataModule):
 													num_workers=7,
 													persistent_workers=True,
 													)
-
 
 class Trainer():
 		"""Training class for optimization task
