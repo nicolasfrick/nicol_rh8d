@@ -709,8 +709,6 @@ class Trainer():
                                output_dim=self.output_dim,
                                num_layers=num_layers,
                                dropout_rate=dropout_rate,
-                               lr=learning_rate,
-                               weight_decay=self.weight_decay,
                                ).to(DEVICE)
 
         # loss criterion and optimizer
@@ -756,7 +754,7 @@ class Trainer():
                         self.chkpt_path, f"{run_name}.pth")
                     torch.save(chkpt, self.best_chkpt_pth)
                     # validate
-                    torch.load(self.best_chkpt_pth)
+                    torch.load(self.best_chkpt_pth, weights_only=True, )
 
         writer.close()
         return val_loss
@@ -773,13 +771,11 @@ class Trainer():
                                output_dim=self.output_dim,
                                num_layers=num_layers,
                                dropout_rate=dropout_rate,
-                               lr=None,
-                               weight_decay=None,
                                ).to(DEVICE)
 
         # load model weights
         print("Loading checkpoint from", self.best_chkpt_pth)
-        chkpt = torch.load(self.best_chkpt_pth, weights_only=False, )
+        chkpt = torch.load(self.best_chkpt_pth, weights_only=True, )
         model.load_state_dict(chkpt['model_state_dict'],)
 
         run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(
@@ -966,10 +962,8 @@ class Train():
         print(f"\n{50*'#'}")
 
         # run optuna optimization
-        study = optuna.create_study(direction='minimize',
-                                    pruner=optuna.pruners.MedianPruner() if self.pruning else optuna.pruners.NopPruner(),
-                                    )
-        study.optimize(trainer.miniBatchObjective,
+        study = optuna.create_study(direction='minimize', )
+        study.optimize(trainer.batchObjective,
                        n_trials=self.optim_trials, show_progress_bar=True, )
 
         # Retrieve the best trial
@@ -983,7 +977,7 @@ class Train():
         print("Finished optimization of ", td.name)
 
         print("Running test...")
-        (res, chkpt_pth) = trainer.miniBatchTest(trial)
+        (res, chkpt_pth) = trainer.batchTest(trial)
         print("Result:", res)
         print()
 
