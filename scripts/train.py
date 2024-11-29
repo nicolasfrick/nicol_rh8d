@@ -139,14 +139,14 @@ class TrainingData():
 
 				print("Loaded features", self.feature_names, "and targets",
 							self.target_names, f"to device: {DEVICE}" if move_gpu else "")
-				pct_train = 100*(1-self.test_size)
-				pct_test = 100*(self.test_size)
-				pct_val = self.validation_size * pct_test
+				pct_train = 100*(1-self.validation_size)
+				pct_val = 100*(self.validation_size)
+				pct_test = self.test_size * pct_val
 				pct_test -= pct_val
 				print(
 						f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({pct_train}%),")
 				print(
-						f"{len(self.X_test_tensor)} test ({pct_test}%) and {len(self.X_val_tensor)} validation ({pct_val}%) samples")
+						f"{len(self.X_test_tensor)} test ({pct_test}%) from {len(self.X_val_tensor)} validation ({pct_val}%) samples")
 
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 				"""Stack normalized data to a feature vector X and
@@ -192,10 +192,10 @@ class TrainingData():
 				"""
 				# split off training data
 				X_train, X_tmp, y_train, y_tmp = train_test_split(
-						X, y, test_size=self.test_size, random_state=self.random_state)
+						X, y, test_size=self.validation_size, random_state=self.random_state)
 				# split off test and validation data
 				X_test, X_val, y_test, y_val = train_test_split(
-						X_tmp, y_tmp, test_size=self.validation_size, random_state=self.random_state)
+						X_tmp, y_tmp, test_size=self.test_size, random_state=self.random_state)
 
 				# map features to tensors and move to device
 				self.X_train_tensor = torch.from_numpy(X_train).float()
