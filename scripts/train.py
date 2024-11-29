@@ -801,7 +801,8 @@ class Trainer():
 
 				test_trainer.test(model, datamodule=data_module, ckpt_path=model_chkpt)
 
-				return test_trainer.callback_metrics["test_loss"].item(), model_chkpt
+				tl = test_trainer.callback_metrics.get("test_loss")
+				return tl.item() if tl is not None else None, model_chkpt
 				
 		def plainObjective(self, trial: optuna.Trial) -> Any:
 				"""	Train with batch gradient descent, manual checkpointing and
