@@ -29,7 +29,6 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_DEV = torch.cuda.device_count()
 NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
 
-
 class TrainingData():
 		"""
 						Load training data and apply normalization.
@@ -750,9 +749,9 @@ class Trainer():
 																				],
 														 enable_progress_bar=self.pbar,
 														 enable_checkpointing=True,
-														 devices=NUM_DEV,
-														 strategy="ddp_spawn",
-														 precision="16-mixed",
+														 devices=NUM_DEV if NUM_DEV > 1 else 1,
+														 strategy="ddp_spawn" if str(DEVICE) != 'cpu' else 'auto',
+														 precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
 														 accelerator="auto",
 														 )
 				
@@ -770,14 +769,14 @@ class Trainer():
 				model_chkpt = self.checkpoint_callback.best_model_path
 				
 				data_module = MLPDataModule(X_train=self.X_train_tensor,
-				                            y_train=self.y_train_tensor,
-				                            X_val=self.X_val_tensor,
-				                            y_val=self.y_val_tensor,
-				                            X_test=self.X_test_tensor,
-				                            y_test=self.y_test_tensor,
-				                            batch_size=batch_size,
+																		y_train=self.y_train_tensor,
+																		X_val=self.X_val_tensor,
+																		y_val=self.y_val_tensor,
+																		X_test=self.X_test_tensor,
+																		y_test=self.y_test_tensor,
+																		batch_size=batch_size,
 																		bgd = self.bgd,
-				                            )
+																		)
 				data_module.prepare_data()
 				data_module.setup()
 
@@ -785,19 +784,19 @@ class Trainer():
 				model = self.ModelType.load_from_checkpoint(model_chkpt)
 
 				test_logger = TensorBoardLogger(self.test_log_pth,
-				                                name=f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),
-				                                )
+																				name=f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),
+																				)
 				
 				test_trainer = pl.Trainer(max_epochs=self.epochs,
-				                            logger=test_logger,
-				                            log_every_n_steps=5,
-				                            enable_progress_bar=self.pbar,
-				                            enable_checkpointing=False,
-				                            devices=1,
-				                            strategy="auto",
-				                            precision="16-mixed",
-				                            accelerator="auto",
-				                            )
+																		logger=test_logger,
+																		log_every_n_steps=5,
+																		enable_progress_bar=self.pbar,
+																		enable_checkpointing=False,
+																		devices=1,
+																		strategy="auto",
+																		precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
+																		accelerator="auto",
+																		)
 
 				test_trainer.test(model, datamodule=data_module, ckpt_path=model_chkpt)
 
