@@ -22,6 +22,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from sklearn.model_selection import KFold, train_test_split
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from optuna.integration import PyTorchLightningPruningCallback
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from util import *
 
 # torch at cuda or cpu
@@ -665,6 +666,13 @@ class Trainer():
 																									dirpath=self.chkpt_path,
 																									filename='',
 																									)
+				
+				self.estop_callback = EarlyStopping(monitor="val_loss",  
+																																																patience=max(1, int(epochs/10)),         
+																																																mode="min",          
+																																																verbose=True,
+																																																min_delta=0.001,     
+																																														)
 
 				print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 				print("Saving checkpoints in directory", self.chkpt_path)
@@ -744,6 +752,7 @@ class Trainer():
 														 log_every_n_steps=1,
 														 callbacks=[self.checkpoint_callback,
 																				PyTorchLightningPruningCallback(trial, monitor="val_loss"),
+																				self.estop_callback,
 																				],
 														 enable_progress_bar=self.pbar,
 														 enable_checkpointing=True,
