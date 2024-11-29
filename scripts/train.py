@@ -646,8 +646,6 @@ class Trainer():
 				self.log_domain = log_domain
 				self.weight_decay = weight_decay
 				self.batch_size = batch_size
-				self.best_val_loss = np.inf
-				self.best_chkpt_pth = None
 				self.pbar = pbar
 				self.bgd = bgd
 
@@ -809,8 +807,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate,
-				 dropout_rate, _) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, _) = self.suggestHParams(trial)
 
 				# instantiate the model and move to device
 				model = self.ModelType(input_dim=self.input_dim,
@@ -831,10 +828,11 @@ class Trainer():
 				run_name = f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(
 						".", "_")
 				writer = SummaryWriter(log_dir=os.path.join(self.log_pth, run_name))
-
+			
 				# train
-				model.train()
+				best_val_loss = np.inf
 				for epoch in range(self.epochs):
+						model.train()
 						optimizer.zero_grad()
 						outputs = model(self.X_train_tensor)
 						loss = criterion(outputs, self.y_train_tensor)
@@ -851,19 +849,17 @@ class Trainer():
 								val_loss = criterion(val_outputs, self.y_val_tensor).item()
 								writer.add_scalar('Loss/val', val_loss, epoch)
 
-								if val_loss < self.best_val_loss:
-										self.best_val_loss = val_loss
+								if val_loss < best_val_loss:
+										best_val_loss = val_loss
 										chkpt = {
 												'epoch': epoch,
 												'model_state_dict': model.state_dict(),
 												'optimizer_state_dict': optimizer.state_dict(),
-												'best_val_loss': self.best_val_loss,
+												'best_val_loss': best_val_loss,
 										}
-										self.best_chkpt_pth = os.path.join(
-												self.chkpt_path, f"{run_name}.pth")
-										torch.save(chkpt, self.best_chkpt_pth)
-										# validate
-										torch.load(self.best_chkpt_pth, weights_only=True, )
+										chkpt_pth = os.path.join(self.chkpt_path, f"{run_name}.pth")
+										torch.save(chkpt, chkpt_pth)
+										trial.set_user_attr("checkpoint_path", chkpt_pth)
 
 				writer.close()
 				return val_loss
@@ -883,8 +879,9 @@ class Trainer():
 															 ).to(DEVICE)
 
 				# load model weights
-				print("Loading checkpoint from", self.best_chkpt_pth)
-				chkpt = torch.load(self.best_chkpt_pth, weights_only=True, )
+				best_model_path = trial.user_attrs["checkpoint_path"]
+				print("Loading checkpoint from", best_model_path)
+				chkpt = torch.load(best_model_path, weights_only=True, )
 				model.load_state_dict(chkpt['model_state_dict'],)
 
 				run_name = f"TEST_vloss_{trial.value:.4f}_trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(
@@ -899,7 +896,7 @@ class Trainer():
 						writer.add_scalar('Loss/test', test_loss, )
 
 				writer.close()
-				return test_loss, self.best_chkpt_pth
+				return test_loss, best_model_path
 
 
 class Train():
