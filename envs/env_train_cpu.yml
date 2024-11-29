@@ -64,7 +64,6 @@ dependencies:
       - pycparser==2.22
       - pyparsing==3.2.0
       - python-dateutil==2.9.0.post0
-      - pytorch-lightning==2.4.0
       - pytz==2023.4
       - pyyaml==6.0.2
       - requests==2.28.2
