@@ -452,6 +452,7 @@ class WrappedMLP(pl.LightningModule):
 				val_loss = self.loss_fn(preds, y)
 				self.log('val_loss', val_loss, on_step=False,
 								 on_epoch=True, prog_bar=True, sync_dist=True, )
+				self.log("hp_metric", val_loss, on_step=False, on_epoch=True, sync_dist=True)
 				return val_loss
 		
 		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
@@ -490,6 +491,8 @@ class MLPDataModule(pl.LightningDataModule):
 				@type torch.Tensor
 				@param batch_size
 				@type int
+				@param bgd
+				@type bool
 
 		"""
 
@@ -501,6 +504,7 @@ class MLPDataModule(pl.LightningDataModule):
 								 X_test: torch.Tensor,
 								 y_test: torch.Tensor,
 								 batch_size: int,
+								 bgd: bool,
 								 ) -> None:
 
 				super().__init__()
@@ -510,7 +514,16 @@ class MLPDataModule(pl.LightningDataModule):
 				self.y_val = y_val
 				self.X_test = X_test
 				self.y_test = y_test
-				self.batch_size = batch_size
+
+				if bgd:
+					# batch gradient desc.
+					self.train_batch_size = len(X_train)
+					self.val_batch_size = len(X_val)
+					self.test_batch_size = len(X_test)
+				else:
+					self.train_batch_size = batch_size
+					self.val_batch_size = batch_size
+					self.test_batch_size = batch_size
 
 				# overwrite
 		def setup(self, stage: Optional[str] = None) -> None:
@@ -521,8 +534,8 @@ class MLPDataModule(pl.LightningDataModule):
 		# overwrite
 		def train_dataloader(self) -> DataLoader:
 				return DataLoader(self.train_dataset,
-													batch_size=self.batch_size,
-													shuffle=True,
+													batch_size=self.train_batch_size,
+													shuffle=False,
 													pin_memory=True,
 													num_workers=7,
 													persistent_workers=True,
@@ -531,7 +544,7 @@ class MLPDataModule(pl.LightningDataModule):
 		# overwrite
 		def val_dataloader(self) -> DataLoader:
 				return DataLoader(self.val_dataset,
-													batch_size=self.batch_size,
+													batch_size=self.val_batch_size,
 													shuffle=False,
 													pin_memory=True,
 													num_workers=7,
@@ -541,7 +554,7 @@ class MLPDataModule(pl.LightningDataModule):
 		# overwrite
 		def test_dataloader(self) -> DataLoader:
 				return DataLoader(self.test_dataset,
-													batch_size=self.batch_size,
+													batch_size=self.test_batch_size,
 													shuffle=False,
 													pin_memory=True,
 													num_workers=7,
@@ -590,6 +603,8 @@ class Trainer():
 										@type str
 										@param pbar
 										@type bool
+										@param bgd
+										@type bool
 
 		"""
 
@@ -617,6 +632,7 @@ class Trainer():
 								 weight_decay: Optional[float] = 0,
 								 name: Optional[str] = '',
 								 pbar: Optional[bool] = False,
+								 bgd: Optional[bool] = False,
 								 ) -> None:
 
 				self.epochs = epochs
@@ -639,6 +655,7 @@ class Trainer():
 				self.best_val_loss = np.inf
 				self.best_chkpt_pth = None
 				self.pbar = pbar
+				self.bgd = bgd
 
 				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
 				if not os.path.exists(self.chkpt_path):
@@ -691,7 +708,7 @@ class Trainer():
 
 				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size
 
-		def miniBatchObjective(self, trial: optuna.trial.Trial) -> float:
+		def plObjective(self, trial: optuna.trial.Trial) -> float:
 				"""	Train with mini-batch gradient descent, automatic checkpointing and 
 												tensorboard logging.
 				"""
@@ -707,6 +724,7 @@ class Trainer():
 																		X_test=self.X_test_tensor,
 																		y_test=self.y_test_tensor,
 																		batch_size=batch_size,
+																		bgd = self.bgd,
 																		)
 				data_module.prepare_data()
 				data_module.setup()
@@ -731,7 +749,7 @@ class Trainer():
 				# train
 				trainer = pl.Trainer(max_epochs=self.epochs,
 														 logger=logger,
-														 log_every_n_steps=5,
+														 log_every_n_steps=1,
 														 callbacks=[self.checkpoint_callback,
 																				PyTorchLightningPruningCallback(trial, monitor="val_loss"),
 																				],
@@ -747,7 +765,7 @@ class Trainer():
 
 				return trainer.callback_metrics["val_loss"].item()
 		
-		def miniBatchTest(self, trial: optuna.Trial) -> Any:
+		def plTest(self, trial: optuna.Trial) -> Any:
 				hidden_dim = trial.params['hidden_dim']
 				num_layers = trial.params['num_layers']
 				learning_rate = trial.params['learning_rate']
@@ -763,6 +781,7 @@ class Trainer():
 				                            X_test=self.X_test_tensor,
 				                            y_test=self.y_test_tensor,
 				                            batch_size=batch_size,
+																		bgd = self.bgd,
 				                            )
 				data_module.prepare_data()
 				data_module.setup()
@@ -789,7 +808,7 @@ class Trainer():
 
 				return test_trainer.callback_metrics["test_loss"].item(), model_chkpt
 				
-		def batchObjective(self, trial: optuna.Trial) -> Any:
+		def plainObjective(self, trial: optuna.Trial) -> Any:
 				"""	Train with batch gradient descent, manual checkpointing and
 												manual tensorboard logging.
 				"""
@@ -854,7 +873,7 @@ class Trainer():
 				writer.close()
 				return val_loss
 
-		def batchTest(self, trial: FrozenTrial) -> float:
+		def plainTest(self, trial: FrozenTrial) -> float:
 				hidden_dim = trial.params['hidden_dim']
 				num_layers = trial.params['num_layers']
 				learning_rate = trial.params['learning_rate']
@@ -905,6 +924,8 @@ class Train():
 				@type bool
 				@param lightning_pbar
 				@type bool
+				@param distribute
+				@type bool
 
 		"""
 
@@ -931,6 +952,7 @@ class Train():
 								 bgd: Optional[bool] = False,
 								 optuna_pbar: Optional[bool] = True,
 								 lightning_pbar: Optional[bool] = False,
+								 distribute: Optional[bool] = False,
 								 ) -> None:
 
 				# load training data per configuration
@@ -958,16 +980,17 @@ class Train():
 				self.bgd = bgd
 				self.optuna_pbar = optuna_pbar
 				self.lightning_pbar = lightning_pbar
+				self.distribute = distribute
 				self.log = {}
 
 		def run(self) -> None:
 				for fl in self.data_files:
-						if self.bgd:
-								self.runBgdStudy(fl)
+						if self.distribute:
+								self.runPlStudy(fl)
 						else:
-								self.runStudy(fl)
+								self.runPlainStudy(fl)
 
-		def runStudy(self, file_pth: str) -> None:
+		def runPlStudy(self, file_pth: str) -> None:
 				print(f"\n{50*'#'}")
 
 				td = TrainingData(data_file=file_pth,
@@ -1000,6 +1023,7 @@ class Train():
 													batch_size=self.batch_size,
 													name=td.name,
 													pbar=self.lightning_pbar,
+													bgd=self.bgd,
 													)
 
 				print(f"\n{50*'#'}")
@@ -1009,7 +1033,7 @@ class Train():
 																		storage=RDBStorage(url="sqlite:///optuna_study.db"),
 																		pruner=optuna.pruners.MedianPruner() if self.pruning else optuna.pruners.NopPruner(),
 																		)
-				study.optimize(trainer.miniBatchObjective,
+				study.optimize(trainer.plObjective,
 											 n_trials=self.optim_trials, show_progress_bar=self.optuna_pbar, )
 
 				# Retrieve the best trial
@@ -1023,7 +1047,7 @@ class Train():
 				print("Finished optimization of ", td.name)
 
 				print("\nRunning test...")
-				(res, best_model_path) = trainer.miniBatchTest(trial)
+				(res, best_model_path) = trainer.plTest(trial)
 
 				self.log.update({td.name: {'best_trial': trial.number, 'val_loss': trial.value, 'test_loss': res,
 												'params': trial.params, 'checkpoint': best_model_path, 'scalers': td.scaler_pth}})
@@ -1031,7 +1055,7 @@ class Train():
 						json.dump(self.log, json_file, indent=4)
 				print("Done\n")
 
-		def runBgdStudy(self, file_pth: str) -> None:
+		def runPlainStudy(self, file_pth: str) -> None:
 				print(f"\n{50*'#'}")
 
 				td = TrainingData(data_file=file_pth,
@@ -1069,7 +1093,7 @@ class Train():
 
 				# run optuna optimization
 				study = optuna.create_study(direction='minimize', )
-				study.optimize(trainer.batchObjective,
+				study.optimize(trainer.plainObjective,
 											 n_trials=self.optim_trials, show_progress_bar=self.optuna_pbar, )
 
 				# Retrieve the best trial
@@ -1083,7 +1107,7 @@ class Train():
 				print("Finished optimization of ", td.name)
 
 				print("Running test...")
-				(res, chkpt_pth) = trainer.batchTest(trial)
+				(res, chkpt_pth) = trainer.plainTest(trial)
 				print("Result:", res)
 				print()
 
@@ -1096,64 +1120,38 @@ class Train():
 if __name__ == '__main__':
 		parser = argparse.ArgumentParser(description='Training script')
 		# cleanup
-		parser.add_argument("--clean_log", action='store_true',
-												help='Clean log folder')
-		parser.add_argument("--clean_scaler", action='store_true',
-												help='Clean scaler folder')
-		parser.add_argument("--clean_checkpoint",
-												action='store_true', help='Clean checkpoints folder')
-		parser.add_argument("--clean_all", action='store_true',
-												help='Clean all  folders with saved checkpoints, logs and scalers!')
+		parser.add_argument("--clean_log", action='store_true',help='Clean log folder')
+		parser.add_argument("--clean_scaler", action='store_true',help='Clean scaler folder')
+		parser.add_argument("--clean_checkpoint",action='store_true', help='Clean checkpoints folder')
+		parser.add_argument("--clean_all", action='store_true',help='Clean all  folders with saved checkpoints, logs and scalers!')
 		# data preparation
 		data_group = parser.add_argument_group("Data Settings")
-		data_group.add_argument('--folder_pth', type=str, metavar='str',
-														help='Folder path for the data prepared for training.', default="10013")
-		data_group.add_argument('--pattern', type=str, metavar='str',
-														help='Search pattern for data files', default=".json")
-		data_group.add_argument('--test_size', type=float, metavar='float',
-														help='Percentage of data split for testing.', default=0.3)
-		data_group.add_argument('--val_size', type=float, metavar='float',
-														help='Percentage of data split (from test size) for validation.', default=0.5)
-		data_group.add_argument('--random_state', type=int, metavar='int',
-														help='Percentage of data randomization.', default=40)
-		data_group.add_argument(
-				'--norm_quats', action='store_true', help='Normalize quaternions.')
-		data_group.add_argument('--trans_norm', type=parseNorm,
-														help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
-		data_group.add_argument('--input_norm', type=parseNorm,
-														help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
-		data_group.add_argument('--target_norm', type=parseNorm,
-														help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+		data_group.add_argument('--folder_pth', type=str, metavar='str',help='Folder path for the data prepared for training.', default="10013")
+		data_group.add_argument('--pattern', type=str, metavar='str',help='Search pattern for data files', default=".json")
+		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing.', default=0.3)
+		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split (from test size) for validation.', default=0.5)
+		data_group.add_argument('--random_state', type=int, metavar='int',help='Percentage of data randomization.', default=40)
+		data_group.add_argument('--norm_quats', action='store_true', help='Normalize quaternions.')
+		data_group.add_argument('--trans_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+		data_group.add_argument('--input_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+		data_group.add_argument('--target_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		# training
 		train_group = parser.add_argument_group("Optimization Settings")
-		train_group.add_argument(
-				'--epochs', type=int, metavar='int', help='Training epochs.', default=100)
-		train_group.add_argument('--optim_trials', type=int, metavar='int',
-														 help='Number of optimization trials.', default=100)
-		train_group.add_argument('--num_layers', type=parseIntTuple,
-														 help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
-		train_group.add_argument('--hidden_dim', type=parseIntTuple,
-														 help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
-		train_group.add_argument('--batch_size', type=parseIntTuple,
-														 help='Choices for mini-batch training (int), eg. 18,32,64,128.', default='18,32,64')
-		train_group.add_argument('--learning_rate', type=parseFloatTuple,
-														 help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
-		train_group.add_argument('--dropout_rate', type=parseFloatTuple,
-														 help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
-		train_group.add_argument('--log_domain', action='store_true',
-														 help='Change optimizer params logarithmically.')
-		train_group.add_argument('--weight_decay', type=float, metavar='float',
-														 help='L2 regularization weight decay value, disable with 0.', default=0.01)
-		train_group.add_argument(
-				'--pruning', action='store_true', help='Turn on pruning during optimization.')
-		train_group.add_argument(
-				'--use_bgd', action='store_true', help='Use batch gradient descent training.')
-		train_group.add_argument(
-				'--optuna_pbar', action='store_true', help='Show Optunas trial progessbar.')
-		train_group.add_argument(
-				'--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar.')
-		train_group.add_argument(
-				'--y', action='store_true', help='Discard asking for data cleaning and continue with training.')
+		train_group.add_argument('--epochs', type=int, metavar='int', help='Training epochs.', default=100)
+		train_group.add_argument('--optim_trials', type=int, metavar='int',help='Number of optimization trials.', default=100)
+		train_group.add_argument('--num_layers', type=parseIntTuple,help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
+		train_group.add_argument('--hidden_dim', type=parseIntTuple,help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
+		train_group.add_argument('--batch_size', type=parseIntTuple,help='Choices for mini-batch training (int), eg. 18,32,64.', default='18,32,64')
+		train_group.add_argument('--learning_rate', type=parseFloatTuple,help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
+		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
+		train_group.add_argument('--log_domain', action='store_true',help='Change optimizer params logarithmically.')
+		train_group.add_argument('--weight_decay', type=float, metavar='float',help='L2 regularization weight decay value, disable with 0.', default=0.01)
+		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization.')
+		train_group.add_argument('--use_bgd', action='store_true', help='Use batch gradient descent training.')
+		train_group.add_argument('--distribute', action='store_true', help='Train on multiple devices, use pruning, auto logging and checkpointing.')
+		train_group.add_argument('--optuna_pbar', action='store_true', help='Show Optunas trial progessbar.')
+		train_group.add_argument('--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar.')
+		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training.')
 		args = parser.parse_args()
 
 		# clean data
@@ -1181,4 +1179,5 @@ if __name__ == '__main__':
 					bgd=args.use_bgd,
 					optuna_pbar=args.optuna_pbar,
 					lightning_pbar=args.lightning_pbar,
+					distribute=args.distribute,
 					).run()
