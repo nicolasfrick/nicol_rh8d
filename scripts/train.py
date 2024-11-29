@@ -50,6 +50,8 @@ class TrainingData():
             @type Normalization
             @param target_norm 
             @type Normalization
+            @param move_gpu
+            @type bool
 
     Steps for Inference with Normalized Inputs
             Save the normalization parameters: During training, keep track of the mean, standard deviation, minimum, and maximum values used for normalization.
@@ -68,6 +70,7 @@ class TrainingData():
                  trans_norm: Optional[Normalization] = Normalization.Z_SCORE,
                  input_norm: Optional[Normalization] = Normalization.Z_SCORE,
                  target_norm: Optional[Normalization] = Normalization.Z_SCORE,
+                 move_gpu: Optional[bool] = False,
                  ) -> None:
 
         # path names
@@ -107,13 +110,21 @@ class TrainingData():
         self.y_angles_scalers = {}
         self.y_trans_scalers = {}
 
+        # results
+        self.X_train_tensor = None
+        self.X_test_tensor = None
+        self.X_val_tensor = None
+        self.y_train_tensor = None
+        self.y_test_tensor = None
+        self.y_val_tensor = None
+
         # load, normalize, split and move data
-        self.prepare(df, cols)
+        self.prepare(df, cols, move_gpu)
 
         # save fitted scalers
         self.saveScalers()
 
-    def prepare(self, df: pd.DataFrame, cols: list) -> None:
+    def prepare(self, df: pd.DataFrame, cols: list, move_gpu: bool) -> None:
         # load and normalize data
         self.loadData(df, cols)
         print("Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,",
@@ -121,18 +132,20 @@ class TrainingData():
 
         # stack training data
         (X, y) = self.stackData()
+
         # split and move data
-        self.splitData(X, y)
+        self.splitData(X, y, move_gpu)
 
         print("Loaded features", self.feature_names, "and targets",
-              self.target_names, "to device:", DEVICE)
+              self.target_names, f"to device: {DEVICE}" if move_gpu else "")
         pct_train = 100*(1-self.test_size)
         pct_test = 100*(self.test_size)
         pct_val = self.validation_size * pct_test
         pct_test -= pct_val
         print(
             f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({pct_train}%),")
-        print(f"{len(self.X_test_tensor)} test ({pct_test}%) and {len(self.X_val_tensor)} validation ({pct_val}%) samples")
+        print(
+            f"{len(self.X_test_tensor)} test ({pct_test}%) and {len(self.X_val_tensor)} validation ({pct_val}%) samples")
 
     def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
         """Stack normalized data to a feature vector X and
@@ -172,7 +185,7 @@ class TrainingData():
 
         return X, y
 
-    def splitData(self, X: np.ndarray, y: np.ndarray) -> None:
+    def splitData(self, X: np.ndarray, y: np.ndarray, move_gpu: bool) -> None:
         """Split features X and targets y into a  train, test 
                         and validation set and move to the present DEVICE.
         """
@@ -184,14 +197,23 @@ class TrainingData():
             X_tmp, y_tmp, test_size=self.validation_size, random_state=self.random_state)
 
         # map features to tensors and move to device
-        self.X_train_tensor = torch.from_numpy(X_train).float().to(DEVICE)
-        self.X_test_tensor = torch.from_numpy(X_test).float().to(DEVICE)
-        self.X_val_tensor = torch.from_numpy(X_val).float().to(DEVICE)
+        self.X_train_tensor = torch.from_numpy(X_train).float()
+        self.X_test_tensor = torch.from_numpy(X_test).float()
+        self.X_val_tensor = torch.from_numpy(X_val).float()
 
         # map targets to tensors and move to device
-        self.y_train_tensor = torch.from_numpy(y_train).float().to(DEVICE)
-        self.y_test_tensor = torch.from_numpy(y_test).float().to(DEVICE)
-        self.y_val_tensor = torch.from_numpy(y_val).float().to(DEVICE)
+        self.y_train_tensor = torch.from_numpy(y_train).float()
+        self.y_test_tensor = torch.from_numpy(y_test).float()
+        self.y_val_tensor = torch.from_numpy(y_val).float()
+
+        # move to gpu
+        if move_gpu:
+            self.X_train_tensor = self.X_train_tensor.to(DEVICE)
+            self.X_test_tensor = self.X_test_tensor.to(DEVICE)
+            self.X_val_tensor = self.X_val_tensor.to(DEVICE)
+            self.y_train_tensor = self.y_train_tensor.to(DEVICE)
+            self.y_test_tensor = self.y_test_tensor.to(DEVICE)
+            self.y_val_tensor = self.y_val_tensor.to(DEVICE)
 
     def loadData(self, df: pd.DataFrame, cols: list) -> None:
         """Fill datastructures with traning data, possibly apply normalization.
@@ -441,6 +463,25 @@ class WrappedMLP(pl.LightningModule):
 
 
 class MLPDataModule(pl.LightningDataModule):
+    """ Load data for lightning trainer.
+
+        @param X_train
+                                @type torch.Tensor
+                                @param y_train
+                                @type torch.Tensor
+                                @param X_val
+                                @type torch.Tensor
+                                @param y_val
+                                @type torch.Tensor
+                                @param X_test
+                                @type torch.Tensor
+                                @param y_test
+                                @type torch.Tensor
+                                @param batch_size
+                                @type int
+
+    """
+
     def __init__(self,
                  X_train: torch.Tensor,
                  y_train: torch.Tensor,
@@ -460,34 +501,37 @@ class MLPDataModule(pl.LightningDataModule):
         self.y_test = y_test
         self.batch_size = batch_size
 
+        # overwrite
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = TensorDataset(self.X_train, self.y_train)
+        self.val_dataset = TensorDataset(self.X_val, self.y_val)
+        self.test_dataset = TensorDataset(self.X_test, self.y_test)
+
     # overwrite
     def train_dataloader(self) -> DataLoader:
-        dataset = TensorDataset(self.X_train, self.y_train)
-        return DataLoader(dataset,
+        return DataLoader(self.train_dataset,
                           batch_size=self.batch_size,
                           shuffle=True,
-                          pin_memory=False,
-                          num_workers=0,
+                          pin_memory=True,
+                          num_workers=7,
                           )
 
     # overwrite
     def val_dataloader(self) -> DataLoader:
-        dataset = TensorDataset(self.X_val, self.y_val)
-        return DataLoader(dataset,
+        return DataLoader(self.val_dataset,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          pin_memory=False,
-                          num_workers=0,
+                          pin_memory=True,
+                          num_workers=7,
                           )
 
     # overwrite
     def test_dataloader(self) -> DataLoader:
-        dataset = TensorDataset(self.X_test, self.y_test)
-        return DataLoader(dataset,
+        return DataLoader(self.test_dataset,
                           batch_size=self.batch_size,
                           shuffle=False,
-                          pin_memory=False,
-                          num_workers=0,
+                          pin_memory=True,
+                          num_workers=7,
                           )
 
 
@@ -530,6 +574,8 @@ class Trainer():
                     @type float
                     @param name
                     @type str
+                    @param pbar
+                    @type bool
 
     """
 
@@ -556,6 +602,7 @@ class Trainer():
                  log_domain: Optional[bool] = False,
                  weight_decay: Optional[float] = 0,
                  name: Optional[str] = '',
+                 pbar: Optional[bool] = False,
                  ) -> None:
 
         self.epochs = epochs
@@ -577,6 +624,7 @@ class Trainer():
         self.batch_size = batch_size
         self.best_val_loss = np.inf
         self.best_chkpt_pth = None
+        self.pbar = pbar
 
         self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
         if not os.path.exists(self.chkpt_path):
@@ -669,15 +717,16 @@ class Trainer():
                                         PyTorchLightningPruningCallback(
                                             trial, monitor="val_loss"),
                                         ],
-                             enable_progress_bar=True,
+                             enable_progress_bar=self.pbar,
                              enable_checkpointing=True,
                              devices=1,
                              strategy="auto",
                              precision=32,
                              accelerator="gpu",
                              )
-        # hyperparameters = dict(n_layers=n_layers, dropout=dropout, output_dims=output_dims)
-        # trainer.logger.log_hyperparams(hyperparameters)
+
+        data_module.prepare_data()
+        data_module.setup(stage='fit')
 
         # train
         trainer.fit(model, datamodule=data_module)
@@ -796,16 +845,20 @@ class Trainer():
 class Train():
     """ Train all configurations found in the given folder having the specified pattern.
 
-                    @param folder_pth
-                    @type str
-                    @param pattern
-                    @type str
-                    @param optim_trials
-                    @type int
-                    @param pruning
-                    @type bool
-                    @param bgd
-                    @type bool
+          @param folder_pth
+          @type str
+          @param pattern
+          @type str
+          @param optim_trials
+          @type int
+          @param pruning
+          @type bool
+          @param bgd
+          @type bool
+          @param optuna_pbar
+                                        @type bool
+                                        @param lightning_pbar
+                                        @type bool
 
     """
 
@@ -830,6 +883,8 @@ class Train():
                  batch_size: Optional[Tuple] = (18, 32, 64),
                  pruning: Optional[bool] = False,
                  bgd: Optional[bool] = False,
+                 optuna_pbar: Optional[bool] = True,
+                 lightning_pbar: Optional[bool] = False,
                  ) -> None:
 
         # load training data per configuration
@@ -855,6 +910,8 @@ class Train():
         self.batch_size = batch_size
         self.pruning = pruning
         self.bgd = bgd
+        self.optuna_pbar = optuna_pbar
+        self.lightning_pbar = lightning_pbar
         self.log = {}
 
     def run(self) -> None:
@@ -875,6 +932,7 @@ class Train():
                           trans_norm=self.trans_norm,
                           input_norm=self.input_norm,
                           target_norm=self.target_norm,
+                          move_gpu=False,
                           )
 
         trainer = Trainer(X_train_tensor=td.X_train_tensor,
@@ -895,6 +953,7 @@ class Train():
                           weight_decay=self.weight_decay,
                           batch_size=self.batch_size,
                           name=td.name,
+                          pbar=self.lightning_pbar,
                           )
 
         print(f"\n{50*'#'}")
@@ -904,7 +963,7 @@ class Train():
                                     pruner=optuna.pruners.MedianPruner() if self.pruning else optuna.pruners.NopPruner(),
                                     )
         study.optimize(trainer.miniBatchObjective,
-                       n_trials=self.optim_trials, show_progress_bar=True, )
+                       n_trials=self.optim_trials, show_progress_bar=self.optuna_pbar, )
 
         # Retrieve the best trial
         trial = study.best_trial
@@ -937,6 +996,7 @@ class Train():
                           trans_norm=self.trans_norm,
                           input_norm=self.input_norm,
                           target_norm=self.target_norm,
+                          move_gpu=True,
                           )
 
         trainer = Trainer(X_train_tensor=td.X_train_tensor,
@@ -964,7 +1024,7 @@ class Train():
         # run optuna optimization
         study = optuna.create_study(direction='minimize', )
         study.optimize(trainer.batchObjective,
-                       n_trials=self.optim_trials, show_progress_bar=True, )
+                       n_trials=self.optim_trials, show_progress_bar=self.optuna_pbar, )
 
         # Retrieve the best trial
         trial = study.best_trial
@@ -1042,12 +1102,16 @@ if __name__ == '__main__':
         '--pruning', action='store_true', help='Turn on pruning during optimization.')
     train_group.add_argument(
         '--use_bgd', action='store_true', help='Use batch gradient descent training.')
+    train_group.add_argument(
+        '--optuna_pbar', action='store_true', help='Show Optunas trial progessbar.')
+    train_group.add_argument(
+        '--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar.')
+    train_group.add_argument(
+        '--y', action='store_true', help='Discard asking for data cleaning and continue with training.')
     args = parser.parse_args()
 
-    # clean only
-    if clean(args):
-        print("Cleaned.. exiting")
-        exit(0)
+    # clean data
+    clean(args)
 
     Train(folder_pth=args.folder_pth,
           pattern=args.pattern,
@@ -1069,4 +1133,6 @@ if __name__ == '__main__':
           batch_size=args.batch_size,
           pruning=args.pruning,
           bgd=args.use_bgd,
+          optuna_pbar=args.optuna_pbar,
+          lightning_pbar=args.lightning_pbar,
           ).run()
