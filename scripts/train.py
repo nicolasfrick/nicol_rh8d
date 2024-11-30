@@ -593,13 +593,15 @@ class Trainer():
 										@param log_domain
 										@type bool
 										@param weight_decay
-										@type float
+										@type Tuple
 										@param name
 										@type str
 										@param pbar
 										@type bool
 										@param bgd
 										@type bool
+										@param mdelta_estop
+										@type float
 
 		"""
 
@@ -624,10 +626,11 @@ class Trainer():
 								 learning_rate: Optional[Tuple] = (1e-4, 1e-2, 1e-3),
 								 dropout_rate: Optional[Union[None, Tuple]] = (0, 0.4, 0.01),
 								 log_domain: Optional[bool] = False,
-								 weight_decay: Optional[float] = 0,
+								 weight_decay: Optional[Tuple] = (0,0,0),
 								 name: Optional[str] = '',
 								 pbar: Optional[bool] = False,
 								 bgd: Optional[bool] = False,
+								 mdelta_estop: Optional[float] = 0,
 								 ) -> None:
 
 				self.epochs = epochs
@@ -649,6 +652,7 @@ class Trainer():
 				self.batch_size = batch_size
 				self.pbar = pbar
 				self.bgd = bgd
+				self.mdelta_estop = mdelta_estop
 
 				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
 				if not os.path.exists(self.chkpt_path):
@@ -668,11 +672,11 @@ class Trainer():
 																									)
 				
 				self.estop_callback = EarlyStopping(monitor="val_loss",  
-																																																patience=max(1, int(epochs/10)),         
-																																																mode="min",          
-																																																verbose=True,
-																																																min_delta=0.001,     
-																																														)
+																						patience=max(1, int(epochs/10)),         
+																						mode="min",          
+																						verbose=True,
+																						min_delta=self.mdelta_estop,     
+																						)
 
 				print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 				print("Saving checkpoints in directory", self.chkpt_path)
@@ -705,8 +709,15 @@ class Trainer():
 																		 log=self.log_domain,
 																		 )
 				batch_size = trial.suggest_categorical('batch_size', self.batch_size)
+				
+				weight_decay = trial.suggest_float('weight_decay',
+																						low=self.weight_decay[self.LOW],
+																						high=self.weight_decay[self.HIGH],
+																						step=self.weight_decay[self.STEP] if not self.log_domain else 1,
+																						log=self.log_domain,
+																						)
 
-				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size
+				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay
 
 		def plObjective(self, trial: optuna.trial.Trial) -> float:
 				"""	Train with mini-batch gradient descent, automatic checkpointing and 
@@ -714,7 +725,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay) = self.suggestHParams(trial)
 
 				# prep data
 				data_module = MLPDataModule(X_train=self.X_train_tensor,
@@ -736,7 +747,7 @@ class Trainer():
 															 num_layers=num_layers,
 															 dropout_rate=dropout_rate,
 															 lr=learning_rate,
-															 weight_decay=self.weight_decay,
+															 weight_decay=weight_decay,
 															 )
 
 				# inst. logger
@@ -816,7 +827,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, _) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay) = self.suggestHParams(trial)
 
 				# instantiate the model and move to device
 				model = self.ModelType(input_dim=self.input_dim,
@@ -830,7 +841,7 @@ class Trainer():
 				criterion = nn.MSELoss()
 				optimizer = optim.Adam(model.parameters(),
 															 lr=learning_rate,
-															 weight_decay=self.weight_decay,
+															 weight_decay=weight_decay,
 															 )
 
 				# TensorBoard logging setup
@@ -946,7 +957,7 @@ class Train():
 								 learning_rate: Optional[Tuple] = (1e-4, 1e-2, 1e-3),
 								 dropout_rate: Optional[Union[None, Tuple]] = (0, 0.4, 0.01),
 								 log_domain: Optional[bool] = False,
-								 weight_decay: Optional[float] = 0,
+								 weight_decay: Optional[Tuple] = (0,0,0),
 								 optim_trials: Optional[int] = 100,
 								 batch_size: Optional[Tuple] = (18, 32, 64),
 								 pruning: Optional[bool] = False,
@@ -954,6 +965,7 @@ class Train():
 								 optuna_pbar: Optional[bool] = True,
 								 lightning_pbar: Optional[bool] = False,
 								 distribute: Optional[bool] = False,
+								 mdelta_estop: Optional[float] = 0,
 								 ) -> None:
 
 				# load training data per configuration
@@ -982,6 +994,7 @@ class Train():
 				self.optuna_pbar = optuna_pbar
 				self.lightning_pbar = lightning_pbar
 				self.distribute = distribute
+				self.mdelta_estop = mdelta_estop
 				self.log = {}
 
 		def run(self) -> None:
@@ -1025,6 +1038,7 @@ class Train():
 													name=td.name,
 													pbar=self.lightning_pbar,
 													bgd=self.bgd,
+													mdelta_estop=self.mdelta_estop,
 													)
 
 				print(f"\n{50*'#'}")
@@ -1146,7 +1160,8 @@ if __name__ == '__main__':
 		train_group.add_argument('--learning_rate', type=parseFloatTuple,help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
 		train_group.add_argument('--log_domain', action='store_true',help='Change optimizer params logarithmically.')
-		train_group.add_argument('--weight_decay', type=float, metavar='float',help='L2 regularization weight decay value, disable with 0.', default=0.01)
+		train_group.add_argument('--weight_decay', type=parseFloatTuple, help='L2 regularization weight decay (float), eg. 1e-1,1e-2,1e-2.', default='0,0,0')
+		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping.', default=0.01)
 		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization.')
 		train_group.add_argument('--use_bgd', action='store_true', help='Use batch gradient descent training.')
 		train_group.add_argument('--distribute', action='store_true', help='Train on multiple devices, use pruning, auto logging and checkpointing.')
@@ -1181,4 +1196,5 @@ if __name__ == '__main__':
 					optuna_pbar=args.optuna_pbar,
 					lightning_pbar=args.lightning_pbar,
 					distribute=args.distribute,
+					mdelta_estop=args.mdelta_estop,
 					).run()
