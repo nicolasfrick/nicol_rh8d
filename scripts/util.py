@@ -152,10 +152,12 @@ def clean(args: Any) -> None:
         exit(0)
 
 
-def parseIntTuple(value: str) -> Tuple:
+def parseIntTuple(value: str) -> Union[None, Tuple]:
+    if not ',' in value:
+        return None
     t = tuple(map(int, value.split(',')))
-    if len(t) != 3:
-        raise ValueError
+    # if len(t) != 3:
+    #     raise ValueError
     return t
 
 
@@ -163,8 +165,8 @@ def parseFloatTuple(value: str) -> Union[None, Tuple]:
     if not ',' in value:
         return None
     t = tuple(map(float, value.split(',')))
-    if len(t) != 3:
-        raise ValueError
+    # if len(t) != 3:
+    #     raise ValueError
     return t
 
 

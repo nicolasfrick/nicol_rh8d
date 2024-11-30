@@ -593,7 +593,7 @@ class Trainer():
 										@param log_domain
 										@type bool
 										@param weight_decay
-										@type Tuple
+										@type Union[None, Tuple]
 										@param name
 										@type str
 										@param pbar
@@ -602,6 +602,10 @@ class Trainer():
 										@type bool
 										@param mdelta_estop
 										@type float
+										@param kfold
+										@type Union[None, Tuple]
+										@param save_chkpts
+										@type bool
 
 		"""
 
@@ -626,11 +630,13 @@ class Trainer():
 								 learning_rate: Optional[Tuple] = (1e-4, 1e-2, 1e-3),
 								 dropout_rate: Optional[Union[None, Tuple]] = (0, 0.4, 0.01),
 								 log_domain: Optional[bool] = False,
-								 weight_decay: Optional[Tuple] = (0,0,0),
+								 weight_decay: Optional[Union[None, Tuple]] = (0,0,0),
 								 name: Optional[str] = '',
 								 pbar: Optional[bool] = False,
 								 bgd: Optional[bool] = False,
 								 mdelta_estop: Optional[float] = 0,
+								 kfold: Optional[Union[None, Tuple]]=(2,5,1),
+								 save_chkpts: Optional[bool] = True,
 								 ) -> None:
 
 				self.epochs = epochs
@@ -653,6 +659,8 @@ class Trainer():
 				self.pbar = pbar
 				self.bgd = bgd
 				self.mdelta_estop = mdelta_estop
+				self.kfold = kfold
+				self.save_chkpts = save_chkpts
 
 				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
 				if not os.path.exists(self.chkpt_path):
@@ -671,17 +679,18 @@ class Trainer():
 																									filename='',
 																									)
 				
-				self.estop_callback = EarlyStopping(monitor="val_loss",  
-																						patience=max(1, int(epochs/10)),         
-																						mode="min",          
-																						verbose=True,
-																						min_delta=self.mdelta_estop,     
-																						)
+				if mdelta_estop > -1.0:
+					self.estop_callback = EarlyStopping(monitor="val_loss",  
+																							patience=max(1, int(epochs/10)),         
+																							mode="min",          
+																							verbose=True,
+																							min_delta=self.mdelta_estop,     
+																							)
 
 				print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 				print("Saving checkpoints in directory", self.chkpt_path)
 
-		def suggestHParams(self, trial: optuna.Trial) -> Tuple[int, int, float, Union[None, float], int]:
+		def suggestHParams(self, trial: optuna.Trial) -> Tuple[int, int, float, Union[None, float], int, Union[None, float], Union[None, int]]:
 				hidden_dim = trial.suggest_int('hidden_dim',
 																			 low=self.hidden_dim[self.LOW],
 																			 high=self.hidden_dim[self.HIGH],
@@ -704,20 +713,28 @@ class Trainer():
 						else trial.suggest_float('dropout_rate',
 																		 low=self.dropout_rate[self.LOW],
 																		 high=self.dropout_rate[self.HIGH],
-																		 step=self.dropout_rate[
-																				 self.STEP] if not self.log_domain else 1,
+																		 step=self.dropout_rate[self.STEP] if not self.log_domain else 1,
 																		 log=self.log_domain,
 																		 )
-				batch_size = trial.suggest_categorical('batch_size', self.batch_size)
 				
-				weight_decay = trial.suggest_float('weight_decay',
+				batch_size = trial.suggest_categorical('batch_size', self.batch_size)
+
+				weight_decay = 0 if self.weight_decay is None \
+							else trial.suggest_float('weight_decay',
 																						low=self.weight_decay[self.LOW],
 																						high=self.weight_decay[self.HIGH],
 																						step=self.weight_decay[self.STEP] if not self.log_domain else 1,
 																						log=self.log_domain,
 																						)
+				num_folds = None if self.kfold is None \
+							else trial.suggest_int('num_folds',
+																						low=self.kfold[self.LOW],
+																						high=self.kfold[self.HIGH],
+																						step=self.kfold[self.STEP] if not self.log_domain else 1,
+																						log=self.log_domain,
+																						)
 
-				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay
+				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay, num_folds
 
 		def plObjective(self, trial: optuna.trial.Trial) -> float:
 				"""	Train with mini-batch gradient descent, automatic checkpointing and 
@@ -725,7 +742,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay, num_folds) = self.suggestHParams(trial)
 
 				# prep data
 				data_module = MLPDataModule(X_train=self.X_train_tensor,
@@ -756,17 +773,21 @@ class Trainer():
 
 				# automatic checkpointing
 				self.checkpoint_callback.filename = f'best_model_trial{trial.number:02d}_{{epoch:02d}}_{{val_loss:.3f}}'
+				# create callback list
+				cbs = [self.checkpoint_callback,
+										PyTorchLightningPruningCallback(trial, monitor="val_loss"),
+										]
+				# add early stopping
+				if self.mdelta_estop > -1.0:
+					cbs.append(self.estop_callback)
 
 				# train
 				trainer = pl.Trainer(max_epochs=self.epochs,
 														 logger=logger,
 														 log_every_n_steps=1,
-														 callbacks=[self.checkpoint_callback,
-																				PyTorchLightningPruningCallback(trial, monitor="val_loss"),
-																				self.estop_callback,
-																				],
+														 callbacks=cbs,
 														 enable_progress_bar=self.pbar,
-														 enable_checkpointing=True,
+														 enable_checkpointing=self.save_chkpts,
 														 devices=NUM_DEV if NUM_DEV > 1 else 1,
 														 strategy="ddp_spawn" if str(DEVICE) != 'cpu' else 'auto',
 														 precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
@@ -827,7 +848,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay, _) = self.suggestHParams(trial)
 
 				# instantiate the model and move to device
 				model = self.ModelType(input_dim=self.input_dim,
@@ -869,7 +890,7 @@ class Trainer():
 								val_loss = criterion(val_outputs, self.y_val_tensor).item()
 								writer.add_scalar('Loss/val', val_loss, epoch)
 
-								if val_loss < best_val_loss:
+								if val_loss < best_val_loss and self.save_chkpts:
 										best_val_loss = val_loss
 										chkpt = {
 												'epoch': epoch,
@@ -957,7 +978,7 @@ class Train():
 								 learning_rate: Optional[Tuple] = (1e-4, 1e-2, 1e-3),
 								 dropout_rate: Optional[Union[None, Tuple]] = (0, 0.4, 0.01),
 								 log_domain: Optional[bool] = False,
-								 weight_decay: Optional[Tuple] = (0,0,0),
+								 weight_decay: Optional[Union[None, Tuple]] = (0,0,0),
 								 optim_trials: Optional[int] = 100,
 								 batch_size: Optional[Tuple] = (18, 32, 64),
 								 pruning: Optional[bool] = False,
@@ -966,6 +987,8 @@ class Train():
 								 lightning_pbar: Optional[bool] = False,
 								 distribute: Optional[bool] = False,
 								 mdelta_estop: Optional[float] = 0,
+								 kfold: Optional[Union[None, Tuple]] = (2,5,1),
+								 save_chkpts: Optional[bool] = True,
 								 ) -> None:
 
 				# load training data per configuration
@@ -995,6 +1018,8 @@ class Train():
 				self.lightning_pbar = lightning_pbar
 				self.distribute = distribute
 				self.mdelta_estop = mdelta_estop
+				self.kfold = kfold
+				self.save_chkpts = save_chkpts
 				self.log = {}
 
 		def run(self) -> None:
@@ -1039,6 +1064,8 @@ class Train():
 													pbar=self.lightning_pbar,
 													bgd=self.bgd,
 													mdelta_estop=self.mdelta_estop,
+													kfold=self.kfold,
+													save_chkpts=self.save_chkpts,
 													)
 
 				print(f"\n{50*'#'}")
@@ -1102,6 +1129,7 @@ class Train():
 													weight_decay=self.weight_decay,
 													batch_size=self.batch_size,
 													name=td.name,
+													save_chkpts=self.save_chkpts,
 													)
 
 				print(f"\n{50*'#'}")
@@ -1158,15 +1186,17 @@ if __name__ == '__main__':
 		train_group.add_argument('--hidden_dim', type=parseIntTuple,help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
 		train_group.add_argument('--batch_size', type=parseIntTuple,help='Choices for mini-batch training (int), eg. 18,32,64.', default='18,32,64')
 		train_group.add_argument('--learning_rate', type=parseFloatTuple,help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
-		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='0.0,0.4,0.01')
+		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='none')
+		train_group.add_argument('--weight_decay', type=parseFloatTuple, help='L2 regularization weight decay (float), eg. 1e-1,1e-2,1e-2 or none to disable.', default='none')
+		train_group.add_argument('--kfold', type=parseIntTuple,help='Use k-fold c-v and spec range of folds., eg. 2,5,1 or disable with none.', default='none')
+		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping, disable with -1.0.', default=-1.0)
 		train_group.add_argument('--log_domain', action='store_true',help='Change optimizer params logarithmically.')
-		train_group.add_argument('--weight_decay', type=parseFloatTuple, help='L2 regularization weight decay (float), eg. 1e-1,1e-2,1e-2.', default='0,0,0')
-		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping.', default=0.01)
 		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization.')
 		train_group.add_argument('--use_bgd', action='store_true', help='Use batch gradient descent training.')
 		train_group.add_argument('--distribute', action='store_true', help='Train on multiple devices, use pruning, auto logging and checkpointing.')
 		train_group.add_argument('--optuna_pbar', action='store_true', help='Show Optunas trial progessbar.')
 		train_group.add_argument('--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar.')
+		train_group.add_argument('--save_chkpts', action='store_true', help='Save model checkpoints.')
 		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training.')
 		args = parser.parse_args()
 
@@ -1197,4 +1227,6 @@ if __name__ == '__main__':
 					lightning_pbar=args.lightning_pbar,
 					distribute=args.distribute,
 					mdelta_estop=args.mdelta_estop,
+					kfold=args.kfold,
+					save_chkpts=args.save_chkpts,
 					).run()
