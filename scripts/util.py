@@ -56,6 +56,7 @@ THUMB_TRAIN_COLS = ['cmd1', 'cmd2', 'dir1', 'dir2',
                     'quat', 'angle1', 'angle2', 'angle3', 'trans']
 QUAT_COLS = ["x", "y", "z", "w"]
 TRANS_COLS = ["x", "y", "z"]
+format_trans_cols = lambda idx: [f"x_{idx}", f"y_{idx}", f"z_{idx}"]
 
 
 def mkDirs() -> None:

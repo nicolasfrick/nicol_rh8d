@@ -70,17 +70,15 @@ class TrainingData():
 
 				# path names
 				split = data_file.split('/')
-				self.file_name = split[-1]
-				self.folder_pth = "/".join(split[: -1])
-				self.name = self.file_name.replace('.json', '')
-				self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name)
-				if not os.path.exists(self.scaler_pth):
-						os.makedirs(self.scaler_pth, exist_ok=True)
+				self.file_name = split[-1] # filename
+				self.folder_pth = "/".join(split[: -1]) # parent dir
+				self.name = self.file_name.replace('.json', '') # net name
+				self.scaler_pth = os.path.join(MLP_SCLRS_PTH, self.name) # scalers dir
 
 				# dataframe
 				data_pth = os.path.join(DATA_PTH, 'keypoint/train', data_file)
 				df = pd.read_json(data_pth, orient='index')
-				cols = df.columns.tolist()
+				cols = df.columns.tolist() # net config
 
 				print("Loading data for net", self.name, "with columns", cols)
 
@@ -93,12 +91,12 @@ class TrainingData():
 				self.target_norm = target_norm
 
 				# input data
+				self.X_quats = None # single
 				self.X_cmds = {}
 				self.X_dirs = {}
-				self.X_quats = None
 				# target data
+				self.y_trans = {}
 				self.y_angles = {}
-				self.y_trans = None
 				# scalers
 				self.X_cmds_scalers = {}
 				self.y_angles_scalers = {}
@@ -135,9 +133,10 @@ class TrainingData():
 					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) from {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
 
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
-				"""Stack normalized data to a feature vector X and
-												a target vector y.
+				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
+					  a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
 				"""
+				# features:
 				# quaternions first, always present
 				X = self.X_quats.copy()
 				self.feature_names = QUAT_COLS.copy()
@@ -150,11 +149,19 @@ class TrainingData():
 						self.feature_names.append(name)
 						X = np.hstack([X, X_dir.reshape(-1, 1)])
 
-				# translation first if present
+				# targets:
 				y = None
-				if self.y_trans is not None:
-						self.target_names = TRANS_COLS.copy()
-						y = self.y_trans.copy()
+				# translation first if present
+				for name, y_trans in self.y_trans.items():
+					trans_idx = name.replace('trans_', '')
+					if y is None:
+						# 1st elmt
+						self.target_names = [*format_trans_cols(trans_idx)]
+						y = y_trans.copy()
+					else:
+						self.target_names.extend(format_trans_cols(trans_idx))
+						y = np.hstack([y, y_trans])
+
 				# stack angles
 				for name, y_angle in self.y_angles.items():
 						if y is None:
@@ -224,7 +231,6 @@ class TrainingData():
 							self.X_dirs.update({col: np.array(data, dtype=np.int32)})
 					# process input orientation
 					elif 'quat' in col:
-							assert(not self.X_quats)
 							self.X_quats  = np.array([list(q) for q in data], dtype=np.float32)
 							assert(self.checkUnitQuaternions(self.X_quats)) # require unit quaternions
 
@@ -233,11 +239,13 @@ class TrainingData():
 							self.y_angles.update({col: data})
 					# process target trans
 					elif 'trans' in col:
-							self.y_trans = np.array([list(t) for t in data], dtype=np.float32)
+							self.y_trans.update( {col: np.array([list(t) for t in data], dtype=np.float32)} )
 					else:
 							raise NotImplementedError
 						
 		def normalizeTrainData(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+			""" Normalize the training data by the given method and save scaler for later use.
+			"""
 			# features:
 			# normalize only cmds
 			for idx, name in enumerate(self.X_cmds.keys()):
@@ -246,12 +254,12 @@ class TrainingData():
 				X_train[:, len(QUAT_COLS)+idx] = self.normalizeData(X_train[:, len(QUAT_COLS)+idx].reshape(-1, 1), self.input_norm, self.X_cmds_scalers, name).flatten()
 
 			# targets:
-			# normalize translation firstly if present
 			start_idx = 0
-			if TRANS_COLS in self.target_names:
-				print("TRANSFORMS PRESENT")
-				y_train[:, : len(TRANS_COLS)] = self.normalizeData(y_train[:, : len(TRANS_COLS)], self.trans_norm, self.y_trans_scalers, 'trans')
-				start_idx = len(TRANS_COLS)
+			# normalize translation first if present
+			for idx, name in enumerate(self.y_trans.keys()):
+				tmp_end_idx = len(TRANS_COLS) + start_idx
+				y_train[:, start_idx : tmp_end_idx] = self.normalizeData(y_train[:, start_idx : tmp_end_idx], self.trans_norm, self.y_trans_scalers, name)
+				start_idx = tmp_end_idx
 
 			# transform angles secondly
 			for idx, name in enumerate(self.y_angles.keys()):
@@ -259,21 +267,33 @@ class TrainingData():
 				y_train[:, start_idx+idx] = self.normalizeData(y_train[:, start_idx+idx].reshape(-1, 1), self.target_norm, self.y_angles_scalers, name).flatten()
 
 		def scaleValTestData(self, X_val_test: np.ndarray, y_val_test: np.ndarray) -> None:
-			# features:
-			# scale only commands
-			for idx, name in enumerate(self.X_cmds.keys()):
-				# scale separated, quaternions always present
-				X_val_test[:, len(QUAT_COLS)+idx] = self.scaleInputOutputData(self.X_cmds_scalers[name], X_val_test[:, len(QUAT_COLS)+idx].reshape(-1, 1)).flatten()
+			"""	  Scale validation or test data by the scaler instance from train data normalization.
+				 	Skip scaling if no scaler is present
+			"""
 
-			# scale translation firstly if present
+			# features:
+			if self.X_cmds_scalers:
+				# scale only commands
+				for idx, name in enumerate(self.X_cmds.keys()):
+					# scale separated, quaternions always present
+					X_val_test[:, len(QUAT_COLS)+idx] = self.scaleInputOutputData(self.X_cmds_scalers[name], X_val_test[:, len(QUAT_COLS)+idx].reshape(-1, 1)).flatten()
+
+			# targets
 			start_idx = 0
-			if TRANS_COLS in self.target_names:
-				y_val_test[:, : len(TRANS_COLS)] = self.scaleInputOutputData(self.y_trans_scalers['trans'], y_val_test[:, : len(TRANS_COLS)])
-				start_idx = len(TRANS_COLS)
+			# scale translation first if present
+			if self.y_trans:
+				if self.y_trans_scalers:
+					for idx, name in enumerate(self.y_trans.keys()):
+						tmp_end_idx = len(TRANS_COLS) + start_idx
+						y_val_test[:, start_idx : tmp_end_idx] = self.scaleInputOutputData(self.y_trans_scalers[name], y_val_test[:, start_idx : tmp_end_idx])
+						start_idx = tmp_end_idx
+				else:
+					start_idx = len(self.y_trans.keys()) * len(TRANS_COLS)
 
 			# scale angles secondly
-			for idx, name in enumerate(self.y_angles.keys()):
-				y_val_test[:, start_idx+idx] = self.scaleInputOutputData(self.y_angles_scalers[name], y_val_test[:, start_idx+idx].reshape(-1, 1)).flatten()
+			if self.y_angles_scalers:
+				for idx, name in enumerate(self.y_angles.keys()):
+					y_val_test[:, start_idx+idx] = self.scaleInputOutputData(self.y_angles_scalers[name], y_val_test[:, start_idx+idx].reshape(-1, 1)).flatten()
 
 		def normalizeData(self,
 											data: np.ndarray,
@@ -355,6 +375,10 @@ class TrainingData():
 				return denormalized_data
 
 		def saveScalers(self) -> None:
+				# mkdir
+				if not os.path.exists(self.scaler_pth):
+						os.makedirs(self.scaler_pth, exist_ok=True)
+
 				for name, scaler in self.X_cmds_scalers.items():
 						pth = os.path.join(self.scaler_pth, name + ".pkl")
 						joblib.dump(scaler, pth)
@@ -1092,7 +1116,7 @@ class Train():
 													input_norm=self.input_norm,
 													target_norm=self.target_norm,
 													move_gpu=False,
-													kfold=False if self.kfold is None else True,
+													kfold=self.kfold is not None,
 													)
 
 				trainer = Trainer(td=td,
@@ -1207,8 +1231,8 @@ if __name__ == '__main__':
 		data_group = parser.add_argument_group("Data Settings")
 		data_group.add_argument('--folder_pth', type=str, metavar='str',help='Folder path for the data prepared for training.', default="10013")
 		data_group.add_argument('--pattern', type=str, metavar='str',help='Search pattern for data files', default=".json")
-		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing.', default=0.3)
-		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split (from test size) for validation.', default=0.5)
+		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing from val size.', default=0.3)
+		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split for validation incl. test size.', default=0.5)
 		data_group.add_argument('--random_state', type=int, metavar='int',help='Percentage of data randomization.', default=40)
 		data_group.add_argument('--trans_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--input_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
