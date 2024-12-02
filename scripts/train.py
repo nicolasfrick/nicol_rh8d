@@ -24,6 +24,7 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from optuna.integration import PyTorchLightningPruningCallback
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from util import *
+from plot_record import *
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -77,10 +78,10 @@ class TrainingData():
 
 				# dataframe
 				data_pth = os.path.join(DATA_PTH, 'keypoint/train', data_file)
-				df = pd.read_json(data_pth, orient='index')
-				cols = df.columns.tolist() # net config
+				self.df = pd.read_json(data_pth, orient='index')
+				self.cols = self.df.columns.tolist() # net config
 
-				print("Loading data for net", self.name, "with columns", cols)
+				print("Loading data for net", self.name, "with columns", self.cols)
 
 				# conditions
 				self.test_size = test_size
@@ -111,13 +112,13 @@ class TrainingData():
 				self.y_val_tensor = None
 
 				# load, normalize, split and move data
-				self.prepare(df, cols, move_gpu, kfold)
+				self.prepare(self.df, self.cols, move_gpu, kfold)
 
 		def prepare(self, df: pd.DataFrame, cols: list, move_gpu: bool, kfold: bool) -> None:
 				# load and normalize data
 				self.loadData(df, cols)
 				print("Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,",
-							len(self.y_angles.keys()), "target angle data frames, one input orientation and target translation data frame.\n")
+							len(self.y_angles.keys()), "target angle data frames, one input orientation and", len(self.y_trans.keys()), "target translation data frames.\n")
 
 				# stack training data
 				(X, y) = self.stackData()
@@ -130,13 +131,13 @@ class TrainingData():
 					# print info
 					print("Loaded features", self.feature_names, "and targets", self.target_names, f"to device: {DEVICE}" if move_gpu else "")
 					print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.validation_size)}%),")
-					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) from {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
+					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) and {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
 
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
 					  a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
 				"""
-				# features:
+				# features X:
 				# quaternions first, always present
 				X = self.X_quats.copy()
 				self.feature_names = QUAT_COLS.copy()
@@ -149,7 +150,7 @@ class TrainingData():
 						self.feature_names.append(name)
 						X = np.hstack([X, X_dir.reshape(-1, 1)])
 
-				# targets:
+				# targets y:
 				y = None
 				# translation first if present
 				for name, y_trans in self.y_trans.items():
@@ -185,14 +186,13 @@ class TrainingData():
 				"""
 				# split off training data
 				X_train, X_tmp, y_train, y_tmp = train_test_split(
-						X, y, test_size=self.validation_size, random_state=self.random_state)
+						X, y, test_size=self.validation_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
 				# split off test and validation data
-				X_test, X_val, y_test, y_val = train_test_split(
-						X_tmp, y_tmp, test_size=self.test_size, random_state=self.random_state)
+				X_val, X_test, y_val, y_test = train_test_split(
+						X_tmp, y_tmp, test_size=self.test_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
 				
 				# normalize training data
 				self.normalizeTrainData(X_train, y_train)
-
 				# scale validation data
 				self.scaleValTestData(X_val, y_val)
 				# scale test data
@@ -218,7 +218,7 @@ class TrainingData():
 						self.y_val_tensor = self.y_val_tensor.to(DEVICE)
 
 		def loadData(self, df: pd.DataFrame, cols: list) -> None:
-			"""Fill datastructures with traning data, possibly apply normalization.
+			"""Fill datastructures with traning data.
 			"""
 			for col in cols:
 					data = df[col].values
@@ -233,7 +233,6 @@ class TrainingData():
 					elif 'quat' in col:
 							self.X_quats  = np.array([list(q) for q in data], dtype=np.float32)
 							assert(self.checkUnitQuaternions(self.X_quats)) # require unit quaternions
-
 					# process target angles
 					elif 'angle' in col:
 							self.y_angles.update({col: data})
@@ -1219,6 +1218,78 @@ class Train():
 				with open(os.path.join(trainer.chkpt_path, "optimization_results.json"), "a") as json_file:
 						json.dump(self.log, json_file, indent=4)
 
+def visData(args) -> None:
+	pattern = os.path.join(DATA_PTH, 'keypoint/train', args.folder_pth, f'*{args.pattern}*')
+	data_files = glob.glob(pattern, recursive=False)
+	assert(len(data_files) == 1) # supports only single file
+
+	td = TrainingData(data_file=data_files[0],
+										test_size=args.test_size,
+										validation_size=args.val_size,
+										random_state=args.random_state,
+										trans_norm=args.trans_norm,
+										input_norm=args.input_norm,
+										target_norm=args.target_norm,
+										move_gpu=False,
+										kfold=args.kfold is not None,
+										)
+	
+	matplotlib.use('TkAgg') 
+
+	# orig data
+	index = td.df.index.to_list()
+	for col in td.cols:
+		if 'cmd' in col or 'angle' in col or 'dir' in col:
+			plotData(index, td.df[col].values, col)
+		elif 'quat' in col:
+			quats = np.array([np.array(lst) for lst in td.df[col]])
+			# quats = smoothMagnQuats(quats)
+			plotData(index, quats, col)
+		elif 'trans' in col:
+			trans = np.array([np.array(lst) for lst in td.df[col]])
+			# trans = smoothMagnTrans(trans, s=0)
+			plotData(index, trans, col)
+
+	# features
+	data_vis = np.concatenate((td.X_train_tensor.numpy(), td.X_val_tensor.numpy(), td.X_test_tensor.numpy()), axis=0)
+	index = range(len(data_vis))
+	for idx, feat in enumerate(td.feature_names):
+		if 'cmd' in feat or 'dir'  in feat:
+			plotData(index, data_vis[:, idx], f"feature_{feat}")
+		elif feat == "x":
+			quats = data_vis[:, idx : idx + len(QUAT_COLS)]
+			# quats = smoothMagnQuats(quats)
+			plotData(index, quats, "feature_quats")	
+	
+	# targets
+	tdata_vis = np.concatenate((td.y_train_tensor.numpy(), td.y_val_tensor.numpy(), td.y_test_tensor.numpy()), axis=0)
+	tindex = range(len(tdata_vis))
+	for idx, target in enumerate(td.target_names):
+		if 'angle' in target:
+			plotData(tindex, tdata_vis[:, idx], f"target_{target}")
+		elif 'x_' in target:
+			trans = tdata_vis[:, idx : idx + len(TRANS_COLS)]
+			# t = smoothMagnTrans(t, s=0)
+			plotData(tindex, trans, f"target_{target.replace('x_', '')}")
+
+	# denormalized
+	if td.trans_norm != Normalization.NONE and td.y_trans:
+		name = 'trans' if len(td.y_trans.keys()) == 1 else 'trans1'
+		trans = tdata_vis[:, : len(TRANS_COLS)]
+		trans = td.denormalizeOutputData(td.y_trans_scalers[name], trans)
+		plotData(tindex, trans, 'denormalized_trans')
+
+	if td.input_norm != Normalization.NONE:
+		name =  'cmd' if len(td.X_cmds.keys()) == 1 else 'cmd1'
+		cmd = td.denormalizeOutputData(td.X_cmds_scalers[name], data_vis[:, len(QUAT_COLS)].reshape(-1, 1))
+		plotData(index, cmd, 'denormalized_cmd')
+
+	if td.target_norm != Normalization.NONE:
+		name = 'angle' if len(td.y_angles.keys()) == 1 else 'angle1'
+		angle = td.denormalizeOutputData(td.y_angles_scalers[name], tdata_vis[:, len(TRANS_COLS)].reshape(-1, 1))
+		plotData(tindex, angle, 'denormalized_angle')
+
+	plt.show()
 
 if __name__ == '__main__':
 		parser = argparse.ArgumentParser(description='Training script')
@@ -1237,6 +1308,7 @@ if __name__ == '__main__':
 		data_group.add_argument('--trans_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--input_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--target_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
+		data_group.add_argument('--vis_data', action='store_true', help='Plot the input data, the feature and target vectors and terminate program afterwards.')
 		# training
 		train_group = parser.add_argument_group("Optimization Settings")
 		train_group.add_argument('--epochs', type=int, metavar='int', help='Training epochs.', default=100)
@@ -1259,9 +1331,15 @@ if __name__ == '__main__':
 		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training after cleanup.')
 		args = parser.parse_args()
 
-		# clean data
+		# clean opt. data
 		clean(args)
 
+		# show training data
+		if args.vis_data:
+			visData(args)
+			exit(0)
+
+		# perform training
 		Train(folder_pth=args.folder_pth,
 					pattern=args.pattern,
 					test_size=args.test_size,

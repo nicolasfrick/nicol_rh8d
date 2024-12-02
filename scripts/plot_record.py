@@ -170,7 +170,31 @@ class KeypointPlot():
 
 		return np.array(self.fig.canvas.renderer.buffer_rgba())
 	
-def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True) -> None:
+def plotData(x: np.ndarray, y: np.ndarray, name: str, save_pth: str=None, grid: bool=True) -> None:
+	fig, ax = plt.subplots()
+	ax.plot(x, y)
+	plt.xlabel("Index")
+	plt.ylabel(name)
+	plt.grid(visible=grid)
+	if save_pth is not None:
+		fig.savefig(save_pth, format='svg')
+		
+def smoothMagnQuats(quats: np.ndarray, s: int=300) -> np.ndarray:
+	angle_radians = 2 * np.arccos(quats[:, 3]) # rotation angle in radians
+	angle_radians -= 4
+	# spline smoothing
+	x = np.arange(len(angle_radians))
+	spline = UnivariateSpline(x, angle_radians, s=s) 
+	return spline(x)
+
+def smoothMagnTrans(trans: np.ndarray, s: int=0) -> np.ndarray:
+	magn = np.linalg.norm(trans, axis=1)
+	# spline smoothing
+	x = np.arange(len(magn))
+	spline = UnivariateSpline(x, magn, s=s) 
+	return spline(x)
+	
+def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True, show: bool=True) -> None:
 	matplotlib.use('TkAgg') 
 
 	df = pd.read_json(data_pth, orient='index')      
@@ -186,12 +210,7 @@ def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True) -> None
 	
 	# rotation magnitude
 	quats = np.array([np.array(lst) for lst in df['quat']])
-	angle_radians = 2 * np.arccos(quats[:, 3]) # rotation angle in radians
-	angle_radians -= 4
-	# spline smoothing
-	x = np.arange(len(angle_radians))
-	spline = UnivariateSpline(x, angle_radians, s=300) 
-	smoothed = spline(x)
+	smoothed = smoothMagnQuats(quats)
 	# plot
 	ax.plot(df.index.to_list(), smoothed, label="magnitude of rotation")
 	ax.legend()
@@ -207,7 +226,8 @@ def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True) -> None
 	plt.grid(visible=grid)
 	if save_pth is not None:
 		fig.savefig(save_pth, format='svg')
-	plt.show()
+	if show:
+	    plt.show()
 
 def plotTrainingDataLogScale(file_pth: str) -> None:
 	matplotlib.use('TkAgg') 
