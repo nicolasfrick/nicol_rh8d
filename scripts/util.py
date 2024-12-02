@@ -54,6 +54,8 @@ FINGER_TRAIN_COLS = ['cmd', 'dir', 'quat',
                      'angle1', 'angle2', 'angle3', 'trans']
 THUMB_TRAIN_COLS = ['cmd1', 'cmd2', 'dir1', 'dir2',
                     'quat', 'angle1', 'angle2', 'angle3', 'trans']
+QUAT_COLS = ["x", "y", "z", "w"]
+TRANS_COLS = ["x", "y", "z"]
 
 
 def mkDirs() -> None:
@@ -145,11 +147,12 @@ def clean(args: Any) -> None:
                   "to", HOMETRASH_B.decode())
             send2trash(MLP_CHKPT_PTH)
 
-    if args.y:
-        print("Cleaned..")
-    else:
-        print("Cleaned.. exiting")
-        exit(0)
+    if args.clean_log or args.clean_scaler or args.clean_checkpoint:
+        if args.y:
+            print("Cleaned..")
+        else:
+            print("Cleaned.. exiting")
+            exit(0)
 
 
 def parseIntTuple(value: str) -> Union[None, Tuple]:

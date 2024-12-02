@@ -43,8 +43,6 @@ class TrainingData():
 						@type int
 						@param validation_size
 						@type float
-						@param norm_quats 
-						@type bool
 						@param trans_norm 
 						@type Normalization
 						@param input_norm 
@@ -53,12 +51,8 @@ class TrainingData():
 						@type Normalization
 						@param move_gpu
 						@type bool
-
-		Steps for Inference with Normalized Inputs
-						Save the normalization parameters: During training, keep track of the mean, standard deviation, minimum, and maximum values used for normalization.
-						Normalize the input data: Before feeding the input data into the model, apply the same normalization using the saved parameters.
-						Make predictions: Use the normalized input data for the model inference.
-						Inverse transform the output (if needed): If your output targets were also normalized, apply the inverse transformation to interpret the results in the original scale.
+						@param kfold
+						@type bool
 
 		"""
 
@@ -67,11 +61,11 @@ class TrainingData():
 								 test_size: Optional[float] = 0.3,
 								 validation_size: Optional[float] = 0.5,
 								 random_state: Optional[int] = 42,
-								 norm_quats: Optional[bool] = False,
 								 trans_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 input_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 target_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 move_gpu: Optional[bool] = False,
+								 kfold: Optional[bool] = False,
 								 ) -> None:
 
 				# path names
@@ -94,7 +88,6 @@ class TrainingData():
 				self.test_size = test_size
 				self.random_state = random_state
 				self.validation_size = validation_size
-				self.norm_quats = norm_quats
 				self.trans_norm = trans_norm
 				self.input_norm = input_norm
 				self.target_norm = target_norm
@@ -120,12 +113,9 @@ class TrainingData():
 				self.y_val_tensor = None
 
 				# load, normalize, split and move data
-				self.prepare(df, cols, move_gpu)
+				self.prepare(df, cols, move_gpu, kfold)
 
-				# save fitted scalers
-				self.saveScalers()
-
-		def prepare(self, df: pd.DataFrame, cols: list, move_gpu: bool) -> None:
+		def prepare(self, df: pd.DataFrame, cols: list, move_gpu: bool, kfold: bool) -> None:
 				# load and normalize data
 				self.loadData(df, cols)
 				print("Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,",
@@ -134,19 +124,15 @@ class TrainingData():
 				# stack training data
 				(X, y) = self.stackData()
 
-				# split and move data
-				self.splitData(X, y, move_gpu)
-
-				print("Loaded features", self.feature_names, "and targets",
-							self.target_names, f"to device: {DEVICE}" if move_gpu else "")
-				pct_train = 100*(1-self.validation_size)
-				pct_val = 100*(self.validation_size)
-				pct_test = self.test_size * pct_val
-				pct_test -= pct_val
-				print(
-						f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({pct_train}%),")
-				print(
-						f"{len(self.X_test_tensor)} test ({pct_test}%) from {len(self.X_val_tensor)} validation ({pct_val}%) samples")
+				if kfold:
+					pass
+				else:
+					# split, normalize and move data
+					self.splitData(X, y, move_gpu)
+					# print info
+					print("Loaded features", self.feature_names, "and targets", self.target_names, f"to device: {DEVICE}" if move_gpu else "")
+					print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.validation_size)}%),")
+					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) from {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
 
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 				"""Stack normalized data to a feature vector X and
@@ -154,7 +140,7 @@ class TrainingData():
 				"""
 				# quaternions first, always present
 				X = self.X_quats.copy()
-				self.feature_names = ["x", "y", "z", "w"]
+				self.feature_names = QUAT_COLS.copy()
 				# stack commands
 				for name, X_cmd in self.X_cmds.items():
 						self.feature_names.append(name)
@@ -167,7 +153,7 @@ class TrainingData():
 				# translation first if present
 				y = None
 				if self.y_trans is not None:
-						self.target_names = ["x", "y", "z"]
+						self.target_names = TRANS_COLS.copy()
 						y = self.y_trans.copy()
 				# stack angles
 				for name, y_angle in self.y_angles.items():
@@ -196,6 +182,14 @@ class TrainingData():
 				# split off test and validation data
 				X_test, X_val, y_test, y_val = train_test_split(
 						X_tmp, y_tmp, test_size=self.test_size, random_state=self.random_state)
+				
+				# normalize training data
+				self.normalizeTrainData(X_train, y_train)
+
+				# scale validation data
+				self.scaleValTestData(X_val, y_val)
+				# scale test data
+				self.scaleValTestData(X_test, y_test)
 
 				# map features to tensors and move to device
 				self.X_train_tensor = torch.from_numpy(X_train).float()
@@ -217,49 +211,78 @@ class TrainingData():
 						self.y_val_tensor = self.y_val_tensor.to(DEVICE)
 
 		def loadData(self, df: pd.DataFrame, cols: list) -> None:
-				"""Fill datastructures with traning data, possibly apply normalization.
-				"""
-				for col in cols:
-						data = df[col].values
+			"""Fill datastructures with traning data, possibly apply normalization.
+			"""
+			for col in cols:
+					data = df[col].values
 
-						# process input commands
-						if 'cmd' in col:
-								normalized_data = self.normalizeData(
-										data, self.input_norm, self.X_cmds_scalers, col)
-								self.X_cmds.update({col: normalized_data.flatten()})
-						# process input direction
-						elif 'dir' in col:
-								self.X_dirs.update({col: np.array(data, dtype=np.int32)})
-						# process input orientation
-						elif 'quat' in col:
-								quats = np.array([list(q) for q in data], dtype=np.float32)
-								self.X_quats = self.normQuaternions(
-										quats) if self.norm_quats else quats
+					# process input commands
+					if 'cmd' in col:
+							self.X_cmds.update({col: data})
+					# process input direction
+					elif 'dir' in col:
+							self.X_dirs.update({col: np.array(data, dtype=np.int32)})
+					# process input orientation
+					elif 'quat' in col:
+							assert(not self.X_quats)
+							self.X_quats  = np.array([list(q) for q in data], dtype=np.float32)
+							assert(self.checkUnitQuaternions(self.X_quats)) # require unit quaternions
 
-						# process target angles
-						elif 'angle' in col:
-								normalized_data = self.normalizeData(
-										data, self.target_norm, self.y_angles_scalers, col)
-								self.y_angles.update({col: normalized_data.flatten()})
-						# process target trans
-						elif 'trans' in col:
-								self.y_trans = self.normalizeData(np.array(
-										[list(t) for t in data], dtype=np.float32), self.trans_norm, self.y_trans_scalers, col, None)
-						else:
-								raise NotImplementedError
+					# process target angles
+					elif 'angle' in col:
+							self.y_angles.update({col: data})
+					# process target trans
+					elif 'trans' in col:
+							self.y_trans = np.array([list(t) for t in data], dtype=np.float32)
+					else:
+							raise NotImplementedError
+						
+		def normalizeTrainData(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
+			# features:
+			# normalize only cmds
+			for idx, name in enumerate(self.X_cmds.keys()):
+				# norm separated, quaternions always present
+				assert(self.feature_names[len(QUAT_COLS)+idx] == name)
+				X_train[:, len(QUAT_COLS)+idx] = self.normalizeData(X_train[:, len(QUAT_COLS)+idx].reshape(-1, 1), self.input_norm, self.X_cmds_scalers, name).flatten()
+
+			# targets:
+			# normalize translation firstly if present
+			start_idx = 0
+			if TRANS_COLS in self.target_names:
+				print("TRANSFORMS PRESENT")
+				y_train[:, : len(TRANS_COLS)] = self.normalizeData(y_train[:, : len(TRANS_COLS)], self.trans_norm, self.y_trans_scalers, 'trans')
+				start_idx = len(TRANS_COLS)
+
+			# transform angles secondly
+			for idx, name in enumerate(self.y_angles.keys()):
+				assert(self.target_names[start_idx+idx] == name)
+				y_train[:, start_idx+idx] = self.normalizeData(y_train[:, start_idx+idx].reshape(-1, 1), self.target_norm, self.y_angles_scalers, name).flatten()
+
+		def scaleValTestData(self, X_val_test: np.ndarray, y_val_test: np.ndarray) -> None:
+			# features:
+			# scale only commands
+			for idx, name in enumerate(self.X_cmds.keys()):
+				# scale separated, quaternions always present
+				X_val_test[:, len(QUAT_COLS)+idx] = self.scaleInputOutputData(self.X_cmds_scalers[name], X_val_test[:, len(QUAT_COLS)+idx].reshape(-1, 1)).flatten()
+
+			# scale translation firstly if present
+			start_idx = 0
+			if TRANS_COLS in self.target_names:
+				y_val_test[:, : len(TRANS_COLS)] = self.scaleInputOutputData(self.y_trans_scalers['trans'], y_val_test[:, : len(TRANS_COLS)])
+				start_idx = len(TRANS_COLS)
+
+			# scale angles secondly
+			for idx, name in enumerate(self.y_angles.keys()):
+				y_val_test[:, start_idx+idx] = self.scaleInputOutputData(self.y_angles_scalers[name], y_val_test[:, start_idx+idx].reshape(-1, 1)).flatten()
 
 		def normalizeData(self,
 											data: np.ndarray,
 											norm: Normalization,
 											scaler_dict: dict,
 											scaler_name: str,
-											reshape: Tuple = (-1, 1),
 											) -> np.ndarray:
 
 				normalized_data = data.copy()
-				if reshape is not None:
-						# reshape for single feature
-						normalized_data = normalized_data.reshape(reshape[0], reshape[1])
 
 				if norm == Normalization.Z_SCORE:
 						(scaler, normalized_data) = self.zScoreScaler(normalized_data)
@@ -277,11 +300,10 @@ class TrainingData():
 						raise NotImplementedError
 
 				return normalized_data
-
-		def normQuaternions(self, quats: np.ndarray) -> np.ndarray:
-				"""Make sure data is unit quaternions"""
-				norm = np.linalg.norm(quats)
-				return quats / norm
+		
+		def checkUnitQuaternions(self, quats: np.ndarray) -> bool:
+			norm = np.linalg.norm(quats, axis=1)
+			return all(np.isclose(norm, 1.0))
 
 		def zScore(self, data: np.ndarray) -> np.ndarray:
 				"""z=(x-mu)/sigma, assume normally distributed data
@@ -324,7 +346,7 @@ class TrainingData():
 				scaled_values = scaler.fit_transform(data)
 				return scaler, scaled_values
 
-		def normalizeInputData(self, scaler: Union[MinMaxScaler, StandardScaler], data: np.ndarray) -> np.ndarray:
+		def scaleInputOutputData(self, scaler: Union[MinMaxScaler, StandardScaler], data: np.ndarray) -> np.ndarray:
 				normalized_data = scaler.transform(data)
 				return normalized_data
 
@@ -473,59 +495,74 @@ class WrappedMLP(pl.LightningModule):
 class MLPDataModule(pl.LightningDataModule):
 		""" Load data for lightning trainer.
 
-				@param X_train
-				@type torch.Tensor
-				@param y_train
-				@type torch.Tensor
-				@param X_val
-				@type torch.Tensor
-				@param y_val
-				@type torch.Tensor
-				@param X_test
-				@type torch.Tensor
-				@param y_test
-				@type torch.Tensor
+				@param training_data
+				@type TrainingData
 				@param batch_size
 				@type int
 				@param bgd
 				@type bool
+				@param k
+				@type Union[None, int]
+				@param num_splits
+				@type Union[None,int]
 
 		"""
 
 		def __init__(self,
-								 X_train: torch.Tensor,
-								 y_train: torch.Tensor,
-								 X_val: torch.Tensor,
-								 y_val: torch.Tensor,
-								 X_test: torch.Tensor,
-								 y_test: torch.Tensor,
+								training_data: TrainingData,
 								 batch_size: int,
 								 bgd: bool,
+								 k: Union[None,int],
+								 num_splits: Union[None,int],
 								 ) -> None:
 
 				super().__init__()
-				self.X_train = X_train
-				self.y_train = y_train
-				self.X_val = X_val
-				self.y_val = y_val
-				self.X_test = X_test
-				self.y_test = y_test
+				
+				self.td = training_data
+				self.k = k
+				self.num_splits = num_splits
 
-				if bgd:
+				self.train_dataset = None
+				self.val_dataset = None
+				self.test_dataset = None
+
+				# set batch size
+				if bgd == True and k is None:
 					# batch gradient desc.
-					self.train_batch_size = len(X_train)
-					self.val_batch_size = len(X_val)
-					self.test_batch_size = len(X_test)
+					self.train_batch_size = len(training_data.X_train_tensor)
+					self.val_batch_size = len(training_data.X_val_tensor)
+					self.test_batch_size = len(training_data.X_test_tensor)
+				elif k is not None:
+					pass
 				else:
+					# mini-batch gradient desc.
 					self.train_batch_size = batch_size
 					self.val_batch_size = batch_size
 					self.test_batch_size = batch_size
 
 				# overwrite
 		def setup(self, stage: Optional[str] = None) -> None:
-				self.train_dataset = TensorDataset(self.X_train, self.y_train)
-				self.val_dataset = TensorDataset(self.X_val, self.y_val)
-				self.test_dataset = TensorDataset(self.X_test, self.y_test)
+				if self.k is None:
+					# data already prepared
+					self.train_dataset = TensorDataset(self.td.X_train_tensor, self.td.y_train_tensor)
+					self.val_dataset = TensorDataset(self.td.X_val_tensor, self.td.y_val_tensor)
+					self.test_dataset = TensorDataset(self.td.X_test_tensor, self.td.y_test_tensor)
+				else:
+					# prepare data for corss val.
+					kf = KFold(self.k, shuffle=False)
+
+
+    # def setup(self, stage=None):
+    #     if not self.data_train and not self.data_val:
+    #         dataset_full = TUDataset(self.hparams.data_dir, name="PROTEINS", use_node_attr=True, transform=self.transforms)
+
+    #         # choose fold to train on
+    #         kf = KFold(n_splits=self.hparams.num_splits, shuffle=True, random_state=self.hparams.split_seed)
+    #         all_splits = [k for k in kf.split(dataset_full)]
+    #         train_indexes, val_indexes = all_splits[self.hparams.k]
+    #         train_indexes, val_indexes = train_indexes.tolist(), val_indexes.tolist()
+
+    #         self.data_train, self.data_val = dataset_full[train_indexes], dataset_full[val_indexes]
 
 		# overwrite
 		def train_dataloader(self) -> DataLoader:
@@ -556,30 +593,70 @@ class MLPDataModule(pl.LightningDataModule):
 													num_workers=7,
 													persistent_workers=True,
 													)
+		
+# class ProteinsKFoldDataModule(LightningDataModule):
+#     def __init__(
+#             self,
+#             data_dir: str = "data/",
+#             k: int = 1,  # fold number
+#             split_seed: int = 12345,  # split needs to be always the same for correct cross validation
+#             num_splits: int = 10,
+#             batch_size: int = 32,
+#             num_workers: int = 0,
+#             pin_memory: bool = False
+#         ):
+#         super().__init__()
+        
+#         # this line allows to access init params with 'self.hparams' attribute
+#         self.save_hyperparameters(logger=False)
+
+#         # num_splits = 10 means our dataset will be split to 10 parts
+#         # so we train on 90% of the data and validate on 10%
+#         assert 1 <= self.k <= self.num_splits, "incorrect fold number"
+        
+#         # data transformations
+#         self.transforms = None
+
+#         self.data_train: Optional[Dataset] = None
+#         self.data_val: Optional[Dataset] = None
+
+#     @property
+#     def num_node_features() -> int:
+#         return 4
+
+#     @property
+#     def num_classes() -> int:
+#         return 2
+
+#     def setup(self, stage=None):
+#         if not self.data_train and not self.data_val:
+#             dataset_full = TUDataset(self.hparams.data_dir, name="PROTEINS", use_node_attr=True, transform=self.transforms)
+
+#             # choose fold to train on
+#             kf = KFold(n_splits=self.hparams.num_splits, shuffle=True, random_state=self.hparams.split_seed)
+#             all_splits = [k for k in kf.split(dataset_full)]
+#             train_indexes, val_indexes = all_splits[self.hparams.k]
+#             train_indexes, val_indexes = train_indexes.tolist(), val_indexes.tolist()
+
+#             self.data_train, self.data_val = dataset_full[train_indexes], dataset_full[val_indexes]
+
+#     def train_dataloader(self):
+#         return DataLoader(dataset=self.data_train, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers,
+#                           pin_memory=self.hparams.pin_memory, shuffle=True)
+
+#     def val_dataloader(self):
+#         return DataLoader(dataset=self.data_val, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers,
+#                           pin_memory=self.hparams.pin_memory)
 
 class Trainer():
 		"""Training class for optimization task
 
-										@param X_train_tensor
-										@type torch.Tensor
-										@param X_test_tensor
-										@type torch.Tensor
-										@param X_val_tensor
-										@type torch.Tensor
-										@param y_train_tensor
-										@type torch.Tensor
-										@param y_test_tensor
-										@type torch.Tensor
-										@param y_val_tensor
-										@type torch.Tensor
+										@param td
+										@type TrainingData
 										@param epochs
 										@type int
 										@param model_type
 										@type Any
-										@param input_dim
-										@type int
-										@param output_dim
-										@type int
 										@param num_layers
 										@type Tuple
 										@param hidden_dim
@@ -594,8 +671,6 @@ class Trainer():
 										@type bool
 										@param weight_decay
 										@type Union[None, Tuple]
-										@param name
-										@type str
 										@param pbar
 										@type bool
 										@param bgd
@@ -614,16 +689,9 @@ class Trainer():
 		STEP = 2
 
 		def __init__(self,
-								 X_train_tensor: torch.Tensor,
-								 X_test_tensor: torch.Tensor,
-								 X_val_tensor: torch.Tensor,
-								 y_train_tensor: torch.Tensor,
-								 y_test_tensor: torch.Tensor,
-								 y_val_tensor: torch.Tensor,
+								 td: TrainingData,
 								 epochs: Optional[int] = 50,
 								 model_type: Optional[Any] = WrappedMLP,
-								 input_dim: Optional[int] = 6,
-								 output_dim: Optional[int] = 6,
 								 num_layers: Optional[Tuple] = (1, 10, 1),
 								 hidden_dim: Optional[Tuple] = (1, 32, 2),
 								 batch_size: Optional[Tuple] = (16, 32, 64),
@@ -631,7 +699,6 @@ class Trainer():
 								 dropout_rate: Optional[Union[None, Tuple]] = (0, 0.4, 0.01),
 								 log_domain: Optional[bool] = False,
 								 weight_decay: Optional[Union[None, Tuple]] = (0,0,0),
-								 name: Optional[str] = '',
 								 pbar: Optional[bool] = False,
 								 bgd: Optional[bool] = False,
 								 mdelta_estop: Optional[float] = 0,
@@ -639,19 +706,12 @@ class Trainer():
 								 save_chkpts: Optional[bool] = True,
 								 ) -> None:
 
+				self.td = td
 				self.epochs = epochs
 				self.ModelType = model_type
-				self.input_dim = input_dim
-				self.output_dim = output_dim
 				self.num_layers = num_layers
 				self.hidden_dim = hidden_dim
 				self.learning_rate = learning_rate
-				self.X_train_tensor = X_train_tensor
-				self.X_test_tensor = X_test_tensor
-				self.X_val_tensor = X_val_tensor
-				self.y_train_tensor = y_train_tensor
-				self.y_test_tensor = y_test_tensor
-				self.y_val_tensor = y_val_tensor
 				self.dropout_rate = dropout_rate
 				self.log_domain = log_domain
 				self.weight_decay = weight_decay
@@ -662,13 +722,13 @@ class Trainer():
 				self.kfold = kfold
 				self.save_chkpts = save_chkpts
 
-				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, name)
+				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, td.name, dt_now)
 				if not os.path.exists(self.chkpt_path):
 						os.makedirs(self.chkpt_path, exist_ok=True)
-				self.log_pth = os.path.join(MLP_LOG_PTH, name, "train")
+				self.log_pth = os.path.join(MLP_LOG_PTH, td.name, dt_now, "train")
 				if not os.path.exists(self.log_pth):
 						os.makedirs(self.log_pth, exist_ok=True)
-				self.test_log_pth = os.path.join(MLP_LOG_PTH, name, "test")
+				self.test_log_pth = os.path.join(MLP_LOG_PTH, td.name, dt_now, "test")
 				if not os.path.exists(self.test_log_pth):
 						os.makedirs(self.test_log_pth, exist_ok=True)
 
@@ -687,7 +747,7 @@ class Trainer():
 																							min_delta=self.mdelta_estop,     
 																							)
 
-				print(f"Initialized Trainer for {name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
+				print(f"Initialized Trainer for {td.name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 				print("Saving checkpoints in directory", self.chkpt_path)
 
 		def suggestHParams(self, trial: optuna.Trial) -> Tuple[int, int, float, Union[None, float], int, Union[None, float], Union[None, int]]:
@@ -745,22 +805,19 @@ class Trainer():
 				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay, num_folds) = self.suggestHParams(trial)
 
 				# prep data
-				data_module = MLPDataModule(X_train=self.X_train_tensor,
-																		y_train=self.y_train_tensor,
-																		X_val=self.X_val_tensor,
-																		y_val=self.y_val_tensor,
-																		X_test=self.X_test_tensor,
-																		y_test=self.y_test_tensor,
+				data_module = MLPDataModule(training_data=self.td,
 																		batch_size=batch_size,
 																		bgd = self.bgd,
+																		k=num_folds,
+																		num_splits=self.kfold[-1] if self.kfold is not None else None,
 																		)
 				data_module.prepare_data()
 				data_module.setup()
 
 				# instantiate the model
-				model = self.ModelType(input_dim=self.input_dim,
+				model = self.ModelType(input_dim=self.td.num_features,
 															 hidden_dim=hidden_dim,
-															 output_dim=self.output_dim,
+															 output_dim=self.td.num_targets,
 															 num_layers=num_layers,
 															 dropout_rate=dropout_rate,
 															 lr=learning_rate,
@@ -807,14 +864,11 @@ class Trainer():
 
 				model_chkpt = self.checkpoint_callback.best_model_path
 				
-				data_module = MLPDataModule(X_train=self.X_train_tensor,
-																		y_train=self.y_train_tensor,
-																		X_val=self.X_val_tensor,
-																		y_val=self.y_val_tensor,
-																		X_test=self.X_test_tensor,
-																		y_test=self.y_test_tensor,
+				data_module = MLPDataModule(training_data=self.td,
 																		batch_size=batch_size,
 																		bgd = self.bgd,
+																		k=None,
+																		num_splits=None,
 																		)
 				data_module.prepare_data()
 				data_module.setup()
@@ -851,9 +905,9 @@ class Trainer():
 				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay, _) = self.suggestHParams(trial)
 
 				# instantiate the model and move to device
-				model = self.ModelType(input_dim=self.input_dim,
+				model = self.ModelType(input_dim=self.td.num_features,
 															 hidden_dim=hidden_dim,
-															 output_dim=self.output_dim,
+															 output_dim=self.td.num_targets,
 															 num_layers=num_layers,
 															 dropout_rate=dropout_rate,
 															 ).to(DEVICE)
@@ -875,8 +929,8 @@ class Trainer():
 				for epoch in range(self.epochs):
 						model.train()
 						optimizer.zero_grad()
-						outputs = model(self.X_train_tensor)
-						loss = criterion(outputs, self.y_train_tensor)
+						outputs = model(self.td.X_train_tensor)
+						loss = criterion(outputs, self.td.y_train_tensor)
 						loss.backward()
 						optimizer.step()
 
@@ -886,8 +940,8 @@ class Trainer():
 						# validation
 						model.eval()
 						with torch.no_grad():
-								val_outputs = model(self.X_val_tensor)
-								val_loss = criterion(val_outputs, self.y_val_tensor).item()
+								val_outputs = model(self.td.X_val_tensor)
+								val_loss = criterion(val_outputs, self.td.y_val_tensor).item()
 								writer.add_scalar('Loss/val', val_loss, epoch)
 
 								if val_loss < best_val_loss and self.save_chkpts:
@@ -912,9 +966,9 @@ class Trainer():
 				dropout_rate = trial.params.get('dropout_rate')
 
 				# load model to DEVICE
-				model = self.ModelType(input_dim=self.input_dim,
+				model = self.ModelType(input_dim=self.td.num_features,
 															 hidden_dim=hidden_dim,
-															 output_dim=self.output_dim,
+															 output_dim=self.td.num_targets,
 															 num_layers=num_layers,
 															 dropout_rate=dropout_rate,
 															 ).to(DEVICE)
@@ -932,8 +986,8 @@ class Trainer():
 				# evaluate on the test set
 				model.eval()
 				with torch.no_grad():
-						test_outputs = model(self.X_test_tensor)
-						test_loss = nn.MSELoss()(test_outputs, self.y_test_tensor).item()
+						test_outputs = model(self.td.X_test_tensor)
+						test_loss = nn.MSELoss()(test_outputs, self.td.y_test_tensor).item()
 						writer.add_scalar('Loss/test', test_loss, )
 
 				writer.close()
@@ -968,7 +1022,6 @@ class Train():
 								 test_size: Optional[float] = 0.3,
 								 validation_size: Optional[float] = 0.5,
 								 random_state: Optional[int] = 42,
-								 norm_quats: Optional[bool] = False,
 								 trans_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 input_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 target_norm: Optional[Normalization] = Normalization.Z_SCORE,
@@ -999,7 +1052,6 @@ class Train():
 				self.test_size = test_size
 				self.validation_size = validation_size
 				self.random_state = random_state
-				self.norm_quats = norm_quats
 				self.trans_norm = trans_norm
 				self.input_norm = input_norm
 				self.target_norm = target_norm
@@ -1036,23 +1088,16 @@ class Train():
 													test_size=self.test_size,
 													validation_size=self.validation_size,
 													random_state=self.random_state,
-													norm_quats=self.norm_quats,
 													trans_norm=self.trans_norm,
 													input_norm=self.input_norm,
 													target_norm=self.target_norm,
 													move_gpu=False,
+													kfold=False if self.kfold is None else True,
 													)
 
-				trainer = Trainer(X_train_tensor=td.X_train_tensor,
-													X_test_tensor=td.X_test_tensor,
-													X_val_tensor=td.X_val_tensor,
-													y_train_tensor=td.y_train_tensor,
-													y_test_tensor=td.y_test_tensor,
-													y_val_tensor=td.y_val_tensor,
+				trainer = Trainer(td=td,
 													epochs=self.epochs,
 													model_type=WrappedMLP,
-													input_dim=td.num_features,
-													output_dim=td.num_targets,
 													num_layers=self.num_layers,
 													hidden_dim=self.hidden_dim,
 													learning_rate=self.learning_rate,
@@ -1060,7 +1105,6 @@ class Train():
 													log_domain=self.log_domain,
 													weight_decay=self.weight_decay,
 													batch_size=self.batch_size,
-													name=td.name,
 													pbar=self.lightning_pbar,
 													bgd=self.bgd,
 													mdelta_estop=self.mdelta_estop,
@@ -1104,23 +1148,16 @@ class Train():
 													test_size=self.test_size,
 													validation_size=self.validation_size,
 													random_state=self.random_state,
-													norm_quats=self.norm_quats,
 													trans_norm=self.trans_norm,
 													input_norm=self.input_norm,
 													target_norm=self.target_norm,
 													move_gpu=True,
+													kfold=False,
 													)
 
-				trainer = Trainer(X_train_tensor=td.X_train_tensor,
-													X_test_tensor=td.X_test_tensor,
-													X_val_tensor=td.X_val_tensor,
-													y_train_tensor=td.y_train_tensor,
-													y_test_tensor=td.y_test_tensor,
-													y_val_tensor=td.y_val_tensor,
+				trainer = Trainer(td=td,
 													epochs=self.epochs,
 													model_type=MLP,
-													input_dim=td.num_features,
-													output_dim=td.num_targets,
 													num_layers=self.num_layers,
 													hidden_dim=self.hidden_dim,
 													learning_rate=self.learning_rate,
@@ -1128,7 +1165,6 @@ class Train():
 													log_domain=self.log_domain,
 													weight_decay=self.weight_decay,
 													batch_size=self.batch_size,
-													name=td.name,
 													save_chkpts=self.save_chkpts,
 													)
 
@@ -1174,7 +1210,6 @@ if __name__ == '__main__':
 		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing.', default=0.3)
 		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split (from test size) for validation.', default=0.5)
 		data_group.add_argument('--random_state', type=int, metavar='int',help='Percentage of data randomization.', default=40)
-		data_group.add_argument('--norm_quats', action='store_true', help='Normalize quaternions.')
 		data_group.add_argument('--trans_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--input_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--target_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
@@ -1184,20 +1219,20 @@ if __name__ == '__main__':
 		train_group.add_argument('--optim_trials', type=int, metavar='int',help='Number of optimization trials.', default=100)
 		train_group.add_argument('--num_layers', type=parseIntTuple,help='Min, max and step value of hidden layers (int), eg. 2,10,2.', default='2,10,2')
 		train_group.add_argument('--hidden_dim', type=parseIntTuple,help='Min, max and step value of hidden nodes (int), eg. 2,10,2.', default='2,10,2')
-		train_group.add_argument('--batch_size', type=parseIntTuple,help='Choices for mini-batch training (int), eg. 18,32,64.', default='18,32,64')
+		train_group.add_argument('--batch_size', type=parseIntTuple,help='Choices for mini-batch training (int), eg. 18,32,64,128  (req. --distribute).', default='18,32,64')
 		train_group.add_argument('--learning_rate', type=parseFloatTuple,help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='none')
 		train_group.add_argument('--weight_decay', type=parseFloatTuple, help='L2 regularization weight decay (float), eg. 1e-1,1e-2,1e-2 or none to disable.', default='none')
-		train_group.add_argument('--kfold', type=parseIntTuple,help='Use k-fold c-v and spec range of folds., eg. 2,5,1 or disable with none.', default='none')
-		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping, disable with -1.0.', default=-1.0)
+		train_group.add_argument('--kfold', type=parseIntTuple,help='Use k-fold c-v and spec <<min, max, step (range of folds)>, <number of splits>>, eg. 2,5,1,10 or disable k-fold with none  (req. --distribute).', default='none')
+		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping, disable with -1.0 (req. --distribute).', default=-1.0)
 		train_group.add_argument('--log_domain', action='store_true',help='Change optimizer params logarithmically.')
-		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization.')
+		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization (req. --distribute).')
 		train_group.add_argument('--use_bgd', action='store_true', help='Use batch gradient descent training.')
-		train_group.add_argument('--distribute', action='store_true', help='Train on multiple devices, use pruning, auto logging and checkpointing.')
-		train_group.add_argument('--optuna_pbar', action='store_true', help='Show Optunas trial progessbar.')
-		train_group.add_argument('--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar.')
+		train_group.add_argument('--distribute', action='store_true', help='Train on multiple devices with lightning setup, else train on plain torch with batch gradient desc.')
+		train_group.add_argument('--optuna_pbar', action='store_true', help='Show Optunas trial progessbar (req. --distribute).')
+		train_group.add_argument('--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar (req. --distribute).')
 		train_group.add_argument('--save_chkpts', action='store_true', help='Save model checkpoints.')
-		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training.')
+		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training after cleanup.')
 		args = parser.parse_args()
 
 		# clean data
@@ -1208,7 +1243,6 @@ if __name__ == '__main__':
 					test_size=args.test_size,
 					validation_size=args.val_size,
 					random_state=args.random_state,
-					norm_quats=args.norm_quats,
 					trans_norm=args.trans_norm,
 					input_norm=args.input_norm,
 					target_norm=args.target_norm,
