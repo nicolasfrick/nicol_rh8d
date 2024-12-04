@@ -567,32 +567,32 @@ class WrappedMLP(pl.LightningModule):
 				return self.model(data)
 
 		# overwrite
-		def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
+		def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
 				loss = self.loss_fn(preds, y)
-				self.log('train_loss', loss, on_step=False,
+				self.log('train_loss', loss.item(), on_step=False,
 								 on_epoch=True, prog_bar=True, sync_dist=True, )
 				return loss
 
 		# overwrite
-		def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
+		def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
 				val_loss = self.loss_fn(preds, y)
-				self.log('val_loss', val_loss, on_step=False,
+				self.log('val_loss', val_loss.item(), on_step=False,
 								 on_epoch=True, prog_bar=True, sync_dist=True, )
-				self.log("hp_metric", val_loss, on_step=False, on_epoch=True, sync_dist=True, )
+				self.log("hp_metric", val_loss.item(), on_step=False, on_epoch=True, sync_dist=True, )
 				return val_loss
 		
 		# overwrite
-		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
+		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
 				test_loss = self.loss_fn(preds, y)
 				# for final evaluation
-				self.test_loss.append(test_loss)
-				self.log('step_test_loss', test_loss, on_step=True,
+				self.test_loss.append(test_loss.item())
+				self.log('step_test_loss', test_loss.item(), on_step=True,
 								 on_epoch=False, prog_bar=True, sync_dist=False, )
 				return test_loss
 
@@ -815,7 +815,10 @@ class Trainer():
 																							)
 
 				print(f"Initialized Trainer for {td.name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
-				print("Saving checkpoints in directory", self.chkpt_path)
+				if self.save_chkpts:
+					print("Saving checkpoints in directory", self.chkpt_path)
+				else:
+					print("Saving no checkpoints")
 
 		def suggestHParams(self, trial: optuna.Trial) -> Tuple[int, int, float, Union[None, float], int, Union[None, float], Union[None, int]]:
 				hidden_dim = trial.suggest_int('hidden_dim',
@@ -893,7 +896,7 @@ class Trainer():
 					# automatic checkpointing
 					self.checkpoint_callback.filename = f'best_model_trial_{trial.number:02d}{fmt_str}_{{epoch:02d}}_{{val_loss:.3f}}'
 					# create callback list
-					cbs = [self.checkpoint_callback]
+					cbs = [self.checkpoint_callback] if self.save_chkpts else []
 
 					if self.mdelta_estop > -1.0:
 						# add early stopping
