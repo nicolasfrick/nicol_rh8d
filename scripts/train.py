@@ -16,6 +16,7 @@ from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
 from typing import Optional, Union, Tuple, List, Any
 from torch.utils.tensorboard import SummaryWriter
+from lightning.pytorch.trainer.states import TrainerFn
 from torch.utils.data import DataLoader, TensorDataset
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import TensorBoardLogger
@@ -53,7 +54,7 @@ class TrainingData():
 						@param move_gpu
 						@type bool
 						@param kfold
-						@type bool
+						@type int
 
 		"""
 
@@ -66,8 +67,12 @@ class TrainingData():
 								 input_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 target_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 move_gpu: Optional[bool] = False,
-								 kfold: Optional[bool] = False,
+								 kfold: Optional[int] = 0,
 								 ) -> None:
+
+				assert(isinstance(random_state, int)) # requires int
+				if kfold > 0: # use kfold
+					assert(kfold > 1) # min folds = 2
 
 				# path names
 				split = data_file.split('/')
@@ -90,6 +95,7 @@ class TrainingData():
 				self.trans_norm = trans_norm
 				self.input_norm = input_norm
 				self.target_norm = target_norm
+				self.move_gpu = move_gpu
 
 				# input data
 				self.X_quats = None # single
@@ -103,119 +109,47 @@ class TrainingData():
 				self.y_angles_scalers = {}
 				self.y_trans_scalers = {}
 
-				# results
+				# tensors
 				self.X_train_tensor = None
 				self.X_test_tensor = None
 				self.X_val_tensor = None
 				self.y_train_tensor = None
 				self.y_test_tensor = None
 				self.y_val_tensor = None
+				# kfold 
+				self.use_kfold = kfold > 1
+				self.num_folds = kfold
+				self.train_index = None
+				self.val_index = None
+				self.X_train = None
+				self.y_train = None
 
 				# load, normalize, split and move data
-				self.prepare(self.df, self.cols, move_gpu, kfold)
+				self.prepare(self.df, self.cols)
 
-		def prepare(self, df: pd.DataFrame, cols: list, move_gpu: bool, kfold: bool) -> None:
+		def prepare(self, df: pd.DataFrame, cols: list) -> None:
 				# load and normalize data
 				self.loadData(df, cols)
-				print("Added", len(self.X_cmds.keys()), "cmd data frames,",  len(self.X_dirs.keys()), "dir data frames,",
-							len(self.y_angles.keys()), "target angle data frames, one input orientation and", len(self.y_trans.keys()), "target translation data frames.\n")
 
 				# stack training data
 				(X, y) = self.stackData()
+				print("Loaded features", self.feature_names, "and targets", self.target_names, f"to device: {DEVICE}" if self.move_gpu else "")
 
-				if kfold:
-					pass
+				if self.use_kfold:
+					self.splitDataKFold(X, y)
+					self.kf = KFold(self.num_folds, shuffle=False)
+					index_tuples =  list(self.kf.split(self.X_train, self.y_train))
+					(self.train_index, self.val_index) = ([t[0] for t in index_tuples], [t[1] for t in index_tuples])
+					# print info
+					print(f"Splitted {self.num_samples} samples into {len(self.X_train)} ({100*(1-self.test_size)}%) training and {len(self.X_test_tensor)} ({100*self.test_size}%) test samples for cross validation")
 				else:
 					# split, normalize and move data
-					self.splitData(X, y, move_gpu)
+					self.splitData3WayHoldout(X, y)
 					# print info
-					print("Loaded features", self.feature_names, "and targets", self.target_names, f"to device: {DEVICE}" if move_gpu else "")
 					print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.validation_size)}%),")
 					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) and {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
-
-		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
-				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
-					  a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
-				"""
-				# features X:
-				# quaternions first, always present
-				X = self.X_quats.copy()
-				self.feature_names = QUAT_COLS.copy()
-				# stack commands
-				for name, X_cmd in self.X_cmds.items():
-						self.feature_names.append(name)
-						X = np.hstack([X, X_cmd.reshape(-1, 1)])
-				# stack directions
-				for name, X_dir in self.X_dirs.items():
-						self.feature_names.append(name)
-						X = np.hstack([X, X_dir.reshape(-1, 1)])
-
-				# targets y:
-				y = None
-				# translation first if present
-				for name, y_trans in self.y_trans.items():
-					trans_idx = name.replace('trans_', '')
-					if y is None:
-						# 1st elmt
-						self.target_names = [*format_trans_cols(trans_idx)]
-						y = y_trans.copy()
-					else:
-						self.target_names.extend(format_trans_cols(trans_idx))
-						y = np.hstack([y, y_trans])
-
-				# stack angles
-				for name, y_angle in self.y_angles.items():
-						if y is None:
-								# no trans, angle1 is 1st elmt
-								self.target_names = [name]
-								y = y_angle.copy()
-								y = y.reshape(-1, 1)
-						else:
-								self.target_names.append(name)
-								y = np.hstack([y, y_angle.reshape(-1, 1)])
-
-				self.num_features = len(self.feature_names)
-				self.num_targets = len(self.target_names)
-				self.num_samples = len(X)
-
-				return X, y
-
-		def splitData(self, X: np.ndarray, y: np.ndarray, move_gpu: bool) -> None:
-				"""Split features X and targets y into a  train, test 
-												and validation set and move to the present DEVICE.
-				"""
-				# split off training data
-				X_train, X_tmp, y_train, y_tmp = train_test_split(
-						X, y, test_size=self.validation_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
-				# split off test and validation data
-				X_val, X_test, y_val, y_test = train_test_split(
-						X_tmp, y_tmp, test_size=self.test_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
 				
-				# normalize training data
-				self.normalizeTrainData(X_train, y_train)
-				# scale validation data
-				self.scaleValTestData(X_val, y_val)
-				# scale test data
-				self.scaleValTestData(X_test, y_test)
-
-				# map features to tensors and move to device
-				self.X_train_tensor = torch.from_numpy(X_train).float()
-				self.X_test_tensor = torch.from_numpy(X_test).float()
-				self.X_val_tensor = torch.from_numpy(X_val).float()
-
-				# map targets to tensors and move to device
-				self.y_train_tensor = torch.from_numpy(y_train).float()
-				self.y_test_tensor = torch.from_numpy(y_test).float()
-				self.y_val_tensor = torch.from_numpy(y_val).float()
-
-				# move to gpu
-				if move_gpu:
-						self.X_train_tensor = self.X_train_tensor.to(DEVICE)
-						self.X_test_tensor = self.X_test_tensor.to(DEVICE)
-						self.X_val_tensor = self.X_val_tensor.to(DEVICE)
-						self.y_train_tensor = self.y_train_tensor.to(DEVICE)
-						self.y_test_tensor = self.y_test_tensor.to(DEVICE)
-						self.y_val_tensor = self.y_val_tensor.to(DEVICE)
+				print(f"Command features normalization: {self.input_norm.value}, translation target normalization: {self.trans_norm.value}, angle target normalization: {self.target_norm.value}")
 
 		def loadData(self, df: pd.DataFrame, cols: list) -> None:
 			"""Fill datastructures with traning data.
@@ -241,6 +175,148 @@ class TrainingData():
 							self.y_trans.update( {col: np.array([list(t) for t in data], dtype=np.float32)} )
 					else:
 							raise NotImplementedError
+					
+		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
+				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
+					  a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
+				"""
+				# features X:
+				# quaternions first, always present
+				X = self.X_quats.copy()
+				self.feature_names = QUAT_COLS.copy()
+				# stack commands
+				for name, X_cmd in self.X_cmds.items():
+						self.feature_names.append(name)
+						X = np.hstack([X, X_cmd.reshape(-1, 1).copy()])
+				# stack directions
+				for name, X_dir in self.X_dirs.items():
+						self.feature_names.append(name)
+						X = np.hstack([X, X_dir.reshape(-1, 1).copy()])
+
+				# targets y:
+				y = None
+				# translation first if present
+				for name, y_trans in self.y_trans.items():
+					trans_idx = name.replace('trans_', '')
+					if y is None:
+						# 1st elmt
+						self.target_names = [*format_trans_cols(trans_idx)]
+						y = y_trans.copy()
+					else:
+						self.target_names.extend(format_trans_cols(trans_idx))
+						y = np.hstack([y, y_trans.copy()])
+
+				# stack angles
+				for name, y_angle in self.y_angles.items():
+						if y is None:
+								# no trans, angle1 is 1st elmt
+								self.target_names = [name]
+								y = y_angle.copy()
+								y = y.reshape(-1, 1)
+						else:
+								self.target_names.append(name)
+								y = np.hstack([y, y_angle.reshape(-1, 1).copy()])
+
+				self.num_features = len(self.feature_names)
+				self.num_targets = len(self.target_names)
+				self.num_samples = len(X)
+
+				return X, y
+
+		def splitData3WayHoldout(self, X: np.ndarray, y: np.ndarray) -> None:
+				"""Split features X and targets y into a  train, test and validation set, 
+					 normalize train data and scale val and test data. If move_gpu is true, 
+					 move tensors to the present DEVICE, else just map to torch tensors.
+				"""
+
+				# split off training data
+				(X_train, X_tmp, y_train, y_tmp) = train_test_split(
+						X, y, test_size=self.validation_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
+				# split off test and validation data
+				(X_val, X_test, y_val, y_test) = train_test_split(X_tmp, y_tmp, test_size=self.test_size, shuffle=False)
+				
+				# normalize training data
+				self.normalizeTrainData(X_train, y_train)
+				# scale validation data
+				self.scaleValTestData(X_val, y_val)
+				# scale test data
+				self.scaleValTestData(X_test, y_test)
+
+				# map features to tensors
+				self.X_train_tensor = torch.from_numpy(X_train).float()
+				self.X_test_tensor = torch.from_numpy(X_test).float()
+				self.X_val_tensor = torch.from_numpy(X_val).float()
+				# map targets to tensors
+				self.y_train_tensor = torch.from_numpy(y_train).float()
+				self.y_test_tensor = torch.from_numpy(y_test).float()
+				self.y_val_tensor = torch.from_numpy(y_val).float()
+
+				# move to gpu
+				if self.move_gpu:
+						# features
+						self.X_train_tensor = self.X_train_tensor.to(DEVICE)
+						self.X_test_tensor = self.X_test_tensor.to(DEVICE)
+						self.X_val_tensor = self.X_val_tensor.to(DEVICE)
+						# targets
+						self.y_train_tensor = self.y_train_tensor.to(DEVICE)
+						self.y_test_tensor = self.y_test_tensor.to(DEVICE)
+						self.y_val_tensor = self.y_val_tensor.to(DEVICE)
+
+		def splitDataKFold(self, X: np.ndarray, y: np.ndarray) -> None:
+				"""  Split features X and targets y into a  train and test set. No 
+						normalization is applied. If move_gpu is true, move tensors
+						to the present DEVICE else use numpy arrays.
+				"""
+
+				# split
+				(self.X_train, X_test, self.y_train, y_test) = train_test_split(
+					X, y, test_size=self.test_size, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
+				
+				# normalize copies
+				self.normalizeTrainData(self.X_train.copy(), self.y_train.copy())
+				# scale test data
+				self.scaleValTestData(X_test, y_test)
+				# drop saved scalers
+				self.clearScalers()
+
+				# map features to tensors
+				self.X_test_tensor = torch.from_numpy(X_test).float()
+				self.y_test_tensor = torch.from_numpy(y_test).float()
+
+				if self.move_gpu:
+					# move to device
+					self.X_test_tensor = self.X_test_tensor.to(DEVICE)
+					self.y_test_tensor = self.y_test_tensor.to(DEVICE)
+
+		def foldData(self, k: int) -> None:
+			""" Set training and validation tensors from the the k'th fold of the training data.
+				  Train batches are normalized and validation batches are scaled.
+			"""
+			assert(k < self.kf.get_n_splits()) # k exceeds num splits
+
+			if self.X_train is None or self.y_train is None or not self.use_kfold:
+				raise RuntimeError("k-fold is not initialized!")
+			
+			# views -> don't change original data
+			self.X_train_tensor = self.X_train[self.train_index[k]].copy()
+			self.y_train_tensor = self.y_train[self.train_index[k]].copy()
+			self.X_val_tensor = self.X_train[self.val_index[k]].copy()
+			self.y_val_tensor = self.y_train[self.val_index[k]].copy()
+
+			self.normalizeTrainData(self.X_train_tensor, self.y_train_tensor)
+			self.scaleValTestData(self.X_val_tensor, self.y_val_tensor)
+			self.clearScalers()
+
+			self.X_train_tensor = torch.from_numpy(self.X_train_tensor).float()
+			self.y_train_tensor = torch.from_numpy(self.y_train_tensor).float()
+			self.X_val_tensor = torch.from_numpy(self.X_val_tensor).float()
+			self.y_val_tensor = torch.from_numpy(self.y_val_tensor).float()
+
+			if self.move_gpu:
+				self.X_train_tensor = self.X_train_tensor.to(DEVICE)
+				self.y_train_tensor = self.y_train_tensor.to(DEVICE)
+				self.X_val_tensor = self.X_val_tensor.to(DEVICE)
+				self.y_val_tensor = self.y_val_tensor.to(DEVICE)
 						
 		def normalizeTrainData(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
 			""" Normalize the training data by the given method and save scaler for later use.
@@ -282,11 +358,13 @@ class TrainingData():
 			# scale translation first if present
 			if self.y_trans:
 				if self.y_trans_scalers:
+					# scale trans data
 					for idx, name in enumerate(self.y_trans.keys()):
 						tmp_end_idx = len(TRANS_COLS) + start_idx
 						y_val_test[:, start_idx : tmp_end_idx] = self.scaleInputOutputData(self.y_trans_scalers[name], y_val_test[:, start_idx : tmp_end_idx])
 						start_idx = tmp_end_idx
 				else:
+					# move index for angles
 					start_idx = len(self.y_trans.keys()) * len(TRANS_COLS)
 
 			# scale angles secondly
@@ -388,6 +466,11 @@ class TrainingData():
 						pth = os.path.join(self.scaler_pth, name + ".pkl")
 						joblib.dump(scaler, pth)
 
+		def clearScalers(self) -> None:
+				self.X_cmds_scalers.clear()
+				self.y_angles_scalers.clear()
+				self.y_trans_scalers.clear()
+
 		def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
 				scaler = joblib.load(pth)
 				return scaler
@@ -476,6 +559,8 @@ class WrappedMLP(pl.LightningModule):
 				self.save_hyperparameters()
 				# loss
 				self.loss_fn = nn.MSELoss()
+				# test stage
+				self.test_loss = []
 
 		# overwrite
 		def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -497,16 +582,22 @@ class WrappedMLP(pl.LightningModule):
 				val_loss = self.loss_fn(preds, y)
 				self.log('val_loss', val_loss, on_step=False,
 								 on_epoch=True, prog_bar=True, sync_dist=True, )
-				self.log("hp_metric", val_loss, on_step=False, on_epoch=True, sync_dist=True)
+				self.log("hp_metric", val_loss, on_step=False, on_epoch=True, sync_dist=True, )
 				return val_loss
 		
+		# overwrite
 		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> float:
 				X, y = batch
 				preds = self(X)
 				test_loss = self.loss_fn(preds, y)
-				self.log('test_loss', test_loss, on_step=True,
-								 on_epoch=False, prog_bar=True, sync_dist=True, )
+				# for final evaluation
+				self.test_loss.append(test_loss)
+				self.log('step_test_loss', test_loss, on_step=True,
+								 on_epoch=False, prog_bar=True, sync_dist=False, )
 				return test_loss
+
+		def on_test_epoch_end(self) -> None:
+				self.log_dict( {'test_loss': np.mean(self.test_loss)} )
 
 		# overwrite
 		def configure_optimizers(self) -> optim.Optimizer:
@@ -518,7 +609,7 @@ class WrappedMLP(pl.LightningModule):
 class MLPDataModule(pl.LightningDataModule):
 		""" Load data for lightning trainer.
 
-				@param training_data
+				@param td
 				@type TrainingData
 				@param batch_size
 				@type int
@@ -526,37 +617,32 @@ class MLPDataModule(pl.LightningDataModule):
 				@type bool
 				@param k
 				@type Union[None, int]
-				@param num_splits
-				@type Union[None,int]
 
 		"""
 
 		def __init__(self,
-								training_data: TrainingData,
+								td: TrainingData,
 								 batch_size: int,
 								 bgd: bool,
-								 k: Union[None,int],
-								 num_splits: Union[None,int],
+								 k: Optional[Union[None, int]] = None,
 								 ) -> None:
 
 				super().__init__()
 				
-				self.td = training_data
-				self.k = k
-				self.num_splits = num_splits
+				assert(not td.move_gpu) # not allowed here
 
+				self.td = td
+				self.k = k
 				self.train_dataset = None
 				self.val_dataset = None
 				self.test_dataset = None
 
 				# set batch size
-				if bgd == True and k is None:
+				if bgd == True and not td.use_kfold:
 					# batch gradient desc.
-					self.train_batch_size = len(training_data.X_train_tensor)
-					self.val_batch_size = len(training_data.X_val_tensor)
-					self.test_batch_size = len(training_data.X_test_tensor)
-				elif k is not None:
-					pass
+					self.train_batch_size = len(td.X_train_tensor)
+					self.val_batch_size = len(td.X_val_tensor)
+					self.test_batch_size = len(td.X_test_tensor)
 				else:
 					# mini-batch gradient desc.
 					self.train_batch_size = batch_size
@@ -565,27 +651,35 @@ class MLPDataModule(pl.LightningDataModule):
 
 				# overwrite
 		def setup(self, stage: Optional[str] = None) -> None:
-				if self.k is None:
-					# data already prepared
-					self.train_dataset = TensorDataset(self.td.X_train_tensor, self.td.y_train_tensor)
-					self.val_dataset = TensorDataset(self.td.X_val_tensor, self.td.y_val_tensor)
-					self.test_dataset = TensorDataset(self.td.X_test_tensor, self.td.y_test_tensor)
-				else:
-					# prepare data for corss val.
-					kf = KFold(self.k, shuffle=False)
+				if stage is not None:
 
+					if stage == TrainerFn.FITTING.value:
+						# split and normalize data from k'th fold
+						if self.td.use_kfold:
+							self.td.foldData(self.k)
 
-    # def setup(self, stage=None):
-    #     if not self.data_train and not self.data_val:
-    #         dataset_full = TUDataset(self.hparams.data_dir, name="PROTEINS", use_node_attr=True, transform=self.transforms)
+						# get tensors
+						self.train_dataset = TensorDataset(self.td.X_train_tensor, self.td.y_train_tensor)
+						self.val_dataset = TensorDataset(self.td.X_val_tensor, self.td.y_val_tensor)
 
-    #         # choose fold to train on
-    #         kf = KFold(n_splits=self.hparams.num_splits, shuffle=True, random_state=self.hparams.split_seed)
-    #         all_splits = [k for k in kf.split(dataset_full)]
-    #         train_indexes, val_indexes = all_splits[self.hparams.k]
-    #         train_indexes, val_indexes = train_indexes.tolist(), val_indexes.tolist()
+						# check batch size
+						if self.train_batch_size > len(self.td.X_train_tensor):
+							self.train_batch_size = len(self.td.X_train_tensor)
+							print("Adapt train batch size to", self.train_batch_size)
+						if self.val_batch_size > len(self.td.X_val_tensor):
+							self.val_batch_size = len(self.td.X_val_tensor)
+							print("Adapt validation batch size to", self.val_batch_size)
 
-    #         self.data_train, self.data_val = dataset_full[train_indexes], dataset_full[val_indexes]
+					elif stage == TrainerFn.TESTING.value:
+						# always present
+						self.test_dataset = TensorDataset(self.td.X_test_tensor, self.td.y_test_tensor)
+						# check batch size
+						if self.test_batch_size > len(self.td.X_test_tensor):
+							self.test_batch_size = len(self.td.X_test_tensor)
+							print("Adapt test batch size to", self.test_batch_size)
+
+					else:
+						raise NotImplementedError(f"setup({stage}) is not implemented")
 
 		# overwrite
 		def train_dataloader(self) -> DataLoader:
@@ -616,60 +710,6 @@ class MLPDataModule(pl.LightningDataModule):
 													num_workers=7,
 													persistent_workers=True,
 													)
-		
-# class ProteinsKFoldDataModule(LightningDataModule):
-#     def __init__(
-#             self,
-#             data_dir: str = "data/",
-#             k: int = 1,  # fold number
-#             split_seed: int = 12345,  # split needs to be always the same for correct cross validation
-#             num_splits: int = 10,
-#             batch_size: int = 32,
-#             num_workers: int = 0,
-#             pin_memory: bool = False
-#         ):
-#         super().__init__()
-        
-#         # this line allows to access init params with 'self.hparams' attribute
-#         self.save_hyperparameters(logger=False)
-
-#         # num_splits = 10 means our dataset will be split to 10 parts
-#         # so we train on 90% of the data and validate on 10%
-#         assert 1 <= self.k <= self.num_splits, "incorrect fold number"
-        
-#         # data transformations
-#         self.transforms = None
-
-#         self.data_train: Optional[Dataset] = None
-#         self.data_val: Optional[Dataset] = None
-
-#     @property
-#     def num_node_features() -> int:
-#         return 4
-
-#     @property
-#     def num_classes() -> int:
-#         return 2
-
-#     def setup(self, stage=None):
-#         if not self.data_train and not self.data_val:
-#             dataset_full = TUDataset(self.hparams.data_dir, name="PROTEINS", use_node_attr=True, transform=self.transforms)
-
-#             # choose fold to train on
-#             kf = KFold(n_splits=self.hparams.num_splits, shuffle=True, random_state=self.hparams.split_seed)
-#             all_splits = [k for k in kf.split(dataset_full)]
-#             train_indexes, val_indexes = all_splits[self.hparams.k]
-#             train_indexes, val_indexes = train_indexes.tolist(), val_indexes.tolist()
-
-#             self.data_train, self.data_val = dataset_full[train_indexes], dataset_full[val_indexes]
-
-#     def train_dataloader(self):
-#         return DataLoader(dataset=self.data_train, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers,
-#                           pin_memory=self.hparams.pin_memory, shuffle=True)
-
-#     def val_dataloader(self):
-#         return DataLoader(dataset=self.data_val, batch_size=self.hparams.batch_size, num_workers=self.hparams.num_workers,
-#                           pin_memory=self.hparams.pin_memory)
 
 class Trainer():
 		"""Training class for optimization task
@@ -700,10 +740,12 @@ class Trainer():
 										@type bool
 										@param mdelta_estop
 										@type float
-										@param kfold
-										@type Union[None, Tuple]
 										@param save_chkpts
 										@type bool
+										@param metric
+										@type str
+										@param mode
+										@type str
 
 		"""
 
@@ -725,8 +767,9 @@ class Trainer():
 								 pbar: Optional[bool] = False,
 								 bgd: Optional[bool] = False,
 								 mdelta_estop: Optional[float] = 0,
-								 kfold: Optional[Union[None, Tuple]]=(2,5,1),
 								 save_chkpts: Optional[bool] = True,
+								 metric: Optional[str]='val_loss',
+								 mode: Optional[str]='min',
 								 ) -> None:
 
 				self.td = td
@@ -742,8 +785,9 @@ class Trainer():
 				self.pbar = pbar
 				self.bgd = bgd
 				self.mdelta_estop = mdelta_estop
-				self.kfold = kfold
 				self.save_chkpts = save_chkpts
+				self.metric = metric
+				self.mode = mode
 
 				self.chkpt_path = os.path.join(MLP_CHKPT_PTH, td.name, dt_now)
 				if not os.path.exists(self.chkpt_path):
@@ -755,17 +799,17 @@ class Trainer():
 				if not os.path.exists(self.test_log_pth):
 						os.makedirs(self.test_log_pth, exist_ok=True)
 
-				self.checkpoint_callback = ModelCheckpoint(monitor='val_loss',
-																									mode='min',
+				self.checkpoint_callback = ModelCheckpoint(monitor=metric,
+																									mode=mode,
 																									save_top_k=1,
 																									dirpath=self.chkpt_path,
 																									filename='',
 																									)
 				
 				if mdelta_estop > -1.0:
-					self.estop_callback = EarlyStopping(monitor="val_loss",  
+					self.estop_callback = EarlyStopping(monitor=metric,  
 																							patience=max(1, int(epochs/10)),         
-																							mode="min",          
+																							mode=mode,          
 																							verbose=True,
 																							min_delta=self.mdelta_estop,     
 																							)
@@ -809,15 +853,8 @@ class Trainer():
 																						step=self.weight_decay[self.STEP] if not self.log_domain else 1,
 																						log=self.log_domain,
 																						)
-				num_folds = None if self.kfold is None \
-							else trial.suggest_int('num_folds',
-																						low=self.kfold[self.LOW],
-																						high=self.kfold[self.HIGH],
-																						step=self.kfold[self.STEP] if not self.log_domain else 1,
-																						log=self.log_domain,
-																						)
 
-				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay, num_folds
+				return hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay
 
 		def plObjective(self, trial: optuna.trial.Trial) -> float:
 				"""	Train with mini-batch gradient descent, automatic checkpointing and 
@@ -825,58 +862,68 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay, num_folds) = self.suggestHParams(trial)
-
-				# prep data
-				data_module = MLPDataModule(training_data=self.td,
-																		batch_size=batch_size,
-																		bgd = self.bgd,
-																		k=num_folds,
-																		num_splits=self.kfold[-1] if self.kfold is not None else None,
-																		)
-				data_module.prepare_data()
-				data_module.setup()
-
-				# instantiate the model
-				model = self.ModelType(input_dim=self.td.num_features,
-															 hidden_dim=hidden_dim,
-															 output_dim=self.td.num_targets,
-															 num_layers=num_layers,
-															 dropout_rate=dropout_rate,
-															 lr=learning_rate,
-															 weight_decay=weight_decay,
-															 )
-
-				# inst. logger
-				logger = TensorBoardLogger(self.log_pth,
-																	 name=f"trial_{trial.number}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),)
-
-				# automatic checkpointing
-				self.checkpoint_callback.filename = f'best_model_trial{trial.number:02d}_{{epoch:02d}}_{{val_loss:.3f}}'
-				# create callback list
-				cbs = [self.checkpoint_callback,
-										PyTorchLightningPruningCallback(trial, monitor="val_loss"),
-										]
-				# add early stopping
-				if self.mdelta_estop > -1.0:
-					cbs.append(self.estop_callback)
-
-				# train
-				trainer = pl.Trainer(max_epochs=self.epochs,
-														 logger=logger,
-														 log_every_n_steps=1,
-														 callbacks=cbs,
-														 enable_progress_bar=self.pbar,
-														 enable_checkpointing=self.save_chkpts,
-														 devices=NUM_DEV if NUM_DEV > 1 else 1,
-														 strategy="ddp_spawn" if str(DEVICE) != 'cpu' else 'auto',
-														 precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
-														 accelerator="auto",
-														 )
+				(hidden_dim, num_layers, learning_rate, dropout_rate, batch_size, weight_decay) = self.suggestHParams(trial)
 				
-				trainer.fit(model, datamodule=data_module)
+				# single run on holdout or num_folds runs on cross-val
+				loss_lst = []
+				for fold in range(self.td.num_folds if self.td.use_kfold else 1):
+					fmt_str = f'_fold_{fold}' if self.td.use_kfold else ''
 
-				return trainer.callback_metrics["val_loss"].item()
+					# prep data
+					data_module = MLPDataModule(td=self.td,
+																			batch_size=batch_size,
+																			bgd = self.bgd,
+																			k=fold,
+																			)
+
+					# instantiate the model
+					model = self.ModelType(input_dim=self.td.num_features,
+																hidden_dim=hidden_dim,
+																output_dim=self.td.num_targets,
+																num_layers=num_layers,
+																dropout_rate=dropout_rate,
+																lr=learning_rate,
+																weight_decay=weight_decay,
+																)
+
+					# inst. logger
+					logger = TensorBoardLogger(self.log_pth,
+																		name=f"trial_{trial.number}{fmt_str}_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),)
+
+					# automatic checkpointing
+					self.checkpoint_callback.filename = f'best_model_trial_{trial.number:02d}{fmt_str}_{{epoch:02d}}_{{val_loss:.3f}}'
+					# create callback list
+					cbs = [self.checkpoint_callback]
+
+					if self.mdelta_estop > -1.0:
+						# add early stopping
+						cbs.append(self.estop_callback)
+					if not self.td.use_kfold:
+						# disable pruning for cross-val
+						cbs.append(PyTorchLightningPruningCallback(trial, monitor=self.metric))
+
+					# train
+					trainer = pl.Trainer(max_epochs=self.epochs,
+															logger=logger,
+															log_every_n_steps=1,
+															callbacks=cbs,
+															enable_progress_bar=self.pbar,
+															enable_checkpointing=self.save_chkpts,
+															devices=NUM_DEV if NUM_DEV > 1 else 1,
+															strategy="ddp_spawn" if str(DEVICE) != 'cpu' else 'auto',
+															precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
+															accelerator="auto",
+															enable_model_summary=True,
+															benchmark=True,
+															inference_mode=False,
+															)
+					
+					trainer.fit(model, datamodule=data_module)
+					
+					res = trainer.callback_metrics[self.metric].item()
+					loss_lst.append(res)
+
+				return np.mean(loss_lst)
 		
 		def plTest(self, trial: optuna.Trial) -> Any:
 				hidden_dim = trial.params['hidden_dim']
@@ -885,18 +932,13 @@ class Trainer():
 				dropout_rate = trial.params.get('dropout_rate')
 				batch_size = trial.params['batch_size']
 
-				model_chkpt = self.checkpoint_callback.best_model_path
-				
-				data_module = MLPDataModule(training_data=self.td,
+				data_module = MLPDataModule(td=self.td,
 																		batch_size=batch_size,
 																		bgd = self.bgd,
-																		k=None,
-																		num_splits=None,
 																		)
-				data_module.prepare_data()
-				data_module.setup()
 
 				# instantiate the model
+				model_chkpt = self.checkpoint_callback.best_model_path
 				model = self.ModelType.load_from_checkpoint(model_chkpt)
 
 				test_logger = TensorBoardLogger(self.test_log_pth,
@@ -912,12 +954,14 @@ class Trainer():
 																		strategy="auto",
 																		precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
 																		accelerator="auto",
+																		enable_model_summary=True,
+																		benchmark=True,
+																		inference_mode=False,
 																		)
 
-				test_trainer.test(model, datamodule=data_module, ckpt_path=model_chkpt)
+				res = test_trainer.test(model, datamodule=data_module, ckpt_path=model_chkpt)
 
-				tl = test_trainer.callback_metrics.get("test_loss")
-				return tl.item() if tl is not None else None, model_chkpt
+				return res[0]['test_loss'], model_chkpt
 				
 		def plainObjective(self, trial: optuna.Trial) -> Any:
 				"""	Train with batch gradient descent, manual checkpointing and
@@ -925,7 +969,7 @@ class Trainer():
 				"""
 
 				# suggest hyperparameters
-				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay, _) = self.suggestHParams(trial)
+				(hidden_dim, num_layers, learning_rate, dropout_rate, _, weight_decay) = self.suggestHParams(trial)
 
 				# instantiate the model and move to device
 				model = self.ModelType(input_dim=self.td.num_features,
@@ -1063,7 +1107,7 @@ class Train():
 								 lightning_pbar: Optional[bool] = False,
 								 distribute: Optional[bool] = False,
 								 mdelta_estop: Optional[float] = 0,
-								 kfold: Optional[Union[None, Tuple]] = (2,5,1),
+								 kfold: Optional[int] = 0,
 								 save_chkpts: Optional[bool] = True,
 								 ) -> None:
 
@@ -1115,7 +1159,7 @@ class Train():
 													input_norm=self.input_norm,
 													target_norm=self.target_norm,
 													move_gpu=False,
-													kfold=self.kfold is not None,
+													kfold=self.kfold,
 													)
 
 				trainer = Trainer(td=td,
@@ -1131,7 +1175,6 @@ class Train():
 													pbar=self.lightning_pbar,
 													bgd=self.bgd,
 													mdelta_estop=self.mdelta_estop,
-													kfold=self.kfold,
 													save_chkpts=self.save_chkpts,
 													)
 
@@ -1175,7 +1218,7 @@ class Train():
 													input_norm=self.input_norm,
 													target_norm=self.target_norm,
 													move_gpu=True,
-													kfold=False,
+													kfold=0,
 													)
 
 				trainer = Trainer(td=td,
@@ -1231,7 +1274,7 @@ def visData(args) -> None:
 										input_norm=args.input_norm,
 										target_norm=args.target_norm,
 										move_gpu=False,
-										kfold=args.kfold is not None,
+										kfold=args.kfold,
 										)
 	
 	matplotlib.use('TkAgg') 
@@ -1249,6 +1292,9 @@ def visData(args) -> None:
 			trans = np.array([np.array(lst) for lst in td.df[col]])
 			# trans = smoothMagnTrans(trans, s=0)
 			plotData(index, trans, col)
+	
+	if td.use_kfold:
+		td.foldData(1)
 
 	# features
 	data_vis = np.concatenate((td.X_train_tensor.numpy(), td.X_val_tensor.numpy(), td.X_test_tensor.numpy()), axis=0)
@@ -1273,18 +1319,18 @@ def visData(args) -> None:
 			plotData(tindex, trans, f"target_{target.replace('x_', '')}")
 
 	# denormalized
-	if td.trans_norm != Normalization.NONE and td.y_trans:
+	if td.trans_norm != Normalization.NONE and td.y_trans and td.y_trans_scalers:
 		name = 'trans' if len(td.y_trans.keys()) == 1 else 'trans1'
 		trans = tdata_vis[:, : len(TRANS_COLS)]
 		trans = td.denormalizeOutputData(td.y_trans_scalers[name], trans)
 		plotData(tindex, trans, 'denormalized_trans')
 
-	if td.input_norm != Normalization.NONE:
+	if td.input_norm != Normalization.NONE and td.X_cmds_scalers:
 		name =  'cmd' if len(td.X_cmds.keys()) == 1 else 'cmd1'
 		cmd = td.denormalizeOutputData(td.X_cmds_scalers[name], data_vis[:, len(QUAT_COLS)].reshape(-1, 1))
 		plotData(index, cmd, 'denormalized_cmd')
 
-	if td.target_norm != Normalization.NONE:
+	if td.target_norm != Normalization.NONE and td.y_angles_scalers:
 		name = 'angle' if len(td.y_angles.keys()) == 1 else 'angle1'
 		angle = td.denormalizeOutputData(td.y_angles_scalers[name], tdata_vis[:, len(TRANS_COLS)].reshape(-1, 1))
 		plotData(tindex, angle, 'denormalized_angle')
@@ -1302,9 +1348,9 @@ if __name__ == '__main__':
 		data_group = parser.add_argument_group("Data Settings")
 		data_group.add_argument('--folder_pth', type=str, metavar='str',help='Folder path for the data prepared for training.', default="10013")
 		data_group.add_argument('--pattern', type=str, metavar='str',help='Search pattern for data files', default=".json")
-		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing from val size.', default=0.3)
-		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split for validation incl. test size.', default=0.5)
-		data_group.add_argument('--random_state', type=int, metavar='int',help='Percentage of data randomization.', default=40)
+		data_group.add_argument('--test_size', type=float, metavar='float',help='Percentage of data split for testing (from validation size if holdout method is used).', default=0.3)
+		data_group.add_argument('--val_size', type=float, metavar='float',help='Percentage of data split for validation --incl. test size-- (applies only to holdout split).', default=0.5)
+		data_group.add_argument('--random_state', type=int, metavar='int',help='Seed value for data randomization.', default=40)
 		data_group.add_argument('--trans_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--input_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
 		data_group.add_argument('--target_norm', type=parseNorm,help=f'Normalization method for translations [{NORMS}]', default=Normalization.Z_SCORE.value)
@@ -1319,7 +1365,7 @@ if __name__ == '__main__':
 		train_group.add_argument('--learning_rate', type=parseFloatTuple,help='Min, max and step value of learning rate (float), eg. 1e-4,1e-2,1e-2.', default='1e-4,1e-2,1e-2')
 		train_group.add_argument('--dropout_rate', type=parseFloatTuple,help='Min, max and step value of dropout rate (float). Disable with none, eg. 0.0, 0.4, 0.01 or none.', default='none')
 		train_group.add_argument('--weight_decay', type=parseFloatTuple, help='L2 regularization weight decay (float), eg. 1e-1,1e-2,1e-2 or none to disable.', default='none')
-		train_group.add_argument('--kfold', type=parseIntTuple,help='Use k-fold c-v and spec <<min, max, step (range of folds)>, <number of splits>>, eg. 2,5,1,10 or disable k-fold with none  (req. --distribute).', default='none')
+		train_group.add_argument('--kfold', type=int, metavar='int', help='Use k-fold c-v and spec num_splits or disable with 0 (req. --distribute). If disabled 3-way holdout split is used', default=0)
 		train_group.add_argument('--mdelta_estop', type=float, metavar='float',help='Min req. delta for val loss before early stopping, disable with -1.0 (req. --distribute).', default=-1.0)
 		train_group.add_argument('--log_domain', action='store_true',help='Change optimizer params logarithmically.')
 		train_group.add_argument('--pruning', action='store_true', help='Turn on pruning during optimization (req. --distribute).')
