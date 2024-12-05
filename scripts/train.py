@@ -30,7 +30,7 @@ from plot_record import *
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_DEV = torch.cuda.device_count()
-DEVICES = range(NUM_DEV)
+DEVICES = list(range(NUM_DEV))
 NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
 
 class TrainingData():
@@ -913,9 +913,8 @@ class Trainer():
 															callbacks=cbs,
 															enable_progress_bar=self.pbar,
 															enable_checkpointing=self.save_chkpts,
-															devices=DEVICES if NUM_DEV > 1 else 1,
-															num_nodes=10,
-															strategy="ddp" if str(DEVICE) != 'cpu' else 'auto',
+															devices=1,
+															strategy='auto',
 															precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
 															accelerator="auto",
 															enable_model_summary=True,
