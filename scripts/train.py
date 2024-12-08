@@ -124,9 +124,34 @@ class TrainingData():
 				self.val_index = None
 				self.X_train = None
 				self.y_train = None
+				# size
+				self.num_features = 0
+				self.num_targets = 0
+				self.num_samples = 0
 
 				# load, normalize, split and move data
 				self.prepare(self.df, self.cols)
+
+		@property
+		def len_train_data(self) -> int:
+			assert(self.X_train_tensor is not None)
+			assert(self.y_train_tensor is not None)
+			assert(len(self.X_train_tensor) == len(self.y_train_tensor))
+			return len(self.X_train_tensor)
+		
+		@property
+		def len_val_data(self) -> int:
+			assert(self.X_val_tensor is not None)
+			assert(self.y_val_tensor is not None)
+			assert(len(self.X_val_tensor) == len(self.y_val_tensor))
+			return len(self.X_val_tensor)
+		
+		@property
+		def len_test_data(self) -> int:
+			assert(self.X_test_tensor is not None)
+			assert(self.y_test_tensor is not None)
+			assert(len(self.X_test_tensor) == len(self.y_test_tensor))
+			return len(self.X_test_tensor)
 
 		def prepare(self, df: pd.DataFrame, cols: list) -> None:
 				# load and normalize data
@@ -632,23 +657,14 @@ class MLPDataModule(pl.LightningDataModule):
 				
 				assert(not td.move_gpu) # not allowed here
 
-				self.td = td
 				self.k = k
+				self.td = td
+				self.bgd = bgd
+				self.batch_size = batch_size
 				self.train_dataset = None
 				self.val_dataset = None
 				self.test_dataset = None
 
-				# set batch size
-				if bgd == True and not td.use_kfold:
-					# batch gradient desc.
-					self.train_batch_size = len(td.X_train_tensor)
-					self.val_batch_size = len(td.X_val_tensor)
-					self.test_batch_size = len(td.X_test_tensor)
-				else:
-					# mini-batch gradient desc.
-					self.train_batch_size = batch_size
-					self.val_batch_size = batch_size
-					self.test_batch_size = batch_size
 
 				# overwrite
 		def setup(self, stage: Optional[str] = None) -> None:
@@ -663,21 +679,24 @@ class MLPDataModule(pl.LightningDataModule):
 						self.train_dataset = TensorDataset(self.td.X_train_tensor, self.td.y_train_tensor)
 						self.val_dataset = TensorDataset(self.td.X_val_tensor, self.td.y_val_tensor)
 
-						# check batch size
-						if self.train_batch_size > len(self.td.X_train_tensor):
-							self.train_batch_size = len(self.td.X_train_tensor)
-							print("Adapt train batch size to", self.train_batch_size)
-						if self.val_batch_size > len(self.td.X_val_tensor):
-							self.val_batch_size = len(self.td.X_val_tensor)
-							print("Adapt validation batch size to", self.val_batch_size)
+						# set batch size
+						if self.bgd:
+							# batch gradient desc.
+							self.train_batch_size = self.td.len_train_data
+							self.val_batch_size = self.td.len_val_data
+						else:
+							# mini-batch gradient desc.
+							self.train_batch_size = self.td.len_train_data if self.batch_size > self.td.len_train_data else self.batch_size
+							self.val_batch_size = self.td.len_val_data if self.batch_size > self.td.len_val_data else self.batch_size
 
 					elif stage == TrainerFn.TESTING.value:
 						# always present
 						self.test_dataset = TensorDataset(self.td.X_test_tensor, self.td.y_test_tensor)
-						# check batch size
-						if self.test_batch_size > len(self.td.X_test_tensor):
-							self.test_batch_size = len(self.td.X_test_tensor)
-							print("Adapt test batch size to", self.test_batch_size)
+						# set batch size
+						if self.bgd:
+							self.test_batch_size = self.td.len_test_data
+						else:
+							self.test_batch_size = self.td.len_test_data if self.batch_size > self.td.len_test_data else self.batch_size
 
 					else:
 						raise NotImplementedError(f"setup({stage}) is not implemented")
