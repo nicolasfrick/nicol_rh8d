@@ -516,6 +516,10 @@ class MLP(nn.Module):
 						@type int
 						@property dropout_rate
 						@type Union[None, float]
+						@property activation
+						@type nn.Module
+						@property activ_init
+						@type float
 
 		"""
 
@@ -525,6 +529,8 @@ class MLP(nn.Module):
 								 output_dim: int,
 								 num_layers: int,
 								 dropout_rate: Union[None, float],
+								 activation: Optional[nn.Module]=nn.PReLU, 
+								 activ_init: Optional[float]=0.25
 								 ) -> None:
 
 				super().__init__()
@@ -532,13 +538,13 @@ class MLP(nn.Module):
 				layers: List[nn.Module] = []
 				# input
 				layers.append(nn.Linear(input_dim, hidden_dim))
-				layers.append(nn.ReLU())
+				layers.append(activation(init=activ_init))
 				if dropout_rate is not None:
 						layers.append(nn.Dropout(p=dropout_rate))
 				# hidden
 				for _ in range(num_layers - 1):
 						layers.append(nn.Linear(hidden_dim, hidden_dim))
-						layers.append(nn.ReLU())
+						layers.append(activation(init=activ_init))
 						if dropout_rate is not None:
 								layers.append(nn.Dropout(p=dropout_rate))
 				# output
