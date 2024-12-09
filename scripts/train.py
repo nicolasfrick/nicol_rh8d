@@ -204,7 +204,7 @@ class TrainingData():
 					
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
 				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
-					  a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
+						a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
 				"""
 				# features X:
 				# quaternions first, always present
@@ -316,7 +316,7 @@ class TrainingData():
 
 		def foldData(self, k: int) -> None:
 			""" Set training and validation tensors from the the k'th fold of the training data.
-				  Train batches are normalized and validation batches are scaled.
+					Train batches are normalized and validation batches are scaled.
 			"""
 			assert(k < self.kf.get_n_splits()) # k exceeds num splits
 
@@ -553,9 +553,18 @@ class MLP(nn.Module):
 				# model
 				self.model = nn.Sequential(*layers)
 
+				# rnd init weights
+				self.model.apply(self.initWeights)
+
 		# overwrite
 		def forward(self, data: torch.Tensor) -> torch.Tensor:
 				return self.model(data)
+
+		def initWeights(self, module: nn.Module) -> None:
+				if isinstance(module, nn.Linear):
+						nn.init.kaiming_uniform_(module.weight, nonlinearity='leaky_relu') 
+						if module.bias is not None:
+								nn.init.zeros_(module.bias)
 
 class WrappedMLP(pl.LightningModule):
 		"""
