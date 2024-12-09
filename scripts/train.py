@@ -906,6 +906,10 @@ class Trainer():
 				loss_lst = []
 				for fold in range(self.td.num_folds if self.td.use_kfold else 1):
 					fmt_str = f'_fold_{fold}' if self.td.use_kfold else ''
+					
+					if self.td.use_kfold and self.pbar:
+						print(f"running trial_{trial.number}{fmt_str}, hidden: {hidden_dim}, layers:{num_layers}, lr:{learning_rate:.4f}, batch size: {batch_size}, dropout: {dropout_rate}, weight decay: {weight_decay}")
+
 
 					# prep data
 					data_module = MLPDataModule(td=self.td,
@@ -960,6 +964,9 @@ class Trainer():
 					
 					res = trainer.callback_metrics[self.metric].item()
 					loss_lst.append(res)
+				
+				if self.td.use_kfold and self.pbar:
+					print()
 
 				return np.mean(loss_lst)
 		
