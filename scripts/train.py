@@ -622,7 +622,7 @@ class WrappedMLP(pl.LightningModule):
 				preds = self(X)
 				val_loss = self.loss_fn(preds, y)
 				self.log('val_loss', val_loss.item(), on_step=False,
-								 on_epoch=True, prog_bar=True, sync_dist=True, )
+								 on_epoch=True, prog_bar=False, sync_dist=True, )
 				self.log("hp_metric", val_loss.item(), on_step=False, on_epoch=True, sync_dist=True, )
 				return val_loss
 		
@@ -908,7 +908,7 @@ class Trainer():
 					fmt_str = f'_fold_{fold}' if self.td.use_kfold else ''
 					
 					if self.td.use_kfold and self.pbar:
-						print(f"running trial_{trial.number}{fmt_str}, hidden: {hidden_dim}, layers:{num_layers}, lr:{learning_rate:.4f}, batch size: {batch_size}, dropout: {dropout_rate}, weight decay: {weight_decay}")
+						print(f"/nrunning trial_{trial.number}{fmt_str}, hidden: {hidden_dim}, layers:{num_layers}, lr:{learning_rate:.4f}, batch size: {batch_size}, dropout: {dropout_rate}, weight decay: {weight_decay}")
 
 
 					# prep data
