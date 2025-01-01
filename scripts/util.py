@@ -5,9 +5,9 @@ import glob
 import yaml
 import subprocess
 import numpy as np
+import tifffile as tiff
 import pandas as pd
 from enum import Enum
-import tifffile as tiff
 from cv2 import Rodrigues
 from datetime import datetime
 from send2trash import send2trash
@@ -49,17 +49,30 @@ TRAIN_PTH = os.path.join(os.path.dirname(os.path.dirname(
 MLP_LOG_PTH = os.path.join(TRAIN_PTH, 'mlp/log')
 MLP_SCLRS_PTH = os.path.join(TRAIN_PTH, 'mlp/scalers')
 MLP_CHKPT_PTH = os.path.join(TRAIN_PTH, 'mlp/checkpoints')
-MONO_TRAIN_COLS = ['cmd', 'dir', 'quat', 'angle']
-FINGER_TRAIN_COLS = ['cmd', 'dir', 'quat',
-                     'angle1', 'angle2', 'angle3', 'trans']
-THUMB_TRAIN_COLS = ['cmd1', 'cmd2', 'dir1', 'dir2',
-                    'quat', 'angle1', 'angle2', 'angle3', 'trans']
-QUAT_COLS = ["x", "y", "z", "w"]
+
+# indices for translation data
 TRANS_COLS = ["x", "y", "z"]
+# indices for orientation data
+QUAT_COLS = ["x", "y", "z", "w"]
+# generate names for a training dataset
+# ['cmdA1', ..., 'cmdZ1', 'dirA1', ..., 'dirZ1', 'quat', 'angleA1', ..., 'angleAn', ..., 'angleZn', 'transA', ..., 'transZ']
+GEN_TRAIN_COLS = lambda feature_names, target_names, trans_names: [f"cmd{name.replace('joint', '')}" for name in feature_names] + \
+                                                                                                                                                [f"dir{name.replace('joint', '')}" for name in feature_names] + \
+                                                                                                                                                ["quat"] + \
+                                                                                                                                                [f"angle{name.replace('joint', '')}" for name in target_names] + \
+                                                                                                                                                [f"trans{name.replace('joint_', '').replace('bumper', '')}" for name in trans_names]
+# GEN_TRAIN_COLS = lambda feature_names, target_names, trans_names: [f"cmd{i+1 if len(feature_names) > 1 else ''}" for i in range(len(feature_names))] + \
+#                                                                                                                                                 [f"dir{i+1 if len(feature_names) > 1 else ''}" for i in range(len(feature_names))] + \
+#                                                                                                                                                 ["quat"] + \
+#                                                                                                                                                 [f"angle{i+1 if len(target_names) > 1 else ''}" for i in range(len(target_names))] + \
+#                                                                                                                                                 [f"trans{i+1 if len(trans_names) > 1 else ''}" for i in range(len(trans_names))]
+# dynamic index generation for translation data
 format_trans_cols = lambda idx: [f"x_{idx}", f"y_{idx}", f"z_{idx}"]
 
 
 def mkDirs() -> None:
+    """Create paths on fs"""
+
     if not os.path.exists(REC_DIR):
         os.mkdir(REC_DIR)
     print("Writing images to", REC_DIR)
@@ -607,124 +620,88 @@ def joinDF(pth1: str, pth2: str, save_pth: str) -> None:
 
     df_concat.to_json(save_pth, orient="index", indent=4)
 
+def findCommonIndices(detection_dct: pd.DataFrame, 
+                                                keypoints_dct: pd.DataFrame,
+                                                out_joints: list,
+                                                tools: list,
+                                                tcp: str,
+                                                ) -> list:
+    
+    # all indices are equal, start with full index of 1st joint
+    first_joint = out_joints[0]
+    first_joint_df = detection_dct[first_joint]
+    common_indices: pd.Index = first_joint_df.index
 
-def trainingDataMono(folder: str) -> None:
-    """Load joined datasets and create training data for a 
-                                    mono joint. Find valid entries out of the detection frame.
-    """
-    # data
-    data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-    detection_dct = readDetectionDataset(
-        os.path.join(data_pth, 'detection.json'))
-    fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'), orient='index')
+    # find common indices from detections that contains no nans
+    for joint, df in detection_dct.items():
+        # consider only specified target joints
+        if joint in out_joints:
+            valid_detection_df = df.dropna(how='all')
+            valid_index = valid_detection_df.index
+            inv_idxs = df.index.difference(valid_index).tolist()
+            print("Detection", joint, "has", len(inv_idxs), "invalid indices")
+            # intersect indices
+            common_indices = common_indices.intersection(valid_index)
 
-    # net setup
-    config = loadNetConfig('mono_joint')
+    # find common indices between detections and keypoints
+    for joint, df in keypoints_dct.items():
+        # consider only specified target joints
+        if joint in tools or joint == tcp:
+            valid_detection_df = df.dropna(subset=["trans", "rot_mat"], how="all")
+            valid_index = valid_detection_df.index
+            inv_idxs = df.index.difference(valid_index).tolist()
+            print("Keypoint", joint, "has", len(inv_idxs), "invalid indices")
+            # intersect indices
+            common_indices = common_indices.intersection(valid_index)
 
-    # data excl. nan entries
-    for net, cfg in config.items():
-        # get detection
-        joint = cfg['output']
-        detection_df = detection_dct[joint]
-        # remove nan entries
-        df_filtered = detection_df.dropna(how='all')
-        valid_indices = df_filtered.index.to_list()
-        invalid_indices = detection_df.index.difference(valid_indices)
-        print(net, "has", len(invalid_indices), "invalid indices,", len(
-            valid_indices), "valid indices,", len(detection_df), "overall")
+    invalid_indices = first_joint_df.index.difference(common_indices)
+    print("Ignoring", len(invalid_indices), "invalid indices, using", len(
+        common_indices), "valid indices out of", len(first_joint_df.index))
+    
+    return common_indices.tolist()
 
-        # create training data
-        train_df = pd.DataFrame(columns=MONO_TRAIN_COLS)
-        for idx in valid_indices:
-            row = detection_df.loc[idx]
-            data = {'cmd': row.loc['cmd'],
-                    'dir': row.loc['direction'],
-                    'quat': fk_df.loc[idx, 'quat'],
-                    'angle': row.loc['angle']}
-            train_df = pd.concat(
-                [train_df, pd.DataFrame([data])], ignore_index=True)
-        train_df.to_json(os.path.join(TRAIN_PTH, folder, net +
-                                      '_mono.json'), orient="index", indent=4)
+def joinTrainingData(  in_joints: list,
+                                            out_joints: list,
+                                            tools: list,
+                                            train_cols: list,
+                                            common_indices: list,
+                                            detection_dct: pd.DataFrame, 
+                                            keypoints_dct: pd.DataFrame,
+                                            fk_df: pd.DataFrame,
+                                            tcp: str,
+                                            ) -> dict:
+    
+    col_idx = 0
+    train_dct = {}
+    
+    # copy actuator cmds 
+    for joint in in_joints:
+        cmd_data = detection_dct[joint].loc[common_indices, 'cmd'].tolist()
+        train_dct.update( {train_cols[col_idx] : cmd_data} )
+        col_idx += 1
 
+    # copy actuator dirs 
+    for joint in in_joints:
+        cmd_data = detection_dct[joint].loc[common_indices, 'direction'].tolist()
+        train_dct.update( {train_cols[col_idx] : cmd_data} )
+        col_idx += 1
 
-def trainingDataFinger(folder: str) -> None:
-    """Load joined datasets and create training data
-                                    for multiple joints. Find a common set of valid entries 
-                                    out of the detection frames.
-    """
-    # load recordings
-    data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-    detection_dct = readDetectionDataset(os.path.join(
-        data_pth, 'detection.json'))  # contains nans
-    keypoints_dct = readDetectionDataset(
-        os.path.join(data_pth, 'kpts3D.json'))  # contains nans
-    fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'),
-                         orient='index')  # contains no nans
+    # copy tcp orientation
+    quat = fk_df.loc[common_indices, 'quat'].tolist()
+    train_dct.update( {train_cols[col_idx] : quat} )
+    col_idx += 1
 
-    # dataset config
-    config = loadNetConfig('finger')
+    # copy joint angles
+    for joint in out_joints:
+        joint_data = detection_dct[joint].loc[common_indices, 'angle'].tolist()
+        train_dct.update( {train_cols[col_idx] : joint_data} )
+        col_idx += 1
 
-    for net, cfg in config.items():
-        tool = cfg['tool']
-        tcp = cfg['relative_to']
-        out_joints = cfg['output']
-        print("Creating dataset for", net, "with input:",
-              cfg['input'], "output:", out_joints, "tool:", tool, "relative to", tcp)
-
-        # assuming 3 joints
-        detection_df1 = detection_dct[out_joints[0]]
-        valid_detection_df1 = detection_df1.dropna(how='all')
-        inv_idxs1 = detection_df1.index.difference(
-            valid_detection_df1.index).tolist()
-        print(out_joints[0], "has", len(inv_idxs1), "invalid indices")
-
-        detection_df2 = detection_dct[out_joints[1]]
-        valid_detection_df2 = detection_df2.dropna(how='all')
-        inv_idxs2 = detection_df2.index.difference(
-            valid_detection_df2.index).tolist()
-        print(out_joints[1], "has", len(inv_idxs2), "invalid indices")
-
-        detection_df3 = detection_dct[out_joints[2]]
-        valid_detection_df3 = detection_df3.dropna(how='all')
-        inv_idxs3 = detection_df3.index.difference(
-            valid_detection_df3.index).tolist()
-        print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
-
-        # keypoints
-        tip_keypoints_df = keypoints_dct[tool]
-        valid_tip_keypoints = tip_keypoints_df.dropna(
-            subset=["trans", "rot_mat"], how="all")
-        inv_tipidxs = tip_keypoints_df.index.difference(
-            valid_tip_keypoints.index).tolist()
-        print(tool, "has", len(inv_tipidxs), "invalid indices")
-
-        tcp_keypoints_df = keypoints_dct[tcp]
-        valid_tcp_keypoints = tcp_keypoints_df.dropna(
-            subset=["trans", "rot_mat"], how="all")
-        inv_tcpidxs = tcp_keypoints_df.index.difference(
-            valid_tcp_keypoints.index).tolist()
-        print(tcp, "has", len(inv_tcpidxs), "invalid indices")
-
-        # find intersecting indices where entries are valid
-        common_indices = valid_detection_df1.index\
-            .intersection(valid_detection_df2.index)\
-            .intersection(valid_detection_df3.index)\
-            .intersection(valid_tip_keypoints.index)\
-            .intersection(valid_tcp_keypoints.index).to_list()
-        invalid_indices = detection_df1.index.difference(common_indices)
-        print("Ignoring", len(invalid_indices), "invalid indices, found", len(
-            common_indices), "valid indices out of", len(detection_df1.index))
-
-        # create training data
-        train_df = pd.DataFrame(columns=FINGER_TRAIN_COLS)
+    # copy tip positions
+    for tool in tools:
+        # we want tf tip relative to tcp
+        transformed_trans = []
         for idx in common_indices:
-            row1 = detection_df1.loc[idx]
-            row2 = detection_df2.loc[idx]
-            row3 = detection_df3.loc[idx]
-            assert (row1.loc['cmd'] == row2.loc['cmd'] == row3.loc['cmd'])
-            assert (row1.loc['direction'] ==
-                    row2.loc['direction'] == row3.loc['direction'])
-            # we want tf tip relative to tcp
             tip_trans = keypoints_dct[tool]['trans'][idx]
             tip_rot = keypoints_dct[tool]['rot_mat'][idx]
             tcp_trans = keypoints_dct[tcp]['trans'][idx]
@@ -733,137 +710,89 @@ def trainingDataFinger(folder: str) -> None:
             (tvec, rot_mat) = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
             T_tcp_root = pose2Matrix(tvec, rot_mat, RotTypes.MAT)
             T_tcp_tip = T_tcp_root @ T_root_tip
-            # add training data
-            data = {'cmd': row1.loc['cmd'],
-                    'dir': row1.loc['direction'],
-                    'quat': fk_df.loc[idx]['quat'],
-                    'angle1': row1.loc['angle'],
-                    'angle2': row2.loc['angle'],
-                    'angle3': row3.loc['angle'],
-                    'trans': T_tcp_tip[:3, 3]}
-            train_df = pd.concat(
-                [train_df, pd.DataFrame([data])], ignore_index=True)
-        train_df.to_json(os.path.join(TRAIN_PTH, folder, net +
-                                      '_poly.json'), orient="index", indent=4)
-        print()
+            transformed_trans.append(T_tcp_tip[:3, 3])
 
+        train_dct.update( {train_cols[col_idx] : transformed_trans} )
+        col_idx += 1
 
-def trainingDataThumb(folder: str) -> None:
-    """Load joined datasets and create training data
-                                     for multiple in and output joints. Find a common
-                                     set of valid entries out of the detection frames.
+    return train_dct
+
+def genTrainingData(net_config: str, folder: str, post_proc: bool=False) -> None:
+    """  Load joined datasets and create training data
+            for in- and output joints given by the given net_config. 
+            Find a common set of valid entries out of the detection frames
+            and keypoint frames. Save training data in a single dataframe.
     """
+
+    # static data path
+    data_pth: str = os.path.join(DATA_PTH, f"keypoint/{'post_processed' if post_proc else 'joined'}")
+
     # load recordings
-    data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-    detection_dct = readDetectionDataset(os.path.join(
-        data_pth, 'detection.json'))  # contains nans
-    keypoints_dct = readDetectionDataset(
-        os.path.join(data_pth, 'kpts3D.json'))  # contains nans
-    fk_df = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'),
-                         orient='index')  # contains no nans
+    detection_dct: dict = readDetectionDataset(os.path.join(data_pth, 'detection.json'))  # contains nans
+    keypoints_dct: dict = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))  # contains nans
+    fk_df: pd.DataFrame = pd.read_json(os.path.join(data_pth, 'tcp_tf.json'),orient='index')  # contains no nans
 
-    # dataset config
-    config = loadNetConfig('thumb')
+    # load dataset config for a net type
+    config: dict = loadNetConfig(net_config)
 
-    tool = config['tool']
-    tcp = config['relative_to']
-    in_joints = config['input']
-    out_joints = config['output']
-    print("Creating dataset for thumb", "with input:", in_joints,
-          "output:", out_joints, "tool:", tool, "relative to", tcp)
-    # base joint
-    # in_joints[1] is direct actuator of out_joints
-    detection_df0 = detection_dct[in_joints[0]]
-    valid_detection_df0 = detection_df0.dropna(how='all')
-    inv_idxs0 = detection_df0.index.difference(
-        valid_detection_df0.index).tolist()
-    print(in_joints[0], "has", len(inv_idxs0), "invalid indices")
+    in_joints: list = config['input']
+    out_joints: list = config['output']
+    tools: list = config['tools']
+    tcp: str = config['relative_to']
+    net_type: str = config['type']
 
-    # assuming 3 joints
-    detection_df1 = detection_dct[out_joints[0]]
-    valid_detection_df1 = detection_df1.dropna(how='all')
-    inv_idxs1 = detection_df1.index.difference(
-        valid_detection_df1.index).tolist()
-    print(out_joints[0], "has", len(inv_idxs1), "invalid indices")
-
-    detection_df2 = detection_dct[out_joints[1]]
-    valid_detection_df2 = detection_df2.dropna(how='all')
-    inv_idxs2 = detection_df2.index.difference(
-        valid_detection_df2.index).tolist()
-    print(out_joints[1], "has", len(inv_idxs2), "invalid indices")
-
-    detection_df3 = detection_dct[out_joints[2]]
-    valid_detection_df3 = detection_df3.dropna(how='all')
-    inv_idxs3 = detection_df3.index.difference(
-        valid_detection_df3.index).tolist()
-    print(out_joints[2], "has", len(inv_idxs3), "invalid indices")
-
-    # keypoints
-    tip_keypoints_df = keypoints_dct[tool]
-    valid_tip_keypoints = tip_keypoints_df.dropna(
-        subset=["trans", "rot_mat"], how="all")
-    inv_tipidxs = tip_keypoints_df.index.difference(
-        valid_tip_keypoints.index).tolist()
-    print(tool, "has", len(inv_tipidxs), "invalid indices")
-
-    tcp_keypoints_df = keypoints_dct[tcp]
-    valid_tcp_keypoints = tcp_keypoints_df.dropna(
-        subset=["trans", "rot_mat"], how="all")
-    inv_tcpidxs = tcp_keypoints_df.index.difference(
-        valid_tcp_keypoints.index).tolist()
-    print(tcp, "has", len(inv_tcpidxs), "invalid indices")
-
-    # find intersecting indices where entries are valid
-    common_indices = valid_detection_df0.index\
-        .intersection(valid_detection_df1.index)\
-        .intersection(valid_detection_df2.index)\
-        .intersection(valid_detection_df3.index)\
-        .intersection(valid_tip_keypoints.index)\
-        .intersection(valid_tcp_keypoints.index).to_list()
-    invalid_indices = detection_df0.index.difference(common_indices)
-    print("Ignoring", len(invalid_indices), "invalid indices, found", len(
-        common_indices), "valid indices out of", len(detection_df0.index))
+    print("Creating dataset for", net_config, ", type:", net_type, "\ninput:", in_joints,
+          "\noutput:", out_joints, "\ntools:", tools, "\nrelative to", tcp, "\n")
+    
+    # exclude indices where nan values are present
+    common_indices: list = findCommonIndices(detection_dct, 
+                                                                                            keypoints_dct, 
+                                                                                            out_joints, 
+                                                                                            tools, 
+                                                                                            tcp)
 
     # create training data
-    train_df = pd.DataFrame(columns=THUMB_TRAIN_COLS)
-    for idx in common_indices:
-        row0 = detection_df0.loc[idx]
-        row1 = detection_df1.loc[idx]
-        row2 = detection_df2.loc[idx]
-        row3 = detection_df3.loc[idx]
-        assert (row1.loc['cmd'] == row2.loc['cmd']
-                == row3.loc['cmd'])  # same actuator
-        assert (row1.loc['direction'] == row2.loc['direction']
-                == row3.loc['direction'])  # same actuator
-        # we want tf tip relative to tcp
-        tip_trans = keypoints_dct[tool]['trans'][idx]
-        tip_rot = keypoints_dct[tool]['rot_mat'][idx]
-        tcp_trans = keypoints_dct[tcp]['trans'][idx]
-        tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
-        T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
-        (tvec, rot_mat) = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
-        T_tcp_root = pose2Matrix(tvec, rot_mat, RotTypes.MAT)
-        T_tcp_tip = T_tcp_root @ T_root_tip
-        # add training data
-        data = {'cmd1': row0.loc['cmd'],
-                'cmd2': row1.loc['cmd'],
-                'dir1': row0.loc['direction'],
-                'dir2': row1.loc['direction'],
-                'quat': fk_df.loc[idx]['quat'],
-                'angle1': row1.loc['angle'],
-                'angle2': row2.loc['angle'],
-                'angle3': row3.loc['angle'],
-                'trans': T_tcp_tip[:3, 3]}
-        train_df = pd.concat(
-            [train_df, pd.DataFrame([data])], ignore_index=True)
-    train_df.to_json(os.path.join(TRAIN_PTH, folder,
-                                  'thumb_flexion_poly.json'), orient="index", indent=4)
+    train_cols: list = GEN_TRAIN_COLS(in_joints, 
+                                                                         out_joints, 
+                                                                         tools)
+    train_dct:  dict =  joinTrainingData(in_joints, 
+                                                                        out_joints, 
+                                                                        tools, 
+                                                                        train_cols, 
+                                                                        common_indices, 
+                                                                        detection_dct, 
+                                                                        keypoints_dct, 
+                                                                        fk_df, 
+                                                                        tcp)
+    
+    # final data
+    train_df = pd.DataFrame(columns=train_cols)
 
+    # arrange per index [0,..,n]
+    for idx in range(len(common_indices)):
+        # new row
+        data = {}
+        for key, val_list in train_dct.items():
+            # feature/target per index
+            data.update( {key : val_list[idx]} )
+        # concat row
+        train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
+    
+    # save
+    train_df.to_json(os.path.join(TRAIN_PTH, folder, f'{net_config}_{net_type}.json'), orient="index", indent=4)
+    print("\nFinished dataset generation for", net_config, "with data columns:\n", train_cols)
+
+def genAllTrainingData() -> None:
+    fl = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "cfg/net_config.yaml")
+    with open(fl, 'r') as fr:
+        config = yaml.safe_load(fr)
+        for  c in config.keys():
+            genTrainingData(net_config=c, folder='config')
+            print()
 
 if __name__ == "__main__":
     # img2Video(os.path.join(REC_DIR, "joined/det"), os.path.join(REC_DIR, "movies/detection.mp4"), fps=25)
     # mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
 
-    trainingDataMono('config')
-    trainingDataFinger('config')
-    trainingDataThumb('config')
+    genAllTrainingData()

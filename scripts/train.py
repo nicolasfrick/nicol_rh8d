@@ -223,7 +223,7 @@ class TrainingData():
 				y = None
 				# translation first if present
 				for name, y_trans in self.y_trans.items():
-					trans_idx = name.replace('trans_', '')
+					trans_idx = name.replace('trans', '').replace('_', '')
 					if y is None:
 						# 1st elmt
 						self.target_names = [*format_trans_cols(trans_idx)]

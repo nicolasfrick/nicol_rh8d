@@ -1,38 +1,74 @@
-mono_joint:
-  wrist_abduction: 
-    input: 'joint7'
-    output: 'joint7'
-  wrist_flexion: 
-    input: 'joint8'
-    output: 'joint8'
-  thumb_abduction: 
-    input: 'jointT0'
-    output: 'jointT0'
-
-thumb:
+# mono joints
+wrist_abduction: 
+  input: ['joint7']
+  output: ['joint7']
+  tools: []
+  relative_to: null
+  type: 'mono'
+wrist_flexion: 
+  input: ['joint8']
+  output: ['joint8']
+  tools: []
+  relative_to: null
+  type: 'mono'
+thumb_abduction: 
+  input: ['jointT0']
+  output: ['jointT0']
+  tools: []
+  relative_to: null
+  type: 'mono'
+# finger:
+index_flexion: 
+  input: ['jointI1']
+  output: ['jointI1', 'jointI2', 'jointI3']
+  tools: ['joint_Ibumper']
+  relative_to: 'joint_r_laser'
+  type: 'poly'
+middle_flexion: 
+  input: ['jointM1']
+  output: ['jointM1', 'jointM2', 'jointM3']
+  tools: ['joint_Mbumper']
+  relative_to: 'joint_r_laser'
+  type: 'poly'
+ring_flexion: 
+  input: ['jointR1'] # = jointL1 = jointL1R1: same command
+  output: ['jointR1', 'jointR2', 'jointR3']
+  tools: ['joint_Rbumper']
+  relative_to: 'joint_r_laser'
+  type: 'poly'
+little_flexion: 
+  input: ['jointL1'] # = jointR1 = jointL1R1: same command
+  output: ['jointL1', 'jointL2', 'jointL3']
+  tools: ['joint_Lbumper']
+  relative_to: 'joint_r_laser'
+  type: 'poly'
+# thumb
+thumb_flexion: 
   input: ['jointT0', 'jointT1']
   output: ['jointT1', 'jointT2', 'jointT3']
-  tool: 'joint_Tbumper'
+  tools: ['joint_Tbumper']
+  relative_to: 'joint_r_laser'    
+  type: 'thumb'
+# whole hand
+rh8d:
+  input: ['joint7', 
+                'joint8', 
+                'jointT0', 
+                'jointT1', 
+                'jointI1', 
+                'jointM1', 
+                'jointR1', # = jointL1 = jointL1R1: same command
+                # 'jointL1', # = jointR1 = jointL1R1: same command
+                ]
+  output: ['joint7',
+                  'joint8',
+                  'jointT0',
+                  'jointT1', 'jointT2', 'jointT3', 
+                  'jointI1', 'jointI2', 'jointI3', 
+                  'jointM1', 'jointM2', 'jointM3', 
+                  'jointR1', 'jointR2', 'jointR3', 
+                  'jointL1', 'jointL2', 'jointL3',
+                  ]
+  tools: ['joint_Tbumper', 'joint_Ibumper', 'joint_Mbumper', 'joint_Rbumper', 'joint_Lbumper']
   relative_to: 'joint_r_laser'
-    
-finger:
-  index_flexion: 
-    input: 'jointI1'
-    output: ['jointI1', 'jointI2', 'jointI3']
-    tool: 'joint_Ibumper'
-    relative_to: 'joint_r_laser'
-  middle_flexion: 
-    input: 'jointM1'
-    output: ['jointM1', 'jointM2', 'jointM3']
-    tool: 'joint_Mbumper'
-    relative_to: 'joint_r_laser'
-  ring_flexion: 
-    input: 'jointL1R1'
-    output: ['jointR1', 'jointR2', 'jointR3']
-    tool: 'joint_Rbumper'
-    relative_to: 'joint_r_laser'
-  little_flexion: 
-    input: 'jointL1R1'
-    output: ['jointL1', 'jointL2', 'jointL3']
-    tool: 'joint_Lbumper'
-    relative_to: 'joint_r_laser'
+  type: 'all'
