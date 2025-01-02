@@ -1,0 +1,139 @@
+# joint-wise values for nan-entry interpolation
+joint_repl_values:
+  joint7:
+    tcp: null
+    zero:
+      cmd: 0.0
+      angle: {'min': -0.050417547, 'max': 0.052598482}
+  joint8:
+    tcp: null
+    zero:
+      cmd: 0.0
+      angle: {'min': -0.0314886537, 'max': 0.033270853}
+  jointT0:
+    tcp: null
+    zero:
+      cmd: 0.0
+      angle: {'min': -0.0653188945, 'max': 0.0614732712}
+    moved:
+      cmd: 2.0
+      angle: {'min': 0.577, 'max': 0.637}
+  jointT1:
+    tcp: 'joint_Tbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0382605643}
+  jointT2:
+    tcp: 'joint_Tbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0382605643}
+  jointT3:
+    tcp: 'joint_Tbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0291258907}
+  jointI1:
+    tcp: 'joint_Ibumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0382605643}
+  jointI2:
+    tcp: 'joint_Ibumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0652149185}
+  jointI3:
+    tcp: 'joint_Ibumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0708832264}
+  jointM1:
+    tcp: 'joint_Mbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0799608775}
+  jointM2:
+    tcp: 'joint_Mbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.091501851}
+  jointM3:
+    tcp: 'joint_Mbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0838347478}
+  jointR1:
+    tcp: 'joint_Rbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0454248685}
+  jointR2:
+    tcp: 'joint_Rbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0482509761}
+  jointR3:
+    tcp: 'joint_Rbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0973900944}
+  jointL1:
+    tcp: 'joint_Lbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0200728147}
+  jointL2:
+    tcp: 'joint_Lbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0139034957}
+  jointL3:
+    tcp: 'joint_Lbumper'
+    zero:
+      cmd: -3.142
+      angle: {'min': 0, 'max': 0.0280540352}
+
+kpts_repl_values:
+  joint_Tbumper:
+    noise: 0.1
+    trans: []
+    rot_mat: [[1,0,0],[0,1,0],[0,0,1]]
+  joint_Ibumper:
+    noise: 0.1
+    trans: []
+    rot_mat: [[1,0,0],[0,1,0],[0,0,1]]
+  joint_Mbumper:
+    noise: 0.1
+    trans: []
+    rot_mat: [[1,0,0],[0,1,0],[0,0,1]]
+  joint_Rbumper:
+    noise: 0.1
+    trans: []
+    rot_mat: [[1,0,0],[0,1,0],[0,0,1]]
+  joint_Lbumper:
+    noise: 0.1
+    trans: []
+    rot_mat: [[1,0,0],[0,1,0],[0,0,1]]
+
+# descriptions for actuator commands
+description_mapping:
+  joint7: 'wrist abduction'
+  joint8: 'wrist flexion'
+  jointT0: 'thumb abduction'
+  jointT1: 'thumb flexion'
+  jointT2: 'thumb flexion'
+  jointT3: 'thumb flexion'
+  jointI1: 'jointI1 flexion'
+  jointI2: 'jointI1 flexion'
+  jointI3: 'jointI1 flexion'
+  jointM1: 'jointM1 flexion'
+  jointM2: 'jointM1 flexion'
+  jointM3: 'jointM1 flexion'
+  jointR1: 'jointL1R1 flexion'
+  jointR2: 'jointL1R1 flexion'
+  jointR3: 'jointL1R1 flexion'
+  jointL1: 'jointL1R1 flexion'
+  jointL2: 'jointL1R1 flexion'
+  jointL3: 'jointL1R1 flexion'
+  misc: ['home', 'start', 'new sequence', 'reset angle']

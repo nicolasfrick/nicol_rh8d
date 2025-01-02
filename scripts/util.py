@@ -61,11 +61,6 @@ GEN_TRAIN_COLS = lambda feature_names, target_names, trans_names: [f"cmd{name.re
                                                                                                                                                 ["quat"] + \
                                                                                                                                                 [f"angle{name.replace('joint', '')}" for name in target_names] + \
                                                                                                                                                 [f"trans{name.replace('joint_', '').replace('bumper', '')}" for name in trans_names]
-# GEN_TRAIN_COLS = lambda feature_names, target_names, trans_names: [f"cmd{i+1 if len(feature_names) > 1 else ''}" for i in range(len(feature_names))] + \
-#                                                                                                                                                 [f"dir{i+1 if len(feature_names) > 1 else ''}" for i in range(len(feature_names))] + \
-#                                                                                                                                                 ["quat"] + \
-#                                                                                                                                                 [f"angle{i+1 if len(target_names) > 1 else ''}" for i in range(len(target_names))] + \
-#                                                                                                                                                 [f"trans{i+1 if len(trans_names) > 1 else ''}" for i in range(len(trans_names))]
 # dynamic index generation for translation data
 format_trans_cols = lambda idx: [f"x_{idx}", f"y_{idx}", f"z_{idx}"]
 
@@ -782,17 +777,143 @@ def genTrainingData(net_config: str, folder: str, post_proc: bool=False) -> None
     train_df.to_json(os.path.join(TRAIN_PTH, folder, f'{net_config}_{net_type}.json'), orient="index", indent=4)
     print("\nFinished dataset generation for", net_config, "with data columns:\n", train_cols)
 
-def genAllTrainingData() -> None:
+def genAllTrainingData(post_proc: bool) -> None:
     fl = os.path.join(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))), "cfg/net_config.yaml")
     with open(fl, 'r') as fr:
         config = yaml.safe_load(fr)
         for  c in config.keys():
-            genTrainingData(net_config=c, folder='config')
+            genTrainingData(net_config=c, folder='config_processed' if post_proc else 'config', post_proc=post_proc)
             print()
+
+def replaceNanData() -> None:
+    """Postproc data records by replacing nan values in detection and
+          keypoints. If a detection for a joint contains nans where the actuator
+          is not moved, we use the zero position values for replacement. 
+    """
+    # static data path
+    data_pth: str = os.path.join(DATA_PTH, f"keypoint/joined")
+
+    # load recordings
+    detection_dct: dict = readDetectionDataset(os.path.join(data_pth, 'detection.json'))  # contains nans
+    keypoints_dct: dict = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json'))       # contains nans
+
+    # load config
+    fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/post_proc.yaml")
+    with open(fl, 'r') as fr:
+        config = yaml.safe_load(fr)
+    
+    # map joint names to command 
+    # descriptions  in detection entries
+    descr_mapping = config['description_mapping']
+    # replacement values
+    joint_repl_values = config['joint_repl_values']
+    kpts_repl_values = config['kpts_repl_values']
+    # create keypoint processing index dictionary
+    kpts_repl_idxs = dict(zip(kpts_repl_values.keys(), [set() for _ in range(len(kpts_repl_values.keys()))]))
+
+    # process data joint-wise
+    for joint in detection_dct.keys():
+        print("\n\nProcessing", joint)
+        df = detection_dct[joint]
+        # find indices where all values are nan
+        nan_indices = df[df.isna().all(axis=1)].index
+        # break
+        if len(nan_indices) == 0:
+            print(joint, "data has no nans")
+            continue
+        # split into contiguous sequences
+        nan_seq = np.split(nan_indices, np.where(np.diff(nan_indices) != 1)[0] + 1)
+        print("Found", len(nan_seq), "sequences. Processing...")
+
+        for seq_idx, seq in enumerate(nan_seq):
+            # discard 1st entry
+            if seq[0] > 0:
+                # access row before 1st nan row
+                predecessor_idx = seq[0] -1
+                preceeding_row = df.loc[predecessor_idx]
+
+                # manipulate only entries where this joint is idle
+                if descr_mapping[joint] != preceeding_row['description']:
+                    # copy row and replace values
+                    rplc_row = preceeding_row.copy()
+                    rplc_row['cmd'] =  joint_repl_values[joint]['zero']['cmd']
+                    rplc_row['direction'] = -1.0 if preceeding_row['direction'] <= 0.0 else 1.0
+                    angle_dct = joint_repl_values[joint]['zero']['angle']
+                    # check for other cmd than zero
+                    if rplc_row['cmd'] != preceeding_row['cmd']:
+                        # only some joints possible
+                        if joint_repl_values[joint].get('moved') is not None:
+                            rplc_row['cmd'] =  joint_repl_values[joint]['moved']['cmd']
+                            angle_dct = joint_repl_values[joint]['moved']['angle']
+                            # must match
+                            if rplc_row['cmd'] != preceeding_row['cmd']:
+                                raise RuntimeError("Alt replacement cmd does not match predecessor cmd for {} at idx {}".format(joint, predecessor_idx))
+                        else:
+                            raise RuntimeError("Alt replacement cmd not found in config for {} at idx {}".format(joint, predecessor_idx))
+                        
+                    tcp = joint_repl_values[joint].get('tcp')
+                    for nan_idx in seq:
+                        # replace nan row
+                        df.loc[nan_idx] = rplc_row
+                        # randomize angle slightly
+                        df.loc[nan_idx, 'angle'] = np.random.uniform(angle_dct['min'], angle_dct['max'])
+                        # add index for keypoints
+                        if tcp is not None:
+                            kpts_repl_idxs[tcp].add(nan_idx)
+                    # if tcp is not None:
+                    #     print("Added", len(kpts_repl_idxs[tcp]), "indices to keypoint set for", tcp)
+                    
+                else:
+                    print(joint, "nan sequence:\n", seq_idx, "\nis actuated")
+                    
+            else:
+                raise RuntimeWarning("Cannot replace first element in data for {}".format(joint))
+
+        if joint == 'jointI1':
+            break 
+    
+    # process keypoints
+    for tcp, nan_indices in kpts_repl_idxs.items():
+        if len(nan_indices) == 0:
+            print(tcp, "has no keypoint nan indices")
+            continue
+
+        sorted_indices = sorted(nan_indices)
+        nan_seq = np.split(sorted_indices, np.where(np.diff(sorted_indices) != 1)[0] + 1)
+        print("\nProcessing", tcp, "with", len(sorted_indices), "indices and", len(nan_seq), "sequences")
+
+        df = keypoints_dct[tcp]
+        repl_noise = kpts_repl_values[tcp]['noise']
+        repl_trans = np.array(kpts_repl_values[tcp]['trans'], dtype=np.float32)
+        repl_rot = kpts_repl_values[tcp]['rot_mat'] # not used
+
+        # process sequences
+        for seq_idx, seq in enumerate(nan_seq):
+            # discard 1st entry
+            if seq[0] > 0:
+                # access row before 1st nan row
+                predecessor_idx = seq[0] -1
+                preceeding_row = df.loc[predecessor_idx]
+                print(tcp, predecessor_idx)
+                print(preceeding_row.loc['trans'])
+                print()
+        # for idx in nan_indices:
+        #     # add noise
+        #     df.loc[idx, 'trans'] = repl_trans + np.random.uniform(-repl_noise, repl_noise, (1, 3))
+        #     # add dummy values
+        #     df.loc[idx, 'rot_mat'] = repl_rot
+
+    # save processed detections
+    det_df = pd.DataFrame({joint: [df] for joint, df in detection_dct.items()})
+    det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"), orient="index", indent=4)
+    # save processed keypoints
+    kpt_df = pd.DataFrame({joint: [df] for joint, df in keypoints_dct.items()})
+    kpt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D.json"), orient="index", indent=4)
 
 if __name__ == "__main__":
     # img2Video(os.path.join(REC_DIR, "joined/det"), os.path.join(REC_DIR, "movies/detection.mp4"), fps=25)
     # mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
 
-    genAllTrainingData()
+    replaceNanData()
+    # genAllTrainingData(post_proc=False)

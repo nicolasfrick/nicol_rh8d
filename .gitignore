@@ -7,5 +7,6 @@ inventor/lockfile.lck
 *log
 datasets/detection/keypoint/detections
 datasets/detection/keypoint/joined
+datasets/detection/keypoint/post_processed
 datasets/detection/keypoint/train
 optuna_study.db
