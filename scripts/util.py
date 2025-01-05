@@ -1080,6 +1080,6 @@ if __name__ == "__main__":
 	# mosaicImg(3526, os.path.join(REC_DIR, 'joined/mosaic.jpg'))
 
 	# replaceNanData()
-	fkFromDetection()
-	# genAllTrainingData(post_proc=True)
+	# fkFromDetection()
 	# checkDataIntegrity()
+	genAllTrainingData(post_proc=True)
