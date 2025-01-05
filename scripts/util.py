@@ -866,33 +866,38 @@ def replaceNanData() -> None:
 	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"), orient="index", indent=4)
 	print("... done")
 
-def fk(joint_info_dict: dict, link_info_dict: dict, joint_angles: dict, robot_id: int, T_root_joint_world: np.ndarray) -> dict:
-	keypt_dict = {}
-
-	# base link pose
-	# base_pos, base_orn = pb.getBasePositionAndOrientation(robot_id)
-	
+def fk(joint_info_dict: dict, link_info_dict: dict, joint_angles: dict, robot_id: int, T_root_joint_world: np.ndarray, valid_entry: bool) -> dict:
 	# set detected angles
-	for joint, angle in joint_angles.items():
-		# revolute joint index
-		pb.resetJointState(robot_id, joint_info_dict[joint], angle)
+	if valid_entry:
+		for joint, angle in joint_angles.items():
+			# revolute joint index
+			pb.resetJointState(robot_id, joint_info_dict[joint], angle)
 
 	# get fk
+	keypt_dict = {}
 	for joint in joint_angles.keys():
-		# revolute joint's attached link
-		(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, joint_info_dict[joint], computeForwardKinematics=True)
-		# compute pose relative to root joint
-		T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
-		T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
-		keypt_dict.update( {joint: {'timestamp': 0.0, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
-		# additional fk for tip frame
-		if joint in link_info_dict.keys():
-			# end link attached to last fixed joint 
-			(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, link_info_dict[joint]['index'], computeForwardKinematics=True)
+		# non-nan entry
+		if valid_entry:
+			# revolute joint's attached link
+			(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, joint_info_dict[joint], computeForwardKinematics=True)
 			# compute pose relative to root joint
 			T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
 			T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
-			keypt_dict.update( {link_info_dict[joint]['fixed_end']: {'timestamp': 0.0, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
+			keypt_dict.update( {joint: {'timestamp': 0.0, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
+			# additional fk for tip frame
+			if joint in link_info_dict.keys():
+				# end link attached to last fixed joint 
+				(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, link_info_dict[joint]['index'], computeForwardKinematics=True)
+				# compute pose relative to root joint
+				T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
+				T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
+				keypt_dict.update( {link_info_dict[joint]['fixed_end']: {'timestamp': 0.0, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
+
+		# invalid entry
+		else:
+			keypt_dict.update( {joint: {'timestamp': np.nan, 'trans': np.nan, 'rot_mat': np.nan}} )
+			if joint in link_info_dict.keys():
+				keypt_dict.update( {link_info_dict[joint]['fixed_end']: {'timestamp': np.nan, 'trans': np.nan, 'rot_mat': np.nan}} )
 
 	return keypt_dict
 
@@ -955,24 +960,30 @@ def fkFromDetection() -> None:
 	"""
 
 	# init 
-	print("Init fk")
 	(joint_info_dict, link_info_dict, robot_id) = fkInit()
 	# inverse of rh8d base to root joint tf 
 	root_joint = list(joint_info_dict.keys())[0]
 	(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, joint_info_dict[root_joint], computeForwardKinematics=True)
 	(inv_trans, inv_quat) = invPersp(trans, quat, RotTypes.QUAT)
 	T_root_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
+	print("Init fk with root joint", root_joint, "root trans", trans, "root ori", getRotation(quat, RotTypes.QUAT, RotTypes.EULER))
 
+	joint_info_dict = {'joint7': 1, 'joint8': 2, 'jointI1': 10, 'jointI2': 11, 'jointI3': 12, 'jointM1': 14, 'jointM2': 15, 'jointM3': 16, 'jointR1': 18, 'jointR2': 19, 'jointR3': 20, 'jointL1': 22, 'jointL2': 23, 'jointL3': 24, 'jointT0': 5, 'jointT1': 6, 'jointT2': 7, 'jointT3': 8}
+	link_info_dict = {'joint8': {'index': 4, 'fixed_end': 'joint_r_laser'}, 'jointI3': {'index': 13, 'fixed_end': 'joint_Ibumper'}, 'jointM3': {'index': 17, 'fixed_end': 'joint_Mbumper'}, 'jointR3': {'index': 21, 'fixed_end': 'joint_Rbumper'}, 'jointL3': {'index': 25, 'fixed_end': 'joint_Lbumper'}, 'jointT3': {'index': 9, 'fixed_end': 'joint_Tbumper'}}
+	
 	# create dataset keys
-	keypt_keys = []
+	keypt_joint_keys = []
+	keypt_tcp_keys = []
 	for joint in joint_info_dict.keys():
-		keypt_keys.append(joint)
+		keypt_joint_keys.append(joint)
 		if joint in link_info_dict.keys():
-			keypt_keys.append(link_info_dict[joint]['fixed_end'])
+			keypt_tcp_keys.append(link_info_dict[joint]['fixed_end'])
+	keypt_joint_keys.extend(keypt_tcp_keys)
+
 	# data structures
-	keypt_df_dict = {joint:  pd.DataFrame(columns=['timestamp', 'trans', 'rot_mat']) for joint in keypt_keys} 
+	keypt_df_dict = {joint:  pd.DataFrame(columns=['timestamp', 'trans', 'rot_mat']) for joint in keypt_joint_keys} 
 	print("\nCreating datastructures for joints:")
-	print(keypt_keys)
+	print(keypt_joint_keys)
 
 	# load post-processed recordings
 	detection_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"))  # contains nans
@@ -982,31 +993,18 @@ def fkFromDetection() -> None:
 	(common_indices, all_indices) = findCommonIndicesAllJoints(detection_dct)
 
 	# iter whole detection
-	print("\nComputing fkfrom index ...")
+	print("\nComputing fk from index ...")
 	for idx in all_indices:
-		# valid entry
-		if idx in common_indices:
-			# collect all angles for fk
-			angle_dict = {}
-			for joint, df in detection_dct.items():
-				angle = df.loc[idx, 'angle']
-				assert(angle is not None)
-				angle_dict.update( {joint: angle} )
+		# collect all angles for fk
+		angle_dict = {}
+		for joint, df in detection_dct.items():
+			angle_dict.update( {joint: df.loc[idx, 'angle']} )
 
-			# compute keypoints
-			keypt_dict = fk(joint_info_dict, link_info_dict, angle_dict, robot_id, T_root_joint_world)
-			# add to results
-			for joint, keypt in keypt_dict.items():
-				keypt_df_dict[joint] = pd.concat([keypt_df_dict[joint], pd.DataFrame([keypt])], ignore_index=True) 
-
-		# invalid entry
-		else:
-			# nan rows
-			for joint in joint_info_dict.keys():
-				keypt_df_dict[joint] = pd.concat([keypt_df_dict[joint], pd.DataFrame([{joint: {'timestamp': 0.0, 'trans': np.nan, 'rot_mat': np.nan}}])], ignore_index=True) 
-				if joint in link_info_dict.keys():
-					link = link_info_dict[joint]['fixed_end']
-					keypt_df_dict[link] = pd.concat([keypt_df_dict[link], pd.DataFrame([{link: {'timestamp': 0.0, 'trans': np.nan, 'rot_mat': np.nan}}])], ignore_index=True) 
+		# compute keypoints
+		keypt_dict = fk(joint_info_dict, link_info_dict, angle_dict, robot_id, T_root_joint_world, idx in common_indices)
+		# add to results
+		for joint, keypt in keypt_dict.items():
+			keypt_df_dict[joint] = pd.concat([keypt_df_dict[joint], pd.DataFrame([keypt])], ignore_index=True) 
 
 		print(f"\r{idx:5}", end="", flush=True)
 
@@ -1014,6 +1012,67 @@ def fkFromDetection() -> None:
 	print("\ndone. Saving...")
 	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
 	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D.json"), orient="index", indent=4)
+	pb.disconnect()
+	
+def checkDataIntegrity() -> None:
+
+	# init 
+	(joint_info_dict, link_info_dict, robot_id) = fkInit()
+	# inverse of rh8d base to root joint tf 
+	root_joint = list(joint_info_dict.keys())[0]
+	(_, _, _, _, trans, quat) = pb.getLinkState(robot_id, joint_info_dict[root_joint], computeForwardKinematics=True)
+	(inv_trans, inv_quat) = invPersp(trans, quat, RotTypes.QUAT)
+	T_root_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
+	print("Init fk with root joint", root_joint, "root trans", trans, "root ori", getRotation(quat, RotTypes.QUAT, RotTypes.EULER))
+
+	joint_info_dict = {'joint7': 1, 'joint8': 2, 'jointI1': 10, 'jointI2': 11, 'jointI3': 12, 'jointM1': 14, 'jointM2': 15, 'jointM3': 16, 'jointR1': 18, 'jointR2': 19, 'jointR3': 20, 'jointL1': 22, 'jointL2': 23, 'jointL3': 24, 'jointT0': 5, 'jointT1': 6, 'jointT2': 7, 'jointT3': 8}
+	link_info_dict = {'joint8': {'index': 4, 'fixed_end': 'joint_r_laser'}, 'jointI3': {'index': 13, 'fixed_end': 'joint_Ibumper'}, 'jointM3': {'index': 17, 'fixed_end': 'joint_Mbumper'}, 'jointR3': {'index': 21, 'fixed_end': 'joint_Rbumper'}, 'jointL3': {'index': 25, 'fixed_end': 'joint_Lbumper'}, 'jointT3': {'index': 9, 'fixed_end': 'joint_Tbumper'}}
+
+	# load data
+	detection_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/joined/detection.json"))
+	pp_detection_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"))
+	keypoints_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/joined/kpts3D.json"))
+	
+	print("\norig cols", list(detection_dct.keys()))
+	print("pp cols", list(pp_detection_dct.keys()))
+	print()
+
+	for joint, df in detection_dct.items():
+		assert(detection_dct[joint].index[-1] == pp_detection_dct[joint].index[-1])
+
+	print("Checking index...")
+	for idx in detection_dct[root_joint].index.tolist():
+		nan_list = []
+		angle_dict = {}
+		pp_angle_dict = {}
+		for joint, df in detection_dct.items():
+			angle = df.loc[idx, 'angle']
+			angle_dict.update( {joint: angle} )
+			pp_angle = pp_detection_dct[joint].loc[idx, 'angle']
+			pp_angle_dict.update( {joint: angle} )
+			if np.isnan(angle):
+				nan_list.append(joint)
+			else:
+				assert( np.isclose(angle, pp_angle))
+
+		if len(nan_list) > 0:
+			# print(idx, "has nans for", nan_list)
+			continue
+
+		# compute keypoints
+		keypt_dict = fk(joint_info_dict, link_info_dict, angle_dict, robot_id, T_root_joint_world)
+		pp_keypt_dict = fk(joint_info_dict, link_info_dict, pp_angle_dict, robot_id, T_root_joint_world)
+		# add to results
+		for joint, keypt in keypt_dict.items():
+			if 'bumper' in joint or 'laser' in joint:
+				if not np.allclose(keypt["trans"], pp_keypt_dict[joint]["trans"]):
+					print(joint, "trans", keypt["trans"], "pp_trans", pp_keypt_dict[joint]["trans"])
+				# if not np.allclose(keypt["trans"], keypoints_dct[joint].loc[idx, "trans"]):
+				# 	print(idx, joint, "has keypoint", keypt["trans"], "data keypoint", keypoints_dct[joint].loc[idx, "trans"])
+		
+		print(f"\r{idx:5}", end="", flush=True)
+
+	print("\nDone")
 	pb.disconnect()
 
 if __name__ == "__main__":
@@ -1023,3 +1082,4 @@ if __name__ == "__main__":
 	# replaceNanData()
 	fkFromDetection()
 	# genAllTrainingData(post_proc=True)
+	# checkDataIntegrity()

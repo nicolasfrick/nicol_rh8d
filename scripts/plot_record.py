@@ -227,7 +227,7 @@ def plotTrainingData(data_pth: str, save_pth: str=None, grid: bool=True, show: b
 	if save_pth is not None:
 		fig.savefig(save_pth, format='svg')
 	if show:
-	    plt.show()
+		plt.show()
 
 def plotTrainingDataLogScale(file_pth: str) -> None:
 	matplotlib.use('TkAgg') 
@@ -256,13 +256,14 @@ def plotTrainingDataLogScale(file_pth: str) -> None:
 	plt.grid()
 	plt.show()
 	
-def plotKeypoints(net: str, start: int=0, end: int=10000) -> None:
+def plotKeypoints(start: int=0, end: int=10000, plt_pp: bool=False) -> None:
 	# load keypoints
-	data_pth = os.path.join(DATA_PTH, 'keypoint/joined')
-	keypoints_dct = readDetectionDataset(os.path.join(data_pth, 'kpts3D.json')) 
+	keypoints_dct = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/joined/kpts3D.json')) 
+	if plt_pp:
+		pp_keypoints_dct = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/post_processed/kpts3D.json')) 
 	# get tcp name
-	cfg = loadNetConfig('finger')
-	tcp = cfg[net]['relative_to']
+	cfg = loadNetConfig('index_flexion')
+	tcp = cfg['relative_to']
 
 	# plot data
 	cv2.namedWindow("Keypoints", cv2.WINDOW_NORMAL)
@@ -293,7 +294,30 @@ def plotKeypoints(net: str, start: int=0, end: int=10000) -> None:
 					T_tcp_keypt = T_tcp_root @ T_root_keypt 
 					keypt_dict.update( {joint: {'trans': T_tcp_keypt[:3, 3], 'rot_mat': T_tcp_keypt[:3, :3], 'color': 'b'}} )
 
-			buffer = keypt_plot.plotKeypoints(keypt_dict, tcp, pause=0.1, line=False, elev=10, azim=10)
+			buffer = keypt_plot.plotKeypoints(keypt_dict, tcp, pause=0.0 if plt_pp else 0.1, line=False, elev=10, azim=10)
+			
+			# plot 2nd data
+			if plt_pp:
+				keypt_dict = {}
+
+				# get keypoint tcp as root tf
+				tcp_trans = pp_keypoints_dct[tcp].loc[idx, 'trans']
+				tcp_rot_mat =  pp_keypoints_dct[tcp].loc[idx, 'rot_mat']
+				if tcp_trans is None or tcp_rot_mat is None:
+					continue
+				(inv_tcp_trans, inv_tcp_rot_mat) = invPersp(tcp_trans, tcp_rot_mat, RotTypes.MAT)
+				T_tcp_root = pose2Matrix(inv_tcp_trans, inv_tcp_rot_mat, RotTypes.MAT)
+
+				for joint in pp_keypoints_dct:
+					trans = pp_keypoints_dct[joint].loc[idx, 'trans']
+					rot_mat =  pp_keypoints_dct[joint].loc[idx, 'rot_mat']
+					if trans is not None and rot_mat is not None and joint not in ['joint7', 'joint8']:
+						T_root_keypt = pose2Matrix(np.array(trans), np.array(rot_mat), RotTypes.MAT) 
+						T_tcp_keypt = T_tcp_root @ T_root_keypt 
+						keypt_dict.update( {joint: {'trans': T_tcp_keypt[:3, 3], 'rot_mat': T_tcp_keypt[:3, :3], 'color': 'b'}} )
+
+				buffer = keypt_plot.plotKeypoints(keypt_dict, tcp, pause=0.1, line=False, elev=10, azim=10)
+
 			cv2.imshow("Keypoints", cv2.cvtColor(buffer, cv2.COLOR_RGBA2BGR))
 			if cv2.waitKey(1) == 'q':
 				return
@@ -312,5 +336,5 @@ def plotAllTrainingData(save: bool=False) -> None:
 		plotTrainingData(dfile, sfile)
 
 if __name__ == "__main__":
-	# plotKeypoints('index_flexion', 0, 1000)
-	plotAllTrainingData()
+	plotKeypoints(0, 1000, True)
+	# plotAllTrainingData()
