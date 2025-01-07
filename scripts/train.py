@@ -3,6 +3,7 @@
 import os
 import json
 import glob
+import yaml
 import torch
 import joblib
 import optuna
@@ -12,6 +13,7 @@ import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
 import lightning.pytorch as pl
+from sklearn.utils import shuffle
 from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
 from typing import Optional, Union, Tuple, List, Any
@@ -56,6 +58,8 @@ class TrainingData():
 						@type bool
 						@param kfold
 						@type int
+						@param full_set
+						@type bool
 
 		"""
 
@@ -69,6 +73,7 @@ class TrainingData():
 								 target_norm: Optional[Normalization] = Normalization.Z_SCORE,
 								 move_gpu: Optional[bool] = False,
 								 kfold: Optional[int] = 0,
+								 full_set: Optional[bool] = False,
 								 ) -> None:
 
 				assert(isinstance(random_state, int)) # requires int
@@ -97,6 +102,7 @@ class TrainingData():
 				self.input_norm = input_norm
 				self.target_norm = target_norm
 				self.move_gpu = move_gpu
+				self.full_set = full_set
 
 				# input data
 				self.X_quats = None # single
@@ -118,7 +124,7 @@ class TrainingData():
 				self.y_test_tensor = None
 				self.y_val_tensor = None
 				# kfold 
-				self.use_kfold = kfold > 1
+				self.use_kfold = kfold > 1 and not full_set
 				self.num_folds = kfold
 				self.train_index = None
 				self.val_index = None
@@ -168,6 +174,9 @@ class TrainingData():
 					(self.train_index, self.val_index) = ([t[0] for t in index_tuples], [t[1] for t in index_tuples])
 					# print info
 					print(f"Splitted {self.num_samples} samples into {len(self.X_train)} ({100*(1-self.test_size)}%) training and {len(self.X_test_tensor)} ({100*self.test_size}%) test samples for cross validation")
+				elif self.full_set:
+					self.fullTrainingSet(X, y)
+					print(f"Prepared {self.num_samples} (100%) samples for final training.")
 				else:
 					# split, normalize and move data
 					self.splitData3WayHoldout(X, y)
@@ -248,6 +257,30 @@ class TrainingData():
 				self.num_samples = len(X)
 
 				return X, y
+		
+		def fullTrainingSet(self, X: np.ndarray, y: np.ndarray) -> None:
+				"""Normalize, shuffle data and prepare for training. No
+					  splitting.
+				"""
+				# shuffle 
+				(X_train, y_train) = shuffle(X, y, random_state=self.random_state)
+
+				# normalize 
+				self.normalizeTrainData(X_train, y_train)
+				# save scalers
+				self.saveScalers()
+
+				# map to tensors
+				self.X_train_tensor = torch.from_numpy(X_train).float()
+				self.y_train_tensor = torch.from_numpy(y_train).float()
+				# empty validation set
+				self.X_val_tensor =  torch.from_numpy(np.array([], dtype=np.float32)).float()
+				self.y_val_tensor = torch.from_numpy(np.array([], dtype=np.float32)).float()
+
+				# move to gpu
+				if self.move_gpu:
+						self.X_train_tensor = self.X_train_tensor.to(DEVICE)
+						self.y_train_tensor = self.y_train_tensor.to(DEVICE)
 
 		def splitData3WayHoldout(self, X: np.ndarray, y: np.ndarray) -> None:
 				"""Split features X and targets y into a  train, test and validation set, 
@@ -469,10 +502,12 @@ class TrainingData():
 				scaled_values = scaler.fit_transform(data)
 				return scaler, scaled_values
 
+		@classmethod
 		def scaleInputOutputData(self, scaler: Union[MinMaxScaler, StandardScaler], data: np.ndarray) -> np.ndarray:
 				normalized_data = scaler.transform(data)
 				return normalized_data
-
+		
+		@classmethod
 		def denormalizeOutputData(self, scaler: Union[MinMaxScaler, StandardScaler], data: np.ndarray) -> np.ndarray:
 				denormalized_data = scaler.inverse_transform(data)
 				return denormalized_data
@@ -497,6 +532,7 @@ class TrainingData():
 				self.y_angles_scalers.clear()
 				self.y_trans_scalers.clear()
 
+		@classmethod
 		def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
 				scaler = joblib.load(pth)
 				return scaler
@@ -585,6 +621,9 @@ class WrappedMLP(pl.LightningModule):
 								 dropout_rate: Union[None, float],
 								 lr: float,
 								 weight_decay: float,
+								 batch_size: int, # for logging only
+								 feature_names: list, # for logging only
+								 target_names: list, # for logging only
 								 ) -> None:
 
 				super().__init__()
@@ -926,6 +965,9 @@ class Trainer():
 																dropout_rate=dropout_rate,
 																lr=learning_rate,
 																weight_decay=weight_decay,
+																batch_size=batch_size,
+																feature_names=self.td.feature_names,
+																target_names=self.td.target_names,
 																)
 
 					# inst. logger
@@ -1008,6 +1050,68 @@ class Trainer():
 				res = test_trainer.test(model, datamodule=data_module, ckpt_path=model_chkpt)
 
 				return res[0]['test_loss'], model_chkpt
+		
+		def finalize(self, hparams: dict) -> Any:
+			num_layers = hparams['num_layers']
+			hidden_dim = hparams['hidden_dim']
+			learning_rate = hparams['lr']
+			dropout_rate = hparams['dropout_rate']
+			weight_decay = hparams['weight_decay']
+			batch_size = hparams['batch_size']
+
+			# prep data
+			data_module = MLPDataModule(td=self.td,
+																			batch_size=batch_size,
+																			bgd = self.bgd,
+																			)
+
+			# instantiate the model
+			model = self.ModelType(input_dim=self.td.num_features,
+															hidden_dim=hidden_dim,
+															output_dim=self.td.num_targets,
+															num_layers=num_layers,
+															dropout_rate=dropout_rate,
+															lr=learning_rate,
+															weight_decay=weight_decay,
+															batch_size=batch_size,
+															feature_names=self.td.feature_names,
+															target_names=self.td.target_names,
+															)
+
+			# inst. logger
+			logger = TensorBoardLogger(self.log_pth, name=f"final_hidden_{hidden_dim}_layers_{num_layers}_lr_{learning_rate:.4f}".replace(".", "_"),)
+
+			# automatic checkpointing
+			self.checkpoint_callback.filename = f'final_best_model_{{epoch:02d}}_{{train_loss:.3f}}'
+			# create callback list
+			cbs = [self.checkpoint_callback] if self.save_chkpts else []
+
+			if self.mdelta_estop > -1.0:
+				# add early stopping
+				cbs.append(self.estop_callback)
+
+			# train
+			trainer = pl.Trainer(max_epochs=self.epochs,
+													logger=logger,
+													log_every_n_steps=1,
+													callbacks=cbs,
+													enable_progress_bar=self.pbar,
+													enable_checkpointing=self.save_chkpts,
+													limit_val_batches=0,
+													devices=1,
+													strategy='auto',
+													precision="16-mixed" if str(DEVICE) != 'cpu' else 'bf16-mixed',
+													accelerator="auto",
+													enable_model_summary=True,
+													benchmark=True,
+													inference_mode=False,
+													)
+					
+			trainer.fit(model, datamodule=data_module)
+					
+			res = trainer.callback_metrics[self.metric].item()
+
+			return res
 				
 		def plainObjective(self, trial: optuna.Trial) -> Any:
 				"""	Train with batch gradient descent, manual checkpointing and
@@ -1126,6 +1230,8 @@ class Train():
 				@type bool
 				@param distribute
 				@type bool
+				@param final_train_pth
+				@type str
 
 		"""
 
@@ -1155,6 +1261,7 @@ class Train():
 								 mdelta_estop: Optional[float] = 0,
 								 kfold: Optional[int] = 0,
 								 save_chkpts: Optional[bool] = True,
+								 final_train_pth: Optional[str] = '',
 								 ) -> None:
 
 				# load training data per configuration
@@ -1186,13 +1293,54 @@ class Train():
 				self.kfold = kfold
 				self.save_chkpts = save_chkpts
 				self.log = {}
+				self.final_train_pth = final_train_pth
 
 		def run(self) -> None:
-				for fl in self.data_files:
-						if self.distribute:
-								self.runPlStudy(fl)
-						else:
-								self.runPlainStudy(fl)
+				# train final model weights
+				if self.final_train_pth != '':
+					self.trainFinalModel()
+				# optimize
+				else:
+					for fl in self.data_files:
+							if self.distribute:
+									self.runPlStudy(fl)
+							else:
+									self.runPlainStudy(fl)
+
+		def trainFinalModel(self) -> None:
+			assert(os.path.exists(self.final_train_pth)) # hparam dict required
+			assert(len(self.data_files) == 1) # only 1 file supported
+			assert(self.distribute) # lightning required
+
+			# load hyperparams
+			with open(self.final_train_pth, 'r') as fr:
+				hparams = yaml.safe_load(fr)
+
+			td = TrainingData(data_file=self.data_files[0],
+												test_size=0,
+												validation_size=0,
+												random_state=self.random_state,
+												trans_norm=self.trans_norm,
+												input_norm=self.input_norm,
+												target_norm=self.target_norm,
+												move_gpu=False,
+												kfold=0,
+												full_set=True,
+												)
+
+			trainer = Trainer(td=td,
+												epochs=self.epochs,
+												model_type=WrappedMLP,
+												pbar=self.lightning_pbar,
+												bgd=self.bgd,
+												mdelta_estop=self.mdelta_estop,
+												save_chkpts=self.save_chkpts,
+												metric='train_loss',
+												)
+			
+			res = trainer.finalize(hparams)
+
+			print("Finished training with loss", res)
 
 		def runPlStudy(self, file_pth: str) -> None:
 				print(f"\n{50*'#'}")
@@ -1421,6 +1569,7 @@ if __name__ == '__main__':
 		train_group.add_argument('--lightning_pbar', action='store_true', help='Show Lightnings detailed progessbar (req. --distribute).')
 		train_group.add_argument('--save_chkpts', action='store_true', help='Save model checkpoints.')
 		train_group.add_argument('--y', action='store_true', help='Discard asking for data cleaning and continue with training after cleanup.')
+		train_group.add_argument('--final_train_pth', type=str, help='Path to "optimization_results.json" specifying hparams. If specified, a model will be trained with the whole dataset.', default='')
 		args = parser.parse_args()
 
 		# clean opt. data
@@ -1457,4 +1606,5 @@ if __name__ == '__main__':
 					mdelta_estop=args.mdelta_estop,
 					kfold=args.kfold,
 					save_chkpts=args.save_chkpts,
+					final_train_pth=args.final_train_pth,
 					).run()
