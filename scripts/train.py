@@ -984,6 +984,7 @@ class Trainer():
 
 				# instantiate the model
 				model_chkpt = self.checkpoint_callback.best_model_path
+				# not necessarily from best trial
 				model = self.ModelType.load_from_checkpoint(model_chkpt)
 
 				test_logger = TensorBoardLogger(self.test_log_pth,
