@@ -13,6 +13,7 @@ import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
 import lightning.pytorch as pl
+from sklearn.utils import shuffle
 from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
 from typing import Optional, Union, Tuple, List, Any
@@ -262,8 +263,7 @@ class TrainingData():
 					  splitting.
 				"""
 				# shuffle 
-				(X_train, X_tmp, y_train, y_tmp) = train_test_split(X, y, test_size=0, shuffle=False if self.random_state == 0 else True, random_state=self.random_state)
-				assert(len(X_tmp) == 0 and len(y_tmp) == 0)
+				(X_train, y_train) = shuffle(X, y, random_state=self.random_state)
 
 				# normalize 
 				self.normalizeTrainData(X_train, y_train)
@@ -274,8 +274,8 @@ class TrainingData():
 				self.X_train_tensor = torch.from_numpy(X_train).float()
 				self.y_train_tensor = torch.from_numpy(y_train).float()
 				# empty validation set
-				self.X_val_tensor = np.array([], dtype=np.float32)
-				self.y_val_tensor = np.array([], dtype=np.float32)
+				self.X_val_tensor =  torch.from_numpy(np.array([], dtype=np.float32)).float()
+				self.y_val_tensor = torch.from_numpy(np.array([], dtype=np.float32)).float()
 
 				# move to gpu
 				if self.move_gpu:
@@ -622,6 +622,8 @@ class WrappedMLP(pl.LightningModule):
 								 lr: float,
 								 weight_decay: float,
 								 batch_size: int, # for logging only
+								 feature_names: list, # for logging only
+								 target_names: list, # for logging only
 								 ) -> None:
 
 				super().__init__()
@@ -963,6 +965,9 @@ class Trainer():
 																dropout_rate=dropout_rate,
 																lr=learning_rate,
 																weight_decay=weight_decay,
+																batch_size=batch_size,
+																feature_names=self.td.feature_names,
+																target_names=self.td.target_names,
 																)
 
 					# inst. logger
@@ -1068,6 +1073,8 @@ class Trainer():
 															lr=learning_rate,
 															weight_decay=weight_decay,
 															batch_size=batch_size,
+															feature_names=self.td.feature_names,
+															target_names=self.td.target_names,
 															)
 
 			# inst. logger
@@ -1328,7 +1335,6 @@ class Train():
 												mdelta_estop=self.mdelta_estop,
 												save_chkpts=self.save_chkpts,
 												metric='train_loss',
-												finalize=True,
 												)
 			
 			res = trainer.finalize(hparams)

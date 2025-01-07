@@ -1,6 +1,7 @@
 import os
 import re
 import cv2
+import json
 import glob
 import yaml
 import subprocess
@@ -168,8 +169,6 @@ def parseIntTuple(value: str) -> Union[None, Tuple]:
 	if not ',' in value:
 		return None
 	t = tuple(map(int, value.split(',')))
-	# if len(t) != 3:
-	#     raise ValueError
 	return t
 
 
@@ -177,8 +176,6 @@ def parseFloatTuple(value: str) -> Union[None, Tuple]:
 	if not ',' in value:
 		return None
 	t = tuple(map(float, value.split(',')))
-	# if len(t) != 3:
-	#     raise ValueError
 	return t
 
 
@@ -187,6 +184,9 @@ def parseNorm(value: str) -> Normalization:
 		raise ValueError
 	return NORMALIZATION_MAP[value]
 
+def parseDict(value: str) -> dict:
+	assert('{' in value and '}' in value)
+	return json.loads(value)
 
 def getRotation(rot: np.ndarray, rot_type: RotTypes, out_type: RotTypes) -> np.ndarray:
 	if rot_type == out_type:
