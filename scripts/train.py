@@ -13,6 +13,7 @@ import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
 import lightning.pytorch as pl
+from torchmetrics import R2Score
 from sklearn.utils import shuffle
 from optuna.trial import FrozenTrial
 from optuna.storages import RDBStorage
@@ -165,7 +166,7 @@ class TrainingData():
 
 				# stack training data
 				(X, y) = self.stackData()
-				print("Loaded features", self.feature_names, "and targets", self.target_names, f"to device: {DEVICE}" if self.move_gpu else "")
+				print("\nLoaded features", self.feature_names, "\nand targets", self.target_names, f"to device: {DEVICE}" if self.move_gpu else "")
 
 				if self.use_kfold:
 					self.splitDataKFold(X, y)
@@ -173,7 +174,7 @@ class TrainingData():
 					index_tuples =  list(self.kf.split(self.X_train, self.y_train))
 					(self.train_index, self.val_index) = ([t[0] for t in index_tuples], [t[1] for t in index_tuples])
 					# print info
-					print(f"Splitted {self.num_samples} samples into {len(self.X_train)} ({100*(1-self.test_size)}%) training and {len(self.X_test_tensor)} ({100*self.test_size}%) test samples for cross validation")
+					print(f"\nSplitted {self.num_samples} samples into {len(self.X_train)} ({100*(1-self.test_size)}%) training and {len(self.X_test_tensor)} ({100*self.test_size}%) test samples for cross validation")
 				elif self.full_set:
 					self.fullTrainingSet(X, y)
 					print(f"Prepared {self.num_samples} (100%) samples for final training.")
@@ -181,10 +182,10 @@ class TrainingData():
 					# split, normalize and move data
 					self.splitData3WayHoldout(X, y)
 					# print info
-					print(f"Splitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.validation_size)}%),")
+					print(f"\nSplitted {self.num_samples} samples into {len(self.X_train_tensor)} training ({100*(1-self.validation_size)}%),")
 					print(f"{len(self.X_test_tensor)} test ({100*self.validation_size*self.test_size}%) and {len(self.X_val_tensor)} validation ({100*self.validation_size - (100*self.validation_size*self.test_size)}%) samples")
 				
-				print(f"Command features normalization: {self.input_norm.value}, translation target normalization: {self.trans_norm.value}, angle target normalization: {self.target_norm.value}")
+				print(f"\nCommand features normalization: {self.input_norm.value}, translation target normalization: {self.trans_norm.value}, angle target normalization: {self.target_norm.value}")
 
 		def loadData(self, df: pd.DataFrame, cols: list) -> None:
 			"""Fill datastructures with traning data.
@@ -610,6 +611,8 @@ class WrappedMLP(pl.LightningModule):
 						@type float
 						@property weight_decay
 						@type float
+						@param log_on_step
+						@param bool
 
 		"""
 
@@ -624,6 +627,7 @@ class WrappedMLP(pl.LightningModule):
 								 batch_size: int, # for logging only
 								 feature_names: list, # for logging only
 								 target_names: list, # for logging only
+								 log_on_step: bool=True,
 								 ) -> None:
 
 				super().__init__()
@@ -637,10 +641,18 @@ class WrappedMLP(pl.LightningModule):
 
 				# auto save hparams
 				self.save_hyperparameters()
+				# score
+				self.r2_score = R2Score()
+				self.cum_r2_score = []
 				# loss
 				self.loss_fn = nn.MSELoss()
+				self.cum_train_loss = []
+				self.cum_val_loss = []
 				# test stage
-				self.test_loss = []
+				self.cum_test_loss = []
+
+				# log per step
+				self.log_on_step = log_on_step
 
 		# overwrite
 		def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -650,34 +662,65 @@ class WrappedMLP(pl.LightningModule):
 		def training_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
+
 				loss = self.loss_fn(preds, y)
-				self.log('train_loss', loss.item(), on_step=False,
-								 on_epoch=True, prog_bar=True, sync_dist=True, )
+				self.cum_train_loss.append(loss.item())
+
+				if self.log_on_step:
+					self.log('step_train_loss', loss.item(), on_step=False,
+									on_epoch=True, prog_bar=True, sync_dist=True, )
+
 				return loss
+		
+		def on_train_epoch_end(self) -> None:
+			tb_log = {"train_loss": np.mean(self.cum_train_loss), "step": self.current_epoch}
+			self.log_dict(tb_log)
 
 		# overwrite
 		def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
+
 				val_loss = self.loss_fn(preds, y)
-				self.log('val_loss', val_loss.item(), on_step=False,
-								 on_epoch=True, prog_bar=False, sync_dist=True, )
-				self.log("hp_metric", val_loss.item(), on_step=False, on_epoch=True, sync_dist=True, )
+				self.cum_val_loss.append(val_loss.item())
+
+				r2 = self.r2_score(preds, y)
+				self.cum_r2_score.append(r2.item())
+
+				if self.log_on_step:
+					self.log('step_val_loss', val_loss.item(), on_step=False,
+									on_epoch=True, prog_bar=False, sync_dist=True, )
+					self.log('step_r2_score', r2.item(), on_step=False,
+									on_epoch=True, prog_bar=False, sync_dist=True, )
+					self.log("step_hp_metric", val_loss.item(), on_step=False, 
+			  					on_epoch=True, prog_bar=False, sync_dist=True, )
+					
 				return val_loss
+		
+		def on_validation_epoch_end(self) -> None:
+			cvl = np.mean(self.cum_val_loss)
+			tb_log = {"val_loss": cvl, 
+			 					"hp_metric": cvl,
+			 					"r2_score": np.mean(self.cum_r2_score), 
+								"step": self.current_epoch}
+			self.log_dict(tb_log)
 		
 		# overwrite
 		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
+
 				test_loss = self.loss_fn(preds, y)
-				# for final evaluation
-				self.test_loss.append(test_loss.item())
-				self.log('step_test_loss', test_loss.item(), on_step=True,
-								 on_epoch=False, prog_bar=True, sync_dist=False, )
+				self.cum_test_loss.append(test_loss.item())
+
+				if self.log_on_step:
+					self.log('step_test_loss', test_loss.item(), on_step=True,
+									on_epoch=False, prog_bar=False, sync_dist=False, )
+					
 				return test_loss
 
 		def on_test_epoch_end(self) -> None:
-				self.log_dict( {'test_loss': np.mean(self.test_loss)} )
+				self.log_dict( {'test_loss': np.mean(self.cum_test_loss), "step": self.current_epoch} )
 
 		# overwrite
 		def configure_optimizers(self) -> optim.Optimizer:
@@ -888,7 +931,7 @@ class Trainer():
 																							min_delta=self.mdelta_estop,     
 																							)
 
-				print(f"Initialized Trainer for {td.name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
+				print(f"\nInitialized Trainer for {td.name}. \nConsider running:  tensorboard --logdir={MLP_LOG_PTH}\n")
 				if self.save_chkpts:
 					print("Saving checkpoints in directory", self.chkpt_path)
 				else:
@@ -910,7 +953,7 @@ class Trainer():
 				learning_rate = trial.suggest_float('learning_rate',
 																						low=self.learning_rate[self.LOW],
 																						high=self.learning_rate[self.HIGH],
-																						step=self.learning_rate[self.STEP] if not self.log_domain else 1,
+																						step=self.learning_rate[self.STEP] if not self.log_domain else None,
 																						log=self.log_domain,
 																						)
 				dropout_rate = None if self.dropout_rate is None \
@@ -947,7 +990,7 @@ class Trainer():
 					fmt_str = f'_fold_{fold}' if self.td.use_kfold else ''
 					
 					if self.td.use_kfold and self.pbar:
-						print(f"/nrunning trial_{trial.number}{fmt_str}, hidden: {hidden_dim}, layers:{num_layers}, lr:{learning_rate:.4f}, batch size: {batch_size}, dropout: {dropout_rate}, weight decay: {weight_decay}")
+						print(f"\nrunning trial_{trial.number}{fmt_str}, hidden: {hidden_dim}, layers:{num_layers}, lr:{learning_rate:.4f}, batch size: {batch_size}, dropout: {dropout_rate}, weight decay: {weight_decay}")
 
 
 					# prep data
@@ -1005,6 +1048,8 @@ class Trainer():
 					trainer.fit(model, datamodule=data_module)
 					
 					res = trainer.callback_metrics[self.metric].item()
+					print(f"{self.metric}{fmt_str}:", res)
+					assert(not np.isnan(res))
 					loss_lst.append(res)
 				
 				if self.td.use_kfold and self.pbar:
