@@ -129,10 +129,10 @@ class InferMLP():
 			  from actuator angles, direction and eef orientation.
 
 							                [quaternions, actuator commands, direction of rotations]
-			  @param input: [x, y, z, w, joint7, joint8, jointT0, jointT1, jointI1, jointM1, jointL1R1, dirT0, dirT1, dirI1, dirM1, dirL1R1]
+			  @param input [x, y, z, w, joint7, joint8, jointT0, jointT1, jointI1, jointM1, jointL1R1, dirT0, dirT1, dirI1, dirM1, dirL1R1]
 			  @type dict
 			  								  [translations, joint angles]
-			  @param output [x_T, y_T, z_T, x_I, y_I, z_I, x_M, y_M, z_M, x_R, y_R, z_R, x_L, y_L, z_L, 
+			  @param output [transT, transI, transM, transR, transL, 
 			  								   angle7, angle8, angleT0, angleT1, angleT2, angleT3, angleI1, angleI2, angleI3, 
 											   angleM1, angleM2, angleM3, angleR1, angleR2, angleR3, angleL1, angleL2, angleL3]
 			  @type dict

@@ -1,0 +1,81 @@
+<launch>
+
+	<arg name="checkpoint_path" default="" doc="Relative to MLP_CHKPT_PTH"/>
+	<arg name="scalers_path" default="" doc="Relative to MLP_SCLRS_PTH"/>
+	<arg name="base_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d base in meter"/>
+	<arg name="base_rot" default="[0,0,0]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles"/>
+
+	<!-- set params as in dataset_cameras.launch -->
+	<arg name="use_markers_camera"  default="true" />
+	<arg name="use_realsense"  default="true" />
+	<arg name="markers_camera_name" default="markers_camera" />
+    <arg name="fps"             default="30" />
+	<arg name="enable_depth"        default="false"/>
+
+	<arg name="actuator_state_topic" default="/right/open_manipulator_p/actuator_states" />
+	<arg name="waypoint_set"  default="randomized_set.json" />
+	<arg name="waypoint_start_idx"  default="0" />
+    <arg name="attached"      default="false"/>
+	<arg name="vis" default="true" />
+	<arg name="save_imgs" default="true" />
+	<arg name="f_ctrl" default="30" /> 
+	<arg name="debug" default="false" /> 
+	<arg name="test" default="false" /> 
+	<arg name="use_tf" default="false" /> 
+	<arg name="rh8d_port" default="/dev/ttyUSB0" />
+	<arg name="rh8d_baud" default="1000000" />
+	<arg name="epochs" default="1" /> 
+
+	<!-- detector params -->
+	<arg name="marker_length" default="0.01" />
+	<arg name="use_reconfigure" default="false" />
+	<arg name="filter" default="median" doc="Filter marker pose detections. One of ['none', 'mean', 'median', 'kalman_simple', 'kalman']"/>
+	<arg name="filter_iters" default="5" />
+
+	<!-- model args -->
+	<arg name="load_marker_cam_model" default="false"/>
+	<arg name="theta"      default="0" doc="Angle of wrist part wrt. z axis of link6"/>
+    <arg name="x_dist"      default="-0.3527" doc="Distance along x axis"/>
+	<arg name="y_dist"      default="0.01245" doc="Distance along y axis"/>
+    <arg name="z_dist"      default="0.2406" doc="Distance along z axis"/>
+	<arg name="launch_rviz"      default="false"/>
+
+	<include if="$(arg load_marker_cam_model)" file="$(find nicol_rh8d)/launch/marker_cam_model.launch">
+		<arg name="theta"      value="$(arg theta)"/>
+		<arg name="x_dist"      value="$(arg x_dist)" />
+		<arg name="y_dist"      value="$(arg y_dist)" />
+		<arg name="z_dist"      value="$(arg z_dist)" />
+		<arg name="attached" 	value="$(arg attached)"/>
+		<arg name="launch_rviz" value="$(arg launch_rviz)"/>
+		<arg name="tf_name" 	value="$(arg markers_camera_name)"/>
+	</include>
+
+	<!-- dataset collector script -->
+	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
+		<param name="markers_camera_name" value="$(arg markers_camera_name)/color" />
+		<param name="marker_length" value="$(arg marker_length)" />
+		<param name="use_reconfigure" value="$(arg use_reconfigure)" />
+		<param name="vis" value="$(arg vis)" />
+		<param name="filter" value="$(arg filter)" />
+		<param name="filter_iters" value="$(arg filter_iters)" /> 
+		<param name="f_ctrl" value="$(arg f_ctrl)" />
+		<param name="rh8d_port" value="$(arg rh8d_port)" />
+		<param name="rh8d_baud" value="$(arg rh8d_baud)" />
+		<param name="epochs" value="$(arg epochs)" /> 
+		<param name="debug" value="$(arg debug)" /> 
+		<param name="test" value="$(arg test)" /> 
+		<param name="fps"     value="$(arg fps)" />
+		<param name="use_tf"     value="$(arg use_tf)" />
+		<param name="attached"     value="$(arg attached)" />
+		<param name="save_imgs"     value="$(arg save_imgs)" />
+		<param name="actuator_state_topic"     value="$(arg actuator_state_topic)" />
+		<param name="waypoint_set"     value="$(arg waypoint_set)" />
+		<param name="waypoint_start_idx"     value="$(arg waypoint_start_idx)" />
+		<param name="checkpoint_path" value="$(arg checkpoint_path)" />
+		<param name="scalers_path" value="$(arg scalers_path)" />
+		<param name="base_trans" value="$(arg base_trans)" />
+		<param name="base_rot" value="$(arg base_rot)" />
+		<param name="keypoint_infer" value="true" />
+	</node>
+
+</launch>
