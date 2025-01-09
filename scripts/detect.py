@@ -64,7 +64,7 @@ class DetectBase():
 
 	"""
 
-	FONT_THCKNS = 3
+	FONT_THCKNS = 1
 	FONT_SCALE = 1
 	FONT_CLR =  (0,0,0)
 	TXT_OFFSET = 30
@@ -422,7 +422,7 @@ class KeypointDetect(DetectBase):
 						test=False,
 						vis=vis,
 						fps=fps,
-						cv_window=not attached,
+						cv_window=False,
 						)
 
 		self.fps = fps
@@ -540,15 +540,20 @@ class KeypointDetect(DetectBase):
 		# ros topics
 		if attached:
 			self.initSubscriber()
-			self.clear_sub = rospy.Subscriber("clear_angles", Bool, self.clearAngles, queue_size=1)
-			# init ros vis
-			if vis:
-				self.proc_pub = rospy.Publisher('processed_image', Image, queue_size=10)
-				self.det_pub = rospy.Publisher('marker_detection', Image, queue_size=10)
-				self.out_pub = rospy.Publisher('angle_detection', Image, queue_size=10)
-				self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
+		else:
+			self.det_img_sub = rospy.Subscriber(self.img_topic, Image, self.imgCB, queue_size=10)
+		
+		# start angle reset topic
+		self.clear_sub = rospy.Subscriber("clear_angles", Bool, self.clearAngles, queue_size=1)
+		
+		# init ros vis
+		if vis and not self.cv_window:
+			self.proc_pub = rospy.Publisher('processed_image', Image, queue_size=10)
+			self.det_pub = rospy.Publisher('marker_detection', Image, queue_size=10)
+			self.out_pub = rospy.Publisher('angle_detection', Image, queue_size=10)
+			self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
 		# cv vis
-		if self.cv_window:
+		elif vis:
 			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
 
@@ -756,6 +761,15 @@ class KeypointDetect(DetectBase):
 		finally:
 			self.buf_lock.release()
 
+	def imgCB(self, det_img: Image) -> None:
+		# try lock
+		if not self.buf_lock.acquire(blocking=False):
+					return  
+		try:
+			self.det_img_buffer.append(det_img)
+		finally:
+			self.buf_lock.release()
+
 	def clearAngles(self, msg: Bool) -> None:
 		if msg.data:
 			self.start_angles.clear()
@@ -909,12 +923,12 @@ class KeypointDetect(DetectBase):
 		return tf_rh8d_dict, actuator_states_dict
 	
 	def waitForImgs(self) -> None:
+		# wait for buffer to be filled
+		while len(self.det_img_buffer) != self.filter_iters:
+			if not rospy.is_shutdown():
+				rospy.logwarn_throttle(1.0, f"Image buffer size deviates from filter size: {str(self.filter_iters-len(self.det_img_buffer))}")
+				rospy.sleep(1/self.fps)
 		if self.attached:
-			# wait for buffer to be filled
-			while len(self.det_img_buffer) != self.filter_iters:
-				if not rospy.is_shutdown():
-					rospy.logwarn_throttle(1.0, f"Image buffer size deviates from filter size: {str(self.filter_iters-len(self.det_img_buffer))}")
-					rospy.sleep(1/self.fps)
 			# wait for buffers to be filled
 			while not len(self.actuator_state_buffer):
 				if not rospy.is_shutdown():
@@ -1786,16 +1800,20 @@ class KeypointInfer(KeypointDetect):
 
 	"""
 
+	INF_KPT_COLORS = [(255,0,255), (0,252,124), (147,20,255), (30,105,210), (205,90,106)]
+	INF_KPT_NAMES = ['transT', 'transI', 'transM', 'transR', 'transL']
+	INF_KPT_THKNS = 20
+
 	VKPT_COLS = [ 'name',
 								'trans',
 								'inf_trans',
-								'err_trans',
+								'rmse_trans',
 								'timestamp',
 								]
 	VDET_COLS = [ 'name',
 								'angle', 
 								'inf_angle',
-								'err_angle'
+								'err_angle',
 								'start_angle',
 								'cmd', 
 								'epoch', 
@@ -1868,7 +1886,7 @@ class KeypointInfer(KeypointDetect):
 			raise RuntimeError(f"Enter checkpoint path relative to {MLP_CHKPT_PTH}")
 		if not os.path.exists(sp):
 			raise RuntimeError(f"Enter scalers path relative to {MLP_SCLRS_PTH}")
-		self.infer = InferMLP(checkpoint_path, scalers_path)
+		self.infer = InferMLP(cp, sp)
 
 		# init angles validation dataset
 		self.val_det_df_dict = {joint:  pd.DataFrame(columns=self.VDET_COLS) for joint in self.marker_config.keys()} 
@@ -1881,10 +1899,43 @@ class KeypointInfer(KeypointDetect):
 		self.rh8d_base_tf = {'trans': np.array(rh8d_base_trans, dtype=np.float32), 'quat': getRotation(rh8d_base_rot, RotTypes.EULER, RotTypes.QUAT)}
 
 	def labelInferedAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float, error: Union[None, float]) -> None:
-		txt = "{:.2f} deg, e: {:.2f}".format(np.rad2deg(angle), 0 if error is None else error)
-		xpos = 5* self.TXT_OFFSET
+		txt = "{:.2f}, e: {:.2f}".format(np.rad2deg(angle), 0 if error is None else np.rad2deg(error))
+		xpos = img.shape[1] - (15*self.TXT_OFFSET)
 		ypos = (id+2)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+
+	def visInferedKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict, prediction: dict) -> None:
+		center_point = np.zeros(3, dtype=np.float32)
+		
+		# world to cam holder (joint6) tf (dynamic)
+		base_trans = fk_dict[self.marker_config[self.root_joint]['parent']]['trans']
+		base_rot = fk_dict[self.marker_config[self.root_joint]['parent']]['quat']
+		T_world_cam_holder = pose2Matrix(base_trans, base_rot, RotTypes.QUAT)
+		# cam holder to cam tf (static)
+		T_cam_holder_cam = pose2Matrix(self.marker_cam_extr.translation,  self.marker_cam_extr.rotation, RotTypes.MAT)
+		# world to cam tf
+		T_world_cam = T_world_cam_holder @ T_cam_holder_cam
+		# cam to world tf
+		(inv_trans, inv_rot) = invPersp(T_world_cam[:3, 3],  T_world_cam[:3, :3], RotTypes.MAT)
+
+		# world to joint_r_laser tf (dynamic)
+		r_laser_trans = fk_dict['joint_r_laser']['trans']
+		r_laser_rot = fk_dict['joint_r_laser']['quat']
+		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.QUAT)
+		
+		for idx, name in enumerate(self.INF_KPT_NAMES):
+			# end link tf
+			trans = prediction[name]
+			rot_mat = np.eye(3)
+			T_r_laser_kpt = pose2Matrix(trans, rot_mat, RotTypes.MAT)
+			# tf to world frame
+			T_world_kpt = T_world_r_laser @ T_r_laser_kpt
+			# draw end link
+			transformed_point = T_world_kpt[:3, :3] @ center_point + T_world_kpt[:3, 3]
+			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+			projected_point = np.int32(projected_point.flatten())
+			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
+			cv2.putText(img, name, projected_point+(-120,50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
 	def inferenceRoutine(self, pos_cmd: dict, base_tf: dict, direction: float)  -> dict:
 		# map input 
@@ -1895,13 +1946,12 @@ class KeypointInfer(KeypointDetect):
 		for name in self.infer.feature_names[len(QUAT_COLS) :]:
 			if not 'dir' in name:
 				# joint7, ..., jointL1R1
-				model_input.update( {name: pos_cmd[name]} )
+				model_input.update( {name: pos_cmd[name.replace('cmd', 'joint').replace('jointR1', 'jointL1R1')]} )
 			else:
 				# dir7, ..., dirL1R1 = direction
 				model_input.update( {name: direction} )
-
 		# predict
-		return self.infer.forward(pos_cmd)
+		return self.infer.forward(model_input)
 
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
@@ -1914,12 +1964,11 @@ class KeypointInfer(KeypointDetect):
 
 		# predict angles and positions
 		prediction = self.inferenceRoutine(pos_cmd, base_tf, direction)
-
 		res = True
 		fk_dict, keypt_dict = {}, {}
 		inf_fk_dict, inf_keypt_dict = {}, {}
 		joint_angles = {joint: None for joint in self.marker_config.keys()}
-		inf_joint_angles = {joint: angle for joint, angle  in prediction.items() if 'angle' in joint}
+		inf_joint_angles = {joint: angle for joint, angle in prediction.items() if 'joint' in joint}
 		
 		# at least one detection
 		if marker_det:
@@ -1981,16 +2030,18 @@ class KeypointInfer(KeypointDetect):
 					self.val_det_df_dict[joint] = pd.concat([self.val_det_df_dict[joint], pd.DataFrame([nan_entry])], ignore_index=True) # add nan to results
 
 			# compute 3D keypoints
-			(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
 			(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, base_tf, timestamp)
-			# compute error for finger tip keypoints
+			(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
+			# compute error for predicted finger tip keypoints
 			for joint in self.fixed_end_joints:
+				# finger tips only
 				if not 'laser' in joint:
-					# finger tips
+					# computed translation
 					trans = keypt_dict[joint]['trans']
+					# predicted translation keys: 'transI, transT, ... vs joint_<x>bumper
 					inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
-					inf_trans = inf_keypt_dict[inf_name]['trans'] # 'transI, transT, ...
-					rmse = trans if np.isnan(trans) else root_mean_squared_error(trans, inf_trans)
+					inf_trans = prediction[inf_name]
+					rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
 					# data per keypoint
 					data = { 'name': joint,
 									'trans': trans,
@@ -2012,9 +2063,11 @@ class KeypointInfer(KeypointDetect):
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw keypoints
 			self.visKeypoints(out_img, fk_dict)
-			self.visKeypoints(out_img, inf_fk_dict)
 			kpt_plt = self.plotKeypoints(keypt_dict, True)
-			kpt_plt = self.plotKeypoints(inf_keypt_dict, False)
+			# draw infered keypoints
+			# self.visKeypoints(out_img, inf_fk_dict) # by angles
+			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by angles
+			self.visInferedKeypoints(out_img, fk_dict, prediction)
 			if self.vis_ros_tf:
 				self.visRosTF(out_img, fk_dict)
 			# draw angle labels and possibly fixed detections 
@@ -2022,10 +2075,12 @@ class KeypointInfer(KeypointDetect):
 				# self.labelDetection(out_img, id, marker_det) # cv angle
 				joint = detection.get('joint')
 				angle = detection.get('angle')
-				inf_angle = inf_joint_angles[joint]
-				rmse = None if angle is None else np.abs(angle - inf_angle)
 				self.labelAngle(out_img, joint, id, angle)
-				self.labelInferedAngle(out_img, joint, id, inf_angle, rmse)
+				# label infered angles
+				if joint is not None:
+					inf_angle = inf_joint_angles[joint]
+					err = None if angle is None else np.abs(angle - inf_angle)
+					self.labelInferedAngle(out_img, joint, id, inf_angle, err)
 				self.det._drawMarkers(id, detection['corners'], out_img) # square
 				out_img = cv2.drawFrameAxes(out_img, self.det.cmx, self.det.dist, detection['rvec'], detection['tvec'], self.det.marker_length*self.det.AXIS_LENGTH, self.det.AXIS_THICKNESS) # CS
 				out_img = self.det._projPoints(out_img, detection['points'], detection['rvec'], detection['tvec']) # corners
@@ -2067,25 +2122,32 @@ class KeypointInfer(KeypointDetect):
 				while idx < self.waypoint_df.last_valid_index():
 					if not rospy.is_shutdown():
 						# get waypoint
-						waypoint = self.waypoint_df.iloc[idx]
-						reset_angles = waypoint[-4]
-						direction = waypoint[-3]
-						description = waypoint[-2]
-						move_time = waypoint[-1]
-						# discard joint1 to joint6
-						rh8d_waypoint = waypoint[MoveRobot.ROBOT_JOINTS_INDEX['joint7'] : -4].to_dict()
+						waypoint: pd.Series = self.waypoint_df.iloc[idx]
+						reset_angles = waypoint.iloc[-4]
+						direction = waypoint.iloc[-3]
+						description = waypoint.iloc[-2]
+						move_time = waypoint.iloc[-1]
+						# rh8d joint cmds only
+						waypoint = waypoint.iloc[MoveRobot.ROBOT_JOINTS_INDEX['joint7'] : -4]
+						waypoint = waypoint.to_dict()
 						# reset initially detected angles
 						if reset_angles and self.self_reset_angles:
 							self.start_angles.clear()
 
 						# move arm and hand
 						print(f"Reaching waypoint number {idx}: {description} with direction {direction} in {move_time}s", end=" ... ")
-						print(rh8d_waypoint)
+						print(waypoint)
 						success = True
-						for id, val in zip(RH8D_IDS, list(rh8d_waypoint.values())[MoveRobot.ROBOT_JOINTS_INDEX['joint7'] :]):
-							cmd = ((val + np.pi) / (2 * np.pi)) * RH8D_MAX_POS
-							success, _ = self.rh8d_ctrl.setPos(id, cmd) and success
-						print("done\n") if success else print("fail\n")
+						for joint, id in RH8D_JOINT_IDS.items():
+							cmd = waypoint[joint]
+							step = self.rh8d_ctrl.angle2Step(cmd)
+							# print(joint, id, cmd, step)
+							success = self.rh8d_ctrl.setPos(id, step) and success
+						if success:
+							print("done\n") 
+							rospy.sleep(np.clip(move_time, 2.0, 5.0))
+						else: 
+							print("fail\n")
 
 						# detect angles
 						self.detectionRoutine(waypoint, e, direction, description)
@@ -2107,9 +2169,9 @@ class KeypointInfer(KeypointDetect):
 		finally:
 			# save record
 			det_df = pd.DataFrame({joint: [df] for joint, df in self.val_det_df_dict.items()})
-			det_df.to_json(KEYPT_DET_PTH.replace('detection', 'validation_detection'), orient="index", indent=4)
+			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 			kpt_df = pd.DataFrame({joint: [df] for joint, df in self.val_keypt_df_dict.items()})
-			kpt_df.to_json(KEYPT_3D_PTH.replace('kpts3D', 'validation_kpts'), orient="index", indent=4)
+			kpt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 
 			if self.cv_window:
 				cv2.destroyAllWindows()
@@ -2170,9 +2232,9 @@ class KeypointInfer(KeypointDetect):
 		finally:
 			# save record
 			det_df = pd.DataFrame({joint: [df] for joint, df in self.val_det_df_dict.items()})
-			det_df.to_json(KEYPT_DET_PTH.replace('detection', 'validation_detection'), orient="index", indent=4)
+			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
 			kpt_df = pd.DataFrame({joint: [df] for joint, df in self.val_keypt_df_dict.items()})
-			kpt_df.to_json(KEYPT_3D_PTH.replace('kpts3D', 'validation_kpts'), orient="index", indent=4)
+			kpt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 
 			if self.cv_window:
 				cv2.destroyAllWindows()

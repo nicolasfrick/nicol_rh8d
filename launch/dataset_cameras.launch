@@ -12,7 +12,7 @@
 	<arg name="left_eye_camera_name" default="left_eye_cam" />
 	<arg name="right_eye_camera_name" default="right_eye_cam" />
 	<arg name="marker_fps"             default="30" />
-    <arg name="fps"             default="15" />
+  <arg name="fps"             default="15" />
 
 	<!-- rs params -->
 	<arg name="serial_no"           default="822512060411"/>

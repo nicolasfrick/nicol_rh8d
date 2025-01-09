@@ -1,21 +1,21 @@
 <launch>
 
-	<arg name="checkpoint_path" default="" doc="Relative to MLP_CHKPT_PTH"/>
-	<arg name="scalers_path" default="" doc="Relative to MLP_SCLRS_PTH"/>
+	<arg name="checkpoint_path" default="rh8d_all/01_08_08_21/final_best_model_epoch=999_train_loss=0.002.ckpt" doc="Relative to MLP_CHKPT_PTH"/>
+	<arg name="scalers_path" default="rh8d_all" doc="Relative to MLP_SCLRS_PTH"/>
 	<arg name="base_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d base in meter"/>
-	<arg name="base_rot" default="[0,0,0]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles"/>
+	<arg name="base_rot" default="[-1.571, 0, 0]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles"/>
 
 	<!-- set params as in dataset_cameras.launch -->
 	<arg name="use_markers_camera"  default="true" />
 	<arg name="use_realsense"  default="true" />
 	<arg name="markers_camera_name" default="markers_camera" />
-    <arg name="fps"             default="30" />
+  <arg name="fps"             default="30" />
 	<arg name="enable_depth"        default="false"/>
 
 	<arg name="actuator_state_topic" default="/right/open_manipulator_p/actuator_states" />
-	<arg name="waypoint_set"  default="randomized_set.json" />
+	<arg name="waypoint_set"  default="validation_1571_waypoints_20_45_3__1h.json" />
 	<arg name="waypoint_start_idx"  default="0" />
-    <arg name="attached"      default="false"/>
+  <arg name="attached"      default="false"/>
 	<arg name="vis" default="true" />
 	<arg name="save_imgs" default="true" />
 	<arg name="f_ctrl" default="30" /> 

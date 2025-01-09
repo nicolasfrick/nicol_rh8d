@@ -18,7 +18,7 @@ from send2trash.plat_other import HOMETRASH_B
 from scipy.spatial.transform import Rotation as R
 
 dt_now = datetime.now()
-dt_now = dt_now.strftime("%m_%d_%H_%M")
+dt_now = "validation" # dt_now.strftime("%m_%d_%H_%M")
 # data records
 DATA_PTH = os.path.join(os.path.dirname(os.path.dirname(
 	os.path.abspath(__file__))), 'datasets/detection')

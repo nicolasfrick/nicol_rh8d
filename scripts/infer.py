@@ -120,7 +120,7 @@ class InferMLP():
 			elif 'angle' in name:
 				data = np.array([val], dtype=np.float32).reshape(1, -1)
 				val_scaled = self.denormalizeOutput(self.scaler_dct[name], data)
-				output_dict.update( {name: val_scaled.flatten()[0]} )
+				output_dict.update( {name.replace('angle', 'joint'): val_scaled.flatten()[0]} )
 
 		return output_dict
 
@@ -129,12 +129,12 @@ class InferMLP():
 			  from actuator angles, direction and eef orientation.
 
 							                [quaternions, actuator commands, direction of rotations]
-			  @param input [x, y, z, w, joint7, joint8, jointT0, jointT1, jointI1, jointM1, jointL1R1, dirT0, dirT1, dirI1, dirM1, dirL1R1]
+			  @param input [x, y, z, w, cmd7, cmd8, cmdT0, cmdT1, cmdI1, cmdM1, cmdL1R1, dirT0, dirT1, dirI1, dirM1, dirL1R1]
 			  @type dict
 			  								  [translations, joint angles]
 			  @param output [transT, transI, transM, transR, transL, 
-			  								   angle7, angle8, angleT0, angleT1, angleT2, angleT3, angleI1, angleI2, angleI3, 
-											   angleM1, angleM2, angleM3, angleR1, angleR2, angleR3, angleL1, angleL2, angleL3]
+			  								   joint7, joint8, jointT0, jointT1, jointT2, jointT3, jointI1, jointI2, jointI3, 
+											   jointM1, jointM2, jointM3, jointR1, jointR2, jointR3, jointL1, jointL2, jointL3]
 			  @type dict
 
 		"""
