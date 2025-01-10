@@ -75,7 +75,7 @@ class InferMLP():
 	
 	def mapInput(self, input: dict) -> np.ndarray:
 		assert(len(input.keys()) ==  self.len_features)
-		X = np.zeros(self.len_features, dtype=np.float32)
+		X = np.array([np.nan for _ in range(self.len_features)], dtype=np.float32)
 
 		# map input to tensor
 		for idx, (key, val) in enumerate(input.items()):
@@ -84,18 +84,20 @@ class InferMLP():
 				assert(key == QUAT_COLS[idx])
 				X[idx] = val
 
-			elif 'joint' in key:
+			elif 'cmd' in key:
 				# index 4 to n
-				joint_id = key.replace('joint', 'cmd')
-				assert(joint_id == self.feature_names[idx])
+				assert(key == self.feature_names[idx])
 				# normalize
 				data = np.array([val], dtype=np.float32).reshape(1, -1)
-				X[idx] = self.normalizeInput(self.scaler_dct[joint_id], data)
+				X[idx] = self.normalizeInput(self.scaler_dct[key], data)
 
 			elif 'dir' in key:
 				assert(key == self.feature_names[idx])
 				X[idx] = val
 
+			else:
+				raise NotImplementedError(f"Unknown key {key} for inference input map!")
+			
 		return X
 	
 	def mapOutput(self, output: np.ndarray) -> dict:
@@ -116,11 +118,15 @@ class InferMLP():
 				data = np.array(output_dict[name], dtype=np.float32).reshape(1, -1) 
 				data = self.denormalizeOutput(self.scaler_dct[name], data)
 				output_dict[name] = data.flatten()
+
 			# process angles
 			elif 'angle' in name:
 				data = np.array([val], dtype=np.float32).reshape(1, -1)
 				val_scaled = self.denormalizeOutput(self.scaler_dct[name], data)
 				output_dict.update( {name.replace('angle', 'joint'): val_scaled.flatten()[0]} )
+
+			else:
+				raise NotImplementedError(f"Unknown key {name} for inference output map!")
 
 		return output_dict
 
