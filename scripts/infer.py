@@ -145,7 +145,7 @@ class InferMLP():
 
 		"""
 		X = self.mapInput(input)
-		X =  torch.from_numpy(X).float().to(DEVICE)
+		X = torch.from_numpy(X).float().to(DEVICE)
 
 		with torch.inference_mode():
 			y = self.model(X)

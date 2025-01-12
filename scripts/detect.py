@@ -1997,7 +1997,7 @@ class KeypointInfer(KeypointDetect):
 					base_marker = marker_det[base_id] # base marker detection
 					target_marker = marker_det[target_id] # target marker detection
 					
-					# apply static tf if marker is not attached to the link
+					# apply static tf if marker is not attached to the detection target link 
 					virtual_base_tf = config.get('virtual_base_tf')
 					if virtual_base_tf is not None:
 						base_marker = self.tfBaseMarker(base_marker, virtual_base_tf)
