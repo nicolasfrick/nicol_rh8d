@@ -1920,7 +1920,7 @@ class KeypointInfer(KeypointDetect):
 
 	def labelTrans(self, img: cv2.typing.MatLike, name: str, id: int, trans: Union[None, np.ndarray], inf_trans: np.ndarray, error: Union[None, float]) -> None:
 		if not isinstance(trans, np.ndarray):
-			return 
+			trans = np.zeros(3) 
 		txt = "{} [{:.3f},{:.3f},{:.3f}], [{:.3f},{:.3f},{:.3f}], e: {:.3f} m".format(name.replace("joint", "trans"), trans[0], trans[1], trans[2], inf_trans[0], inf_trans[1], inf_trans[2], 0 if np.isnan(error) else error)
 		xpos = int(img.shape[1] * 0.25)
 		ypos = int((id+2)*self.TXT_OFFSET)
@@ -1943,8 +1943,8 @@ class KeypointInfer(KeypointDetect):
 
 		# world to joint_r_laser tf (dynamic)
 		r_laser_trans = fk_dict['joint_r_laser']['trans']
-		r_laser_rot = np.eye(3) # fk_dict['joint_r_laser']['quat'] # this rotation needs to get into results beforehand
-		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.MAT)
+		r_laser_rot = fk_dict['joint_r_laser']['quat']
+		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.QUAT)
 		
 		for idx, name in enumerate(self.INF_KPT_NAMES):
 			# end link tf
@@ -2075,8 +2075,8 @@ class KeypointInfer(KeypointDetect):
 						inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
 						inf_trans = prediction[inf_name]
 						# for some reason we need to rotate the prediction by the eef orientation # TODO: figure out why
-						inf_trans = r_laser_rot @ inf_trans
-						prediction[inf_name] = inf_trans # replace predicted result
+						# inf_trans = r_laser_rot @ inf_trans
+						# prediction[inf_name] = inf_trans # replace predicted result
 
 						rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
 						# data per keypoint
