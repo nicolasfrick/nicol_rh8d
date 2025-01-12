@@ -2117,7 +2117,7 @@ class KeypointInfer(KeypointDetect):
 			# draw infered keypoints
 			# self.visKeypoints(out_img, inf_fk_dict) # by inf angles
 			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
-			self.visInferedKeypoints(out_img, inf_fk_dict, prediction)
+			self.visInferedKeypoints(out_img, inf_fk_dict, prediction) # use the fk from infered angles to compute keypoints relative to the rh8d tcp
 			if self.vis_ros_tf:
 				self.visRosTF(out_img, fk_dict)
 			# draw angle labels and possibly fixed detections 
