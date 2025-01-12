@@ -65,7 +65,7 @@ class DetectBase():
 	"""
 
 	FONT_THCKNS = 1
-	FONT_SCALE = 1
+	FONT_SCALE = 0.7
 	FONT_CLR =  (0,0,0)
 	TXT_OFFSET = 30
 	
@@ -1162,6 +1162,7 @@ class KeypointDetect(DetectBase):
 		xpos = self.TXT_OFFSET
 		ypos = (id+2)*self.TXT_OFFSET
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, "angle detection", (xpos, 30), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
 
 	def visKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
 		# root joints not detected
@@ -1899,10 +1900,20 @@ class KeypointInfer(KeypointDetect):
 		self.rh8d_base_tf = {'trans': np.array(rh8d_base_trans, dtype=np.float32), 'quat': getRotation(rh8d_base_rot, RotTypes.EULER, RotTypes.QUAT)}
 
 	def labelInferedAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float, error: Union[None, float]) -> None:
-		txt = "{:.2f}, e: {:.2f}".format(np.rad2deg(angle), 0 if error is None else np.rad2deg(error))
-		xpos = img.shape[1] - (15*self.TXT_OFFSET)
-		ypos = (id+2)*self.TXT_OFFSET
+		txt = "{} {:.2f}, e: {:.2f} deg".format(name, np.rad2deg(angle), 0 if error is None else np.rad2deg(error))
+		xpos = int(img.shape[1] - (13*self.TXT_OFFSET))
+		ypos = int((id+2)*self.TXT_OFFSET)
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, "angle prediction", (xpos, 30), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+
+	def labelTrans(self, img: cv2.typing.MatLike, name: str, id: int, trans: Union[None, np.ndarray], inf_trans: np.ndarray, error: Union[None, float]) -> None:
+		if not isinstance(trans, np.ndarray):
+			return 
+		txt = "{} [{:.2f},{:.2f},{:.2f}], [{:.2f},{:.2f},{:.2f}], e: {:.3f} m".format(name.replace("joint", "trans"), trans[0], trans[1], trans[2], inf_trans[0], inf_trans[1], inf_trans[2], 0 if np.isnan(error) else error)
+		xpos = int(img.shape[1] * 0.25)
+		ypos = int((id+2)*self.TXT_OFFSET)
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, "translation detection, prediction, rmse", (xpos, 30), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
 
 	def visInferedKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict, prediction: dict) -> None:
 		center_point = np.zeros(3, dtype=np.float32)
@@ -1920,8 +1931,8 @@ class KeypointInfer(KeypointDetect):
 
 		# world to joint_r_laser tf (dynamic)
 		r_laser_trans = fk_dict['joint_r_laser']['trans']
-		r_laser_rot = fk_dict['joint_r_laser']['quat']
-		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.QUAT)
+		r_laser_rot = np.eye(3) # fk_dict['joint_r_laser']['quat'] # this rotation needs to get into results beforehand
+		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.MAT)
 		
 		for idx, name in enumerate(self.INF_KPT_NAMES):
 			# end link tf
@@ -1935,7 +1946,7 @@ class KeypointInfer(KeypointDetect):
 			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
 			projected_point = np.int32(projected_point.flatten())
 			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
-			cv2.putText(img, name, projected_point+(-120,50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
+			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
 	def inferenceRoutine(self, pos_cmd: dict, base_tf: dict, direction: float)  -> dict:
 		# map input 
@@ -2032,24 +2043,48 @@ class KeypointInfer(KeypointDetect):
 			# compute 3D keypoints
 			(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, base_tf, timestamp)
 			(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
-			# compute error for predicted finger tip keypoints
-			for joint in self.fixed_end_joints:
-				# finger tips only
-				if not 'laser' in joint:
-					# computed translation
-					trans = keypt_dict[joint]['trans']
-					# predicted translation keys: 'transI, transT, ... vs joint_<x>bumper
-					inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
-					inf_trans = prediction[inf_name]
-					rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
-					# data per keypoint
-					data = { 'name': joint,
-									'trans': trans,
-									'inf_trans': inf_trans,
-									'rmse_trans': rmse,
-									'timestamp': timestamp,
-								}
-					self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
+
+			r_laser_rot = fk_dict['joint_r_laser']['quat'] # possible nan
+			if self.chain_complete[0] and fk_dict and isinstance(r_laser_rot, tuple):
+				# for some reason we need to rotate the prediction by the eef orientation # TODO: figure out why
+				r_laser_rot = getRotation(r_laser_rot, RotTypes.QUAT, RotTypes.MAT)
+
+				# compute error for predicted finger tip keypoints
+				for id, joint in enumerate(self.fixed_end_joints):
+					# finger tips only
+					if not 'laser' in joint:
+						# computed translation
+						trans = keypt_dict[joint]['trans'] # possible nan
+
+						# predicted translation keys: 'transI, transT, ... vs joint_<x>bumper
+						inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
+						inf_trans = prediction[inf_name]
+						# for some reason we need to rotate the prediction by the eef orientation # TODO: figure out why
+						inf_trans = r_laser_rot @ inf_trans
+						prediction[inf_name] = inf_trans # replace predicted result
+
+						rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
+						# data per keypoint
+						data = { 'name': joint,
+										'trans': trans,
+										'inf_trans': inf_trans,
+										'rmse_trans': rmse,
+										'timestamp': timestamp,
+									}
+						self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
+						# label 
+						self.labelTrans(out_img, joint, id, trans, inf_trans, rmse)
+			else:
+				# add nan entries
+				for id, joint in enumerate(self.fixed_end_joints):
+					if not 'laser' in joint:
+						data = { 'name': np.nan,
+										'trans': np.nan,
+										'inf_trans': np.nan,
+										'rmse_trans': np.nan,
+										'timestamp': np.nan,
+									}
+						self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
 
 		# no marker detected
 		else:
@@ -2065,9 +2100,9 @@ class KeypointInfer(KeypointDetect):
 			self.visKeypoints(out_img, fk_dict)
 			kpt_plt = self.plotKeypoints(keypt_dict, True)
 			# draw infered keypoints
-			# self.visKeypoints(out_img, inf_fk_dict) # by angles
-			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by angles
-			self.visInferedKeypoints(out_img, fk_dict, prediction)
+			# self.visKeypoints(out_img, inf_fk_dict) # by inf angles
+			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
+			self.visInferedKeypoints(out_img, inf_fk_dict, prediction)
 			if self.vis_ros_tf:
 				self.visRosTF(out_img, fk_dict)
 			# draw angle labels and possibly fixed detections 
