@@ -793,6 +793,7 @@ class KeypointDetect(DetectBase):
 	def saveRecord(self) -> Tuple[dict, dict]:	
 		num_saved = 0
 		tf_rh8d_dict = {}
+		tf_rh8d_tcp_dict = {}
 		actuator_states_dict = {}
 
 		# actuator states and rh8d tf
@@ -920,7 +921,7 @@ class KeypointDetect(DetectBase):
 		if num_saved > 0:
 			self.record_cnt += 1
 
-		return tf_rh8d_dict, actuator_states_dict
+		return tf_rh8d_tcp_dict, tf_rh8d_dict, actuator_states_dict
 	
 	def waitForImgs(self) -> None:
 		# wait for buffer to be filled
@@ -962,6 +963,7 @@ class KeypointDetect(DetectBase):
 		""" Put num filter_iters images into fresh detection filter and save last images."""
 
 		tf_dict = {}
+		tcp_dict = {}
 		states_dict = {}
 		timestamp = 0.0
 
@@ -992,9 +994,9 @@ class KeypointDetect(DetectBase):
 
 			# save additional resources
 			if marker_det and self.attached:
-				tf_dict, states_dict = self.saveRecord()
+				tcp_dict, tf_dict, states_dict = self.saveRecord()
 
-			return marker_det, det_img, proc_img, raw_img, tf_dict, states_dict, timestamp
+			return marker_det, det_img, proc_img, raw_img, tcp_dict, tf_dict, states_dict, timestamp
 		
 	def normalXY(self, rot: np.ndarray, rot_t: RotTypes) -> np.ndarray:
 		""" Get the normal to the XY plane in the marker frame.
@@ -1347,7 +1349,7 @@ class KeypointDetect(DetectBase):
 
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
-		(marker_det, det_img, proc_img, img, base_tf, joint_states, timestamp) = self.preProcImage()
+		(marker_det, det_img, proc_img, img, tcp_tf, base_tf, joint_states, timestamp) = self.preProcImage()
 		out_img = img.copy()
 
 		res = True
@@ -1798,6 +1800,10 @@ class KeypointInfer(KeypointDetect):
 		@type str
 		@param base_rot
 		@type str
+		@param tcp_trans
+		@type str
+		@param tcp_rot
+		@type str
 
 	"""
 
@@ -1850,8 +1856,10 @@ class KeypointInfer(KeypointDetect):
 							topic_wait_secs: Optional[float]=15,
 							checkpoint_path: Optional[str]='',
 							scalers_path: Optional[str]='',
-							base_trans: Optional[str]='',
-							base_rot: Optional[str]='',
+							base_trans: Optional[str]='[0,0,0]',
+							base_rot: Optional[str]='[0,0,0]',
+							tcp_trans: Optional[str]='[0,0,0]',
+							tcp_rot: Optional[str]='[0,0,0]',
 							) -> None:
 		
 		super().__init__(marker_length=marker_length,
@@ -1898,6 +1906,10 @@ class KeypointInfer(KeypointDetect):
 		rh8d_base_trans = list(map(float, ast.literal_eval(base_trans)))
 		rh8d_base_rot = list(map(float, ast.literal_eval(base_rot)))
 		self.rh8d_base_tf = {'trans': np.array(rh8d_base_trans, dtype=np.float32), 'quat': getRotation(rh8d_base_rot, RotTypes.EULER, RotTypes.QUAT)}
+		# rh8d tcp tf
+		rh8d_tcp_trans = list(map(float, ast.literal_eval(tcp_trans)))
+		rh8d_tcp_rot = list(map(float, ast.literal_eval(tcp_rot)))
+		self.rh8d_tcp_tf = {'trans': np.array(rh8d_tcp_trans, dtype=np.float32), 'quat': getRotation(rh8d_tcp_rot, RotTypes.EULER, RotTypes.QUAT)}
 
 	def labelInferedAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float, error: Union[None, float]) -> None:
 		txt = "{} {:.2f}, e: {:.2f} deg".format(name, np.rad2deg(angle), 0 if error is None else np.rad2deg(error))
@@ -1909,7 +1921,7 @@ class KeypointInfer(KeypointDetect):
 	def labelTrans(self, img: cv2.typing.MatLike, name: str, id: int, trans: Union[None, np.ndarray], inf_trans: np.ndarray, error: Union[None, float]) -> None:
 		if not isinstance(trans, np.ndarray):
 			return 
-		txt = "{} [{:.2f},{:.2f},{:.2f}], [{:.2f},{:.2f},{:.2f}], e: {:.3f} m".format(name.replace("joint", "trans"), trans[0], trans[1], trans[2], inf_trans[0], inf_trans[1], inf_trans[2], 0 if np.isnan(error) else error)
+		txt = "{} [{:.3f},{:.3f},{:.3f}], [{:.3f},{:.3f},{:.3f}], e: {:.3f} m".format(name.replace("joint", "trans"), trans[0], trans[1], trans[2], inf_trans[0], inf_trans[1], inf_trans[2], 0 if np.isnan(error) else error)
 		xpos = int(img.shape[1] * 0.25)
 		ypos = int((id+2)*self.TXT_OFFSET)
 		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
@@ -1948,10 +1960,10 @@ class KeypointInfer(KeypointDetect):
 			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
 			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
-	def inferenceRoutine(self, pos_cmd: dict, base_tf: dict, direction: float)  -> dict:
+	def inferenceRoutine(self, pos_cmd: dict, tcp_tf: dict, direction: float)  -> dict:
 		# map input 
 		model_input = {}
-		for idx, q in enumerate(base_tf['quat']):
+		for idx, q in enumerate(tcp_tf['quat']):
 			# x,y,z,w
 			model_input.update( {QUAT_COLS[idx] : q} )
 		for name in self.infer.feature_names[len(QUAT_COLS) :]:
@@ -1966,15 +1978,18 @@ class KeypointInfer(KeypointDetect):
 
 	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
 		# get filtered detection and save other resources
-		(marker_det, det_img, proc_img, img, base_tf, _, timestamp) = self.preProcImage()
+		(marker_det, det_img, proc_img, img, tcp_tf, base_tf, _, timestamp) = self.preProcImage()
 		out_img = img.copy()
 		
-		# manual base tf
+		# manual base tf for fk
 		if not base_tf:
 			base_tf = self.rh8d_base_tf
+		# manual tcp tf for inference
+		if not tcp_tf:
+			tcp_tf = self.rh8d_tcp_tf
 
 		# predict angles and positions
-		prediction = self.inferenceRoutine(pos_cmd, base_tf, direction)
+		prediction = self.inferenceRoutine(pos_cmd, tcp_tf, direction)
 		res = True
 		fk_dict, keypt_dict = {}, {}
 		inf_fk_dict, inf_keypt_dict = {}, {}
@@ -2918,6 +2933,8 @@ def main() -> None:
 									scalers_path=rospy.get_param('~scalers_path', ''),
 									base_trans=rospy.get_param('~base_trans', '[0,0,0]'),
 									base_rot=rospy.get_param('~base_rot', '[0,0,0]'),
+									tcp_trans=rospy.get_param('~tcp_trans', '[0,0,0]'),
+									tcp_rot=rospy.get_param('~tcp_rot', '[0,0,0]'),
 									).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),

@@ -4,6 +4,8 @@
 	<arg name="scalers_path" default="rh8d_all" doc="Relative to MLP_SCLRS_PTH"/>
 	<arg name="base_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d base in meter"/>
 	<arg name="base_rot" default="[-1.571, 0, 0]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles"/>
+	<arg name="tcp_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d tcp in meter"/>
+	<arg name="tcp_rot" default="[0, 0, 0]" doc="Manual entry of the orientation of the rh8d tcp with extr. xyz euler angles"/>
 
 	<!-- set params as in dataset_cameras.launch -->
 	<arg name="use_markers_camera"  default="true" />
@@ -75,6 +77,8 @@
 		<param name="scalers_path" value="$(arg scalers_path)" />
 		<param name="base_trans" value="$(arg base_trans)" />
 		<param name="base_rot" value="$(arg base_rot)" />
+		<param name="tcp_trans" value="$(arg tcp_trans)" />
+		<param name="tcp_rot" value="$(arg tcp_rot)" />
 		<param name="keypoint_infer" value="true" />
 	</node>
 
