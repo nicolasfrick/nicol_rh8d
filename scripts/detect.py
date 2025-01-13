@@ -70,7 +70,7 @@ class DetectBase():
 	TXT_OFFSET = 30
 	
 	def __init__(self,
-			  	marker_length: float=0.010,
+			  marker_length: float=0.010,
 				camera_ns: Optional[str]='',
 				vis: Optional[bool]=True,
 				cv_window:Optional[bool]=True,
@@ -1283,10 +1283,10 @@ class KeypointDetect(DetectBase):
 				# revolute joint index
 				pb.resetJointState(self.robot_id, self.joint_info_dict[joint], angle)
 				
-		# world to root joint tf inverse
-		(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.joint_info_dict[self.root_joint], computeForwardKinematics=True)
+		# world to tcp joint tf inverse
+		(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.link_info_dict['joint8']['index'], computeForwardKinematics=True)
 		(inv_trans, inv_quat) = invPersp(trans, quat, RotTypes.QUAT)
-		T_root_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
+		T_tcp_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
 
 		# get fk
 		for joint, angle in joint_angles.items():
@@ -1297,7 +1297,7 @@ class KeypointDetect(DetectBase):
 				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
 				# compute relative pose
 				T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
-				T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
+				T_root_joint_keypoint = T_tcp_joint_world @ T_world_keypoint
 				keypt_dict.update( {joint: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
 				# additional fk for tip frame
 				if joint in self.link_info_dict.keys():
@@ -1306,7 +1306,7 @@ class KeypointDetect(DetectBase):
 					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
 					# compute relative pose
 					T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
-					T_root_joint_keypoint = T_root_joint_world @ T_world_keypoint
+					T_root_joint_keypoint = T_tcp_joint_world @ T_world_keypoint
 					keypt_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
 			else:
 				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
@@ -1976,7 +1976,7 @@ class KeypointInfer(KeypointDetect):
 		# predict
 		return self.infer.forward(model_input)
 
-	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str) -> bool:
+	def detectionRoutine(self, pos_cmd: dict, epoch: int, direction: int, description: str, wpt_idx: int) -> bool:
 		# get filtered detection and save other resources
 		(marker_det, det_img, proc_img, img, tcp_tf, base_tf, _, timestamp) = self.preProcImage()
 		out_img = img.copy()
@@ -2150,10 +2150,9 @@ class KeypointInfer(KeypointDetect):
 			# save drawings and original
 			if self.save_record and not self.test and marker_det:
 				try:
-					cv2.imwrite(os.path.join(KEYPT_ORIG_REC_DIR, str(self.data_cnt) + '.jpg'), img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save original
-					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(self.data_cnt) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
+					cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, str(wpt_idx) + '.jpg'), out_img, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save detection
 					if kpt_plt is not None:
-						cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, 'plot3D_' + str(self.data_cnt) + '.jpg'), kpt_plt, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save plot
+						cv2.imwrite(os.path.join(KEYPT_DET_REC_DIR, 'plot3D_' + str(wpt_idx) + '.jpg'), kpt_plt, [int(cv2.IMWRITE_JPEG_QUALITY), JPG_QUALITY]) # save plot
 				except Exception as e:
 					print(e)
 					return False
@@ -2200,7 +2199,7 @@ class KeypointInfer(KeypointDetect):
 							print("fail\n")
 
 						# detect angles
-						self.detectionRoutine(waypoint, e, direction, description)
+						self.detectionRoutine(waypoint, e, direction, description, idx)
 
 						if self.vis and not self.attached:
 							if cv2.waitKey(1) == ord("q"):
