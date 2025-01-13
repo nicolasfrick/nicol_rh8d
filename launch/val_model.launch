@@ -3,14 +3,14 @@
 	<arg name="checkpoint_path" default="rh8d_all/01_08_08_21/final_best_model_epoch=999_train_loss=0.002.ckpt" doc="Relative to MLP_CHKPT_PTH"/>
 	<arg name="scalers_path" default="rh8d_all" doc="Relative to MLP_SCLRS_PTH"/>
 	<arg name="base_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d base in meter"/>
-	<arg name="base_rot" default="[0, 0, -1.571]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles
+	<arg name="base_rot" default="[1.605, 0.008, 1.350]" doc="Manual entry of the orientation of the rh8d base with extr. xyz euler angles
 																										rosrun tf tf_echo world r_forearm
 																										vertical, palm pointing to the face: [0, 0, -1.571]
 																										horizontal palm pointing down: [1.605, 0.008, 1.350]
 																										horizontal palm pointing up: [-1.570, 0, -1.791]
 																										horizontal palm pointing left, thumb up: [0, -1.571, 3.142]"/>
 	<arg name="tcp_trans" default="[0,0,0]" doc="Manual entry of the position of the rh8d tcp in meter"/>
-	<arg name="tcp_rot" default="[-1.571, 0, 0]" doc="Manual entry of the orientation of the rh8d tcp with extr. xyz euler angles
+	<arg name="tcp_rot" default="[1.611, 1.373, 2.960]" doc="Manual entry of the orientation of the rh8d tcp with extr. xyz euler angles
 																														rosrun tf tf_echo world r_laser
 																														vertical, palm pointing to the face: [-1.571, 0, 0]
 																														horizontal palm pointing down: [1.611, 1.373, 2.960]
