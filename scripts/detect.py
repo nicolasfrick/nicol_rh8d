@@ -1654,7 +1654,7 @@ class KeypointDetect(DetectBase):
 					cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 					# draw keypoints
 					self.visKeypoints(out_img, fk_dict)
-					kpt_plt = self.plotKeypoints(keypt_dict)
+					kpt_plt = None # self.plotKeypoints(keypt_dict) # needs reconfiguration due to computing keypoints relative to tcp
 					if self.vis_ros_tf:
 						self.visRosTF(out_img, fk_dict)
 					# draw angle labels and possibly fixed detections 
@@ -2059,47 +2059,28 @@ class KeypointInfer(KeypointDetect):
 			(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, base_tf, timestamp)
 			(fk_dict, keypt_dict) = self.rh8dFK(joint_angles, base_tf, timestamp)
 
-			r_laser_rot = fk_dict['joint_r_laser']['quat'] # possible nan
-			if self.chain_complete[0] and fk_dict and isinstance(r_laser_rot, tuple):
-				# for some reason we need to rotate the prediction by the eef orientation # TODO: figure out why
-				r_laser_rot = getRotation(r_laser_rot, RotTypes.QUAT, RotTypes.MAT)
+			# compute error for predicted finger tip keypoints
+			for id, joint in enumerate(self.fixed_end_joints):
+				# finger tips only
+				if not 'laser' in joint:
+					# computed translation
+					trans = keypt_dict[joint]['trans'] # possible nan
 
-				# compute error for predicted finger tip keypoints
-				for id, joint in enumerate(self.fixed_end_joints):
-					# finger tips only
-					if not 'laser' in joint:
-						# computed translation
-						trans = keypt_dict[joint]['trans'] # possible nan
+					# predicted translation keys: 'transI, transT, ... vs joint_<x>bumper
+					inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
+					inf_trans = prediction[inf_name]
 
-						# predicted translation keys: 'transI, transT, ... vs joint_<x>bumper
-						inf_name =  joint.replace('bumper', '').replace('joint_', 'trans')
-						inf_trans = prediction[inf_name]
-						# for some reason we need to rotate the prediction by the eef orientation # TODO: figure out why
-						# inf_trans = r_laser_rot @ inf_trans
-						# prediction[inf_name] = inf_trans # replace predicted result
-
-						rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
-						# data per keypoint
-						data = { 'name': joint,
-										'trans': trans,
-										'inf_trans': inf_trans,
-										'rmse_trans': rmse,
-										'timestamp': timestamp,
-									}
-						self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
-						# label 
-						self.labelTrans(out_img, joint, id, trans, inf_trans, rmse)
-			else:
-				# add nan entries
-				for id, joint in enumerate(self.fixed_end_joints):
-					if not 'laser' in joint:
-						data = { 'name': np.nan,
-										'trans': np.nan,
-										'inf_trans': np.nan,
-										'rmse_trans': np.nan,
-										'timestamp': np.nan,
-									}
-						self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
+					rmse = root_mean_squared_error(trans, inf_trans) if isinstance(trans, np.ndarray) else np.nan
+					# data per keypoint
+					data = { 'name': joint,
+									'trans': trans,
+									'inf_trans': inf_trans,
+									'rmse_trans': rmse,
+									'timestamp': timestamp,
+								}
+					self.val_keypt_df_dict[joint] = pd.concat([self.val_keypt_df_dict[joint], pd.DataFrame([data])], ignore_index=True) # add to results
+					# label 
+					self.labelTrans(out_img, joint, id, trans, inf_trans, rmse)
 
 		# no marker detected
 		else:
@@ -2113,7 +2094,7 @@ class KeypointInfer(KeypointDetect):
 			cv2.putText(det_img, str(self.frame_cnt) + " " + str(self.record_cnt), (det_img.shape[1]-100, 50), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.FONT_CLR, self.FONT_THCKNS, cv2.LINE_AA)
 			# draw keypoints
 			self.visKeypoints(out_img, fk_dict)
-			kpt_plt = self.plotKeypoints(keypt_dict, True)
+			kpt_plt = None # self.plotKeypoints(keypt_dict, True) # needs reconfiguration due to computing keypoints relative to tcp 
 			# draw infered keypoints
 			# self.visKeypoints(out_img, inf_fk_dict) # by inf angles
 			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
@@ -2158,6 +2139,12 @@ class KeypointInfer(KeypointDetect):
 					return False
 
 		return res
+	
+	def writeData(self) -> None:
+		det_df = pd.DataFrame({joint: [df] for joint, df in self.val_det_df_dict.items()})
+		det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
+		kpt_df = pd.DataFrame({joint: [df] for joint, df in self.val_keypt_df_dict.items()})
+		kpt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
 	
 	def runDetached(self) -> None:
 		rate = rospy.Rate(self.f_loop)
@@ -2209,7 +2196,10 @@ class KeypointInfer(KeypointDetect):
 							rate.sleep()
 						except:
 							pass
-
+						
+						if idx % 10 == 0:
+							self.writeData()
+							
 						idx += 1
 
 		except Exception as e:
@@ -2217,10 +2207,7 @@ class KeypointInfer(KeypointDetect):
 
 		finally:
 			# save record
-			det_df = pd.DataFrame({joint: [df] for joint, df in self.val_det_df_dict.items()})
-			det_df.to_json(KEYPT_DET_PTH, orient="index", indent=4)
-			kpt_df = pd.DataFrame({joint: [df] for joint, df in self.val_keypt_df_dict.items()})
-			kpt_df.to_json(KEYPT_3D_PTH, orient="index", indent=4)
+			self.writeData()
 
 			if self.cv_window:
 				cv2.destroyAllWindows()
