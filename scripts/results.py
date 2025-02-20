@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import root_mean_squared_error
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
+from util import *
 
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/detection_2.json')
 RES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'datasets/detection/qdec/results_2.json')
@@ -81,4 +82,174 @@ def qdecResults():
     with open(RES, 'w') as fw:
         json.dump(results, fw, indent=4)
 
-qdecResults()
+# qdecResults()
+
+def modelResults():
+    df_angle_dict_a = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/detection_validation_vertical.json'))
+    df_kpt_dict_a = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_vertical.json'))
+
+    df_angle_dict_b = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/detection_validation_palm_pointing_up.json'))
+    df_kpt_dict_b = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_palm_pointing_up.json'))
+
+    df_angle_dict_c = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/detection_validation_palm_pointing_down.json'))
+    df_kpt_dict_c = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_palm_pointing_down.json'))
+
+    df_angle_dict_d = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/detection_validation_palm_pointing_left.json.json'))
+    df_kpt_dict_d = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_palm_pointing_left.json'))
+
+    df_angle_dict_e = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/detection_validation_error.json'))
+    df_kpt_dict_e = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_error.json'))
+
+    results = {'a':{}, 'b':{}, 'c':{}, 'd':{}, 'e':{}}
+    combi_mae = 0
+    combi_rmse = 0
+    combi_rmse_kpt = 0
+
+    # angles a
+    for joint, angle_df in df_angle_dict_a.items():
+        df = angle_df.dropna(subset=["angle"])
+        angles = df["angle"].to_numpy()
+        inf_angles = df["inf_angle"].to_numpy()
+        # mae
+        mae_rad = np.mean(np.abs(inf_angles - angles))
+        mae_deg = np.rad2deg(mae_rad)
+        # rmse
+        rmse_rad = root_mean_squared_error(angles, inf_angles)
+        rmse_deg = np.rad2deg(rmse_rad)
+        # result
+        results['a'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
+        combi_mae += mae_rad
+        combi_rmse += rmse_rad**2
+    # keypoints a 
+    for joint, kpt_df in df_kpt_dict_a.items():
+        df = kpt_df.dropna(subset=["trans"])
+        trans = np.vstack(df["trans"].to_numpy()) 
+        inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
+        rmse = root_mean_squared_error(trans, inf_trans)
+        results['a'].update( {joint: {'rmse_m': rmse}} )
+        combi_rmse_kpt += rmse**2
+
+    # angles b
+    for joint, angle_df in df_angle_dict_b.items():
+        df = angle_df.dropna(subset=["angle"])
+        angles = df["angle"].to_numpy()
+        inf_angles = df["inf_angle"].to_numpy()
+        # mae
+        mae_rad = np.mean(np.abs(inf_angles - angles))
+        mae_deg = np.rad2deg(mae_rad)
+        # rmse
+        rmse_rad = root_mean_squared_error(angles, inf_angles)
+        rmse_deg = np.rad2deg(rmse_rad)
+        # result
+        results['b'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
+        combi_mae += mae_rad
+        combi_rmse += rmse_rad**2
+    # keypoints b 
+    for joint, kpt_df in df_kpt_dict_b.items():
+        df = kpt_df.dropna(subset=["trans"])
+        trans = np.vstack(df["trans"].to_numpy()) 
+        inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
+        rmse = root_mean_squared_error(trans, inf_trans)
+        results['b'].update( {joint: {'rmse_m': rmse}} )
+        combi_rmse_kpt += rmse**2
+
+    # angles c
+    for joint, angle_df in df_angle_dict_c.items():
+        df = angle_df.dropna(subset=["angle"])
+        angles = df["angle"].to_numpy()
+        inf_angles = df["inf_angle"].to_numpy()
+        # mae
+        mae_rad = np.mean(np.abs(inf_angles - angles))
+        mae_deg = np.rad2deg(mae_rad)
+        # rmse
+        rmse_rad = root_mean_squared_error(angles, inf_angles)
+        rmse_deg = np.rad2deg(rmse_rad)
+        # result
+        results['c'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
+        combi_mae += mae_rad
+        combi_rmse += rmse_rad**2
+    # keypoints c
+    for joint, kpt_df in df_kpt_dict_c.items():
+        df = kpt_df.dropna(subset=["trans"])
+        trans = np.vstack(df["trans"].to_numpy()) 
+        inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
+        rmse = root_mean_squared_error(trans, inf_trans)
+        results['c'].update( {joint: {'rmse_m': rmse}} )
+        combi_rmse_kpt += rmse**2
+
+    # angles d
+    for joint, angle_df in df_angle_dict_d.items():
+        df = angle_df.dropna(subset=["angle"])
+        angles = df["angle"].to_numpy()
+        inf_angles = df["inf_angle"].to_numpy()
+        # mae
+        mae_rad = np.mean(np.abs(inf_angles - angles))
+        mae_deg = np.rad2deg(mae_rad)
+        # rmse
+        rmse_rad = root_mean_squared_error(angles, inf_angles)
+        rmse_deg = np.rad2deg(rmse_rad)
+        # result
+        results['d'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
+        combi_mae += mae_rad
+        combi_rmse += rmse_rad**2
+    # keypoints d
+    for joint, kpt_df in df_kpt_dict_d.items():
+        df = kpt_df.dropna(subset=["trans"])
+        trans = np.vstack(df["trans"].to_numpy()) 
+        inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
+        rmse = root_mean_squared_error(trans, inf_trans)
+        results['d'].update( {joint: {'rmse_m': rmse}} )
+        combi_rmse_kpt += rmse**2
+
+    # angles error test
+    err_mae = 0
+    err_rmse = 0
+    err_rmse_kpt = 0
+    for joint, angle_df in df_angle_dict_e.items():
+        df = angle_df.dropna(subset=["angle"])
+        angles = df["angle"].to_numpy()
+        inf_angles = df["inf_angle"].to_numpy()
+        # mae
+        mae_rad = np.mean(np.abs(inf_angles - angles))
+        mae_deg = np.rad2deg(mae_rad)
+        # rmse
+        rmse_rad = root_mean_squared_error(angles, inf_angles)
+        rmse_deg = np.rad2deg(rmse_rad)
+        # result
+        results['e'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
+        err_mae += mae_rad
+        err_rmse += rmse_rad**2
+    # keypoints error test 
+    for joint, kpt_df in df_kpt_dict_e.items():
+        df = kpt_df.dropna(subset=["trans"])
+        trans = np.vstack(df["trans"].to_numpy()) 
+        inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
+        rmse = root_mean_squared_error(trans, inf_trans)
+        results['e'].update( {joint: {'rmse_m': rmse}} )
+        err_rmse_kpt += rmse**2
+
+    combined_mae_rad = combi_mae/4
+    combined_mae_deg = np.rad2deg(combined_mae_rad)
+    combined_rmse_rad = np.sqrt(combi_rmse/4)
+    combined_rmse_deg = np.rad2deg(combined_rmse_rad)
+    combined_err_mae_rad = err_mae/4
+    combined_err_mae_deg = np.rad2deg(combined_err_mae_rad)
+    combined_err_rmse_rad = np.sqrt(err_rmse/4)
+    combined_err_rmse_deg = np.rad2deg(combined_err_rmse_rad)
+    results.update( {"combined_mae_rad":combined_mae_rad,
+                                    "combined_mae_deg":combined_mae_deg,
+                                    "combined_rmse_rad":combined_rmse_rad,
+                                    "combined_rmse_deg":combined_rmse_deg, 
+                                    "combined_rmse_kpt": np.sqrt(combi_rmse_kpt/4),
+                                    "combined_err_mae_rad": combined_err_mae_rad, 
+                                    "combined_err_mae_deg": combined_err_mae_deg, 
+                                    "combined_err_rmse_rad": combined_err_rmse_rad, 
+                                    "combined_err_rmse_deg": combined_err_rmse_deg, 
+                                    "combined_err_rmse_kpt": np.sqrt(err_rmse_kpt)} )
+
+    with open(os.path.join(DATA_PTH, 'keypoint/results.json'), 'w') as fw:
+        json.dump(results, fw, indent=4)
+
+modelResults()
+
+
