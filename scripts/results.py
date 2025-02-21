@@ -101,11 +101,13 @@ def modelResults():
     df_kpt_dict_e = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/kpts3D_validation_error.json'))
 
     results = {'a':{}, 'b':{}, 'c':{}, 'd':{}, 'e':{}}
-    combi_mae = 0
-    combi_rmse = 0
-    combi_rmse_kpt = 0
+    num_joints = len(df_angle_dict_a.keys())
+    num_kpts = len(df_kpt_dict_a.keys())
 
     # angles a
+    combi_mae_a = 0
+    combi_rmse_a = 0
+    combi_rmse_kpt_a = 0
     for joint, angle_df in df_angle_dict_a.items():
         df = angle_df.dropna(subset=["angle"])
         angles = df["angle"].to_numpy()
@@ -118,8 +120,8 @@ def modelResults():
         rmse_deg = np.rad2deg(rmse_rad)
         # result
         results['a'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
-        combi_mae += mae_rad
-        combi_rmse += rmse_rad**2
+        combi_mae_a += mae_rad
+        combi_rmse_a += rmse_rad**2
     # keypoints a 
     for joint, kpt_df in df_kpt_dict_a.items():
         df = kpt_df.dropna(subset=["trans"])
@@ -127,9 +129,15 @@ def modelResults():
         inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
         rmse = root_mean_squared_error(trans, inf_trans)
         results['a'].update( {joint: {'rmse_m': rmse}} )
-        combi_rmse_kpt += rmse**2
+        combi_rmse_kpt_a += rmse**2
+    combi_mae_a /= num_joints
+    combi_rmse_a /= num_joints
+    combi_rmse_kpt_a /= num_kpts
 
     # angles b
+    combi_mae_b = 0
+    combi_rmse_b = 0
+    combi_rmse_kpt_b = 0
     for joint, angle_df in df_angle_dict_b.items():
         df = angle_df.dropna(subset=["angle"])
         angles = df["angle"].to_numpy()
@@ -142,8 +150,8 @@ def modelResults():
         rmse_deg = np.rad2deg(rmse_rad)
         # result
         results['b'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
-        combi_mae += mae_rad
-        combi_rmse += rmse_rad**2
+        combi_mae_b += mae_rad
+        combi_rmse_b += rmse_rad**2
     # keypoints b 
     for joint, kpt_df in df_kpt_dict_b.items():
         df = kpt_df.dropna(subset=["trans"])
@@ -151,9 +159,15 @@ def modelResults():
         inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
         rmse = root_mean_squared_error(trans, inf_trans)
         results['b'].update( {joint: {'rmse_m': rmse}} )
-        combi_rmse_kpt += rmse**2
+        combi_rmse_kpt_b += rmse**2
+    combi_mae_b /= num_joints
+    combi_rmse_b /= num_joints
+    combi_rmse_kpt_b /= num_kpts
 
     # angles c
+    combi_mae_c = 0
+    combi_rmse_c = 0
+    combi_rmse_kpt_c = 0
     for joint, angle_df in df_angle_dict_c.items():
         df = angle_df.dropna(subset=["angle"])
         angles = df["angle"].to_numpy()
@@ -166,8 +180,8 @@ def modelResults():
         rmse_deg = np.rad2deg(rmse_rad)
         # result
         results['c'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
-        combi_mae += mae_rad
-        combi_rmse += rmse_rad**2
+        combi_mae_c += mae_rad
+        combi_rmse_c += rmse_rad**2
     # keypoints c
     for joint, kpt_df in df_kpt_dict_c.items():
         df = kpt_df.dropna(subset=["trans"])
@@ -175,9 +189,15 @@ def modelResults():
         inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
         rmse = root_mean_squared_error(trans, inf_trans)
         results['c'].update( {joint: {'rmse_m': rmse}} )
-        combi_rmse_kpt += rmse**2
+        combi_rmse_kpt_c += rmse**2
+    combi_mae_c /= num_joints
+    combi_rmse_c /= num_joints
+    combi_rmse_kpt_c /= num_kpts
 
     # angles d
+    combi_mae_d = 0
+    combi_rmse_d = 0
+    combi_rmse_kpt_d = 0
     for joint, angle_df in df_angle_dict_d.items():
         df = angle_df.dropna(subset=["angle"])
         angles = df["angle"].to_numpy()
@@ -190,8 +210,8 @@ def modelResults():
         rmse_deg = np.rad2deg(rmse_rad)
         # result
         results['d'].update( {joint: {'mae_rad': mae_rad, 'mae_deg': mae_deg, 'rmse_rad': rmse_rad, 'rmse_deg': rmse_deg}} )
-        combi_mae += mae_rad
-        combi_rmse += rmse_rad**2
+        combi_mae_d += mae_rad
+        combi_rmse_d += rmse_rad**2
     # keypoints d
     for joint, kpt_df in df_kpt_dict_d.items():
         df = kpt_df.dropna(subset=["trans"])
@@ -199,7 +219,10 @@ def modelResults():
         inf_trans = np.vstack(df["inf_trans"].to_numpy()) 
         rmse = root_mean_squared_error(trans, inf_trans)
         results['d'].update( {joint: {'rmse_m': rmse}} )
-        combi_rmse_kpt += rmse**2
+        combi_rmse_kpt_d += rmse**2
+    combi_mae_d /= num_joints
+    combi_rmse_d /= num_joints
+    combi_rmse_kpt_d /= num_kpts
 
     # angles error test
     err_mae = 0
@@ -227,20 +250,54 @@ def modelResults():
         rmse = root_mean_squared_error(trans, inf_trans)
         results['e'].update( {joint: {'rmse_m': rmse}} )
         err_rmse_kpt += rmse**2
+    err_mae /= num_joints
+    err_rmse /= num_joints
+    err_rmse_kpt /= num_kpts
 
-    combined_mae_rad = combi_mae/4
+    # jointwise combined mae degree
+    combi_mae_a_deg = np.rad2deg(combi_mae_a)
+    combi_rmse_a_deg = np.rad2deg(combi_rmse_a)
+    combi_mae_b_deg = np.rad2deg(combi_mae_b)
+    combi_rmse_b_deg = np.rad2deg(combi_rmse_b)
+    combi_mae_c_deg = np.rad2deg(combi_mae_c)
+    combi_rmse_c_deg = np.rad2deg(combi_rmse_c)
+    combi_mae_d_deg = np.rad2deg(combi_mae_d)
+    combi_rmse_d_deg = np.rad2deg(combi_rmse_d)
+
+    # loopwise mae/ rmse
+    combined_mae_rad = (combi_mae_a + combi_mae_b + combi_mae_c + combi_mae_d) / 4
     combined_mae_deg = np.rad2deg(combined_mae_rad)
-    combined_rmse_rad = np.sqrt(combi_rmse/4)
+    combined_rmse_rad = np.sqrt((combi_rmse_a + combi_rmse_b + combi_rmse_c + combi_rmse_d)/4)
     combined_rmse_deg = np.rad2deg(combined_rmse_rad)
-    combined_err_mae_rad = err_mae/4
+    combined_err_mae_rad = err_mae
     combined_err_mae_deg = np.rad2deg(combined_err_mae_rad)
-    combined_err_rmse_rad = np.sqrt(err_rmse/4)
+    combined_err_rmse_rad = np.sqrt(err_rmse)
     combined_err_rmse_deg = np.rad2deg(combined_err_rmse_rad)
-    results.update( {"combined_mae_rad":combined_mae_rad,
+    results.update( {"combi_mae_a_rad": combi_mae_a,
+                                    "combi_mae_a_deg": combi_mae_a_deg,
+                                    "combi_rmse_a_rad": combi_rmse_a,
+                                    "combi_rmse_a_deg": combi_rmse_a_deg,
+                                    "combi_rmse_kpt_a_rad": combi_rmse_kpt_a,
+                                    "combi_mae_b_rad": combi_mae_b,
+                                    "combi_mae_b_deg": combi_mae_b_deg,
+                                    "combi_rmse_b_rad": combi_rmse_b,
+                                    "combi_rmse_b_deg": combi_rmse_b_deg,
+                                    "combi_rmse_kpt_b_rad": combi_rmse_kpt_b,
+                                    "combi_mae_c_rad": combi_mae_c,
+                                    "combi_mae_c_deg": combi_mae_c_deg,
+                                    "combi_rmse_c_rad": combi_rmse_c,
+                                    "combi_rmse_c_deg": combi_rmse_c_deg,
+                                    "combi_rmse_kpt_c_rad": combi_rmse_kpt_c,
+                                    "combi_mae_d_rad": combi_mae_d,
+                                    "combi_mae_d_deg": combi_mae_d_deg,
+                                    "combi_rmse_d_rad": combi_rmse_d,
+                                    "combi_rmse_d_deg": combi_rmse_d_deg,
+                                    "combi_rmse_kpt_d_rad": combi_rmse_kpt_d,
+                                    "combined_mae_rad":combined_mae_rad,
                                     "combined_mae_deg":combined_mae_deg,
                                     "combined_rmse_rad":combined_rmse_rad,
                                     "combined_rmse_deg":combined_rmse_deg, 
-                                    "combined_rmse_kpt": np.sqrt(combi_rmse_kpt/4),
+                                    "combined_rmse_kpt": np.sqrt((combi_rmse_kpt_a + combi_rmse_kpt_b + combi_rmse_kpt_c + combi_rmse_kpt_d)/4),
                                     "combined_err_mae_rad": combined_err_mae_rad, 
                                     "combined_err_mae_deg": combined_err_mae_deg, 
                                     "combined_err_rmse_rad": combined_err_rmse_rad, 
