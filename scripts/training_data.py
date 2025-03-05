@@ -1,5 +1,6 @@
-from util import *
 import pybullet as pb
+from util import *
+from plot_record import *
 
 def findCommonIndices(detection_dct: pd.DataFrame, 
 												keypoints_dct: pd.DataFrame,
@@ -174,7 +175,7 @@ def genAllTrainingData(post_proc: bool) -> None:
 			genTrainingData(net_config=c, folder='config_processed' if post_proc else 'config', post_proc=post_proc)
 			print()
 
-def replaceNanData() -> None:
+def replaceNanDataByZeros() -> None:
 	"""Postproc data records by replacing nan values in detection and
 		  keypoints. If a detection for a joint contains nans where the actuator
 		  is not moved, we use the zero position values for replacement. 
@@ -248,8 +249,9 @@ def replaceNanData() -> None:
 
 	# save processed detections
 	det_df = pd.DataFrame({joint: [df] for joint, df in detection_dct.items()})
-	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"), orient="index", indent=4)
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_nans_replaced.json"), orient="index", indent=4)
 	print("... done")
+	return det_df
 
 def fk(joint_info_dict: dict, link_info_dict: dict, joint_angles: dict, robot_id: int, T_root_joint_world: np.ndarray, valid_entry: bool) -> dict:
 	# set detected angles
@@ -317,6 +319,7 @@ def fkInit() -> Tuple[dict, dict, int]:
 	return joint_info_dict, link_info_dict, robot_id
 
 def findCommonIndicesAllJoints(detection_dct: dict) -> Tuple[list, list]:
+	"""Find the set of all indices without nans across all joints."""
 	first_joint_df: pd.DataFrame = detection_dct[list(detection_dct.keys())[0]]
 	common_indices: pd.Index = first_joint_df.index
 
@@ -337,7 +340,7 @@ def findCommonIndicesAllJoints(detection_dct: dict) -> Tuple[list, list]:
 	# cast
 	return common_indices.tolist(), first_joint_df.index.tolist()
 
-def fkFromDetection() -> None:
+def fkFromDetection(detection_dct: dict=None) -> None:
 	"""Compute keypoints from post-processed
 		 detections. Comput. criteria: all joints have valid 
 		 detection entries/ no nans for complete fk. Invalid
@@ -371,7 +374,8 @@ def fkFromDetection() -> None:
 	print(keypt_joint_keys)
 
 	# load post-processed recordings
-	detection_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"))  # contains nans
+	if detection_dct is None:
+		detection_dct: dict = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection.json"))  # contains nans
 
 	# find non-nan row indices
 	print("\nSearching all non-nan indices")
@@ -396,7 +400,7 @@ def fkFromDetection() -> None:
 	# save 
 	print("\ndone. Saving...")
 	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
-	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D.json"), orient="index", indent=4)
+	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D_smoothed.json"), orient="index", indent=4)
 	pb.disconnect()
 	
 def checkDataIntegrity() -> None:
@@ -460,8 +464,129 @@ def checkDataIntegrity() -> None:
 	print("\nDone")
 	pb.disconnect()
 
+def replaceOutliersIQR(df: pd.DataFrame, lim_low: float=-np.pi/2, lim_high: float=np.pi/2) -> pd.DataFrame:
+	"""Replace outliers beyond limits with interpolated values."""
+	df_out = df.copy()
+	
+	Q1 = df_out['angle'].quantile(0.25)
+	Q3 = df_out['angle'].quantile(0.75)
+	IQR = Q3 - Q1
+	lower_bound = Q1 - 1.5 * IQR
+	upper_bound = Q3 + 1.5 * IQR
+	
+	condition = (df_out['angle'] >= lower_bound) & (df_out['angle'] <= upper_bound) & \
+	            			(df_out['angle'] >= lim_low) & (df_out['angle'] <= lim_high)
+	
+	df_out.loc[~condition, 'angle'] = np.nan
+	df_out['angle'] = df_out['angle'].interpolate(method='linear').ffill().bfill()
+	
+	# check
+	replaced = df['angle'] != df_out['angle']
+	if replaced.any():
+		print(f"Replaced: {len(replaced)}")
+		# indices = replaced[replaced].index
+		# for idx in indices:
+		# 	print(f"  Index {idx}: {df.loc[idx, 'angle']} -> {df_out.loc[idx, 'angle']}")
+
+	return df_out
+	
+def replaceOutliersAmp(df: pd.DataFrame) -> pd.DataFrame:
+	"""Replace amplitude outliers with amp mean values."""
+
+	df_out = df.copy()
+
+	# angle amplitudes
+	peaks, _ = find_peaks(df_out["angle"] , height=df_out["angle"] .mean(), distance=150) 
+	peak_indices = df_out["angle"] .index[peaks]
+	peak_values = df_out["angle"] .iloc[peaks]
+	mean_peak = peak_values.mean()
+	# replace
+	df_out.loc[df_out['angle'] > 2* mean_peak, 'angle'] = mean_peak
+
+	# check
+	replaced = df['angle'] != df_out['angle']
+	if replaced.any():
+		print(f"Replaced: {replaced.sum()}")
+		indices = replaced[replaced].index
+		for idx in indices:
+			print(f"  Index {idx}: {df.loc[idx, 'angle']} -> {df_out.loc[idx, 'angle']}")
+		print()
+
+	return df_out
+	
+def postProcRemoveNans() -> None:
+	# replace nans by default jonint values where applicable
+	detection_dct: dict = replaceNanDataByZeros()
+
+	# find common set of indices without nans
+	(common_indices, all_indices) = findCommonIndicesAllJoints(detection_dct)
+	# create dataset without nans
+	valid_detection_dct = {}
+	for joint, df in detection_dct.items():
+		valid_df = df.loc[common_indices].copy().reset_index()
+		valid_detection_dct.update( {joint: valid_df} )
+	# save
+	det_df = pd.DataFrame({joint: [df] for joint, df in valid_detection_dct.items()})
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_nans_removed.json"), orient="index", indent=4)
+
+	# tcp orientations
+	tcp_df: pd.DataFrame = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'), orient='index') 
+	quat_df = tcp_df.loc[common_indices].reset_index()
+	quat_df = pd.DataFrame(quat_df['quat'])
+	quat_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/quaternions.json"), orient="index", indent=4)
+
+	smooth_det_dct = {}
+	for joint, df in valid_detection_dct.items():
+		# smooth angles
+		smooth_df = replaceOutliersIQR(df)
+		smooth_det_dct.update( {joint: smooth_df} )
+		# extract angles
+		angle_df = smooth_df['angle'].copy()
+		angle_df.to_json(os.path.join(DATA_PTH, f"keypoint/post_processed/{joint}_angles.json"), orient="index", indent=4)
+	# save
+	det_df = pd.DataFrame({joint: [df] for joint, df in smooth_det_dct.items()})
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"), orient="index", indent=4)
+		
+	fkFromDetection(detection_dct)
+	checkDataIntegrity()
+
+def postProcInterpolateNans() -> None:
+	# replace nans by config values
+	# detection_dct: dict = replaceNanDataByZeros()
+	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_nans_replaced.json"))
+
+	# interpolate other nan values for all angles
+	for joint, df in detection_dct.items():
+		print("Interpolating", joint)
+		# interpolate or fill angles & cmds
+		df[['angle', 'cmd']] = df[['angle', 'cmd']].interpolate(method='cubic', limit=2)
+		df[['angle', 'cmd']] = df[['angle', 'cmd']].ffill()
+		df[['angle', 'cmd']] = df[['angle', 'cmd']].bfill()
+		# forward fill directions
+		df['direction'] = df['direction'].ffill()
+		# check
+		count = (~df['direction'].isin([0, -1, 1])).sum()
+		print(" Length:", len(df), ", nans:", len(df[df.isna().all(axis=1)]), "mismatched directions:", count)
+
+	# save
+	det_df = pd.DataFrame({joint: [df] for joint, df in detection_dct.items()})
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_interpolated.json"), orient="index", indent=4)
+
+	# remove outliers
+	smooth_det_dct = {}
+	for joint, df in detection_dct.items():
+		print("Smooth", joint)
+		# smooth angles
+		smooth_df = replaceOutliersAmp(df)
+		smooth_det_dct.update( {joint: smooth_df} )
+
+	# save
+	det_df = pd.DataFrame({joint: [df] for joint, df in smooth_det_dct.items()})
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"), orient="index", indent=4)
+	
+	# compute keypoints
+	fkFromDetection(smooth_det_dct)
+
 if __name__ == "__main__":
-	# replaceNanData()
-	# fkFromDetection()
-	# checkDataIntegrity()
-	genAllTrainingData(post_proc=True)
+	postProcInterpolateNans()
+	# genAllTrainingData(post_proc=True)
