@@ -4,7 +4,10 @@ import matplotlib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from matplotlib import gridspec
+from scipy.signal import find_peaks
+from mpl_toolkits.mplot3d import Axes3D 
 from typing import Tuple, Optional, Union
 from scipy.interpolate import UnivariateSpline
 from util import *
@@ -324,6 +327,24 @@ def plotKeypoints(start: int=0, end: int=10000, plt_pp: bool=False) -> None:
 	finally:
 		cv2.destroyAllWindows()
 
+def plotOrientations(quats: pd.Series) -> None:
+	cv2.namedWindow("Keypoints", cv2.WINDOW_NORMAL)
+	keypt_plot = KeypointPlot(x_llim=0.0, 
+														x_hlim=10,
+														y_llim=-0.1,
+														y_hlim=0.075,
+														z_llim=-0.04,
+														z_hlim=0.06,
+														ax_scale = 0.1,
+														linewidth = 0.01)
+	
+	keypt_dict = {}
+	for idx, q in enumerate(quats.values[0:10]):
+		keypt_dict.update( {f'{idx}': {'trans': np.array([idx, 0, 0]), 'rot_mat': getRotation(q, RotTypes.QUAT, RotTypes.MAT), 'color': 'b'}} )
+	
+	keypt_plot.plotKeypoints(keypt_dict, '', pause=0.1, line=False, elev=10, azim=-20)
+	plt.show()
+
 def plotAllTrainingData(save: bool=False) -> None:
 	data_pth = os.path.join(DATA_PTH, 'keypoint/train/config')
 	pattern = os.path.join(data_pth, f'*.json*')
@@ -335,6 +356,229 @@ def plotAllTrainingData(save: bool=False) -> None:
 	for dfile, sfile in zip(data_files, save_files):
 		plotTrainingData(dfile, sfile)
 
+def plotDataMagn(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth: str=None) -> None:
+	matplotlib.use('TkAgg') 
+
+	fig, ax = plt.subplots()
+
+	# angles
+	joint_angles = df["angle"]  
+	ax.plot(df.index, joint_angles, label=title, color='b', marker='.', markersize=1)
+	
+	# rotation magnitude
+	quats = np.array([np.array(lst) for lst in quat_df.values])
+	smoothed = smoothMagnQuats(quats)
+	ax.plot(df.index.to_list(), smoothed, label="magnitude of rotation")
+
+	# orientations
+	scale_factor = 0.02  
+	min_angle = min(joint_angles)
+	for i in range(0, len(quat_df), 200): 
+		q = quat_df.iloc[i]
+		rotation_matrix = getRotation(q, RotTypes.QUAT, RotTypes.MAT)
+
+		rotation_axis_xy = rotation_matrix @ np.array([1, 0, 0])  
+		rotation_axis_yz = rotation_matrix @ np.array([0, 1, 0])  
+		rotation_axis_xy = rotation_axis_xy * scale_factor
+		rotation_axis_yz = rotation_axis_yz * scale_factor
+
+		ax.quiver(i, min_angle-0.1, rotation_axis_xy[0], rotation_axis_xy[1], color='r', width=0.0025, scale=0.8, label='X-axis' if i == 0 else "")
+		ax.quiver(i, min_angle-0.1, rotation_axis_xy[0], rotation_axis_yz[2], color='g', width=0.0025, scale=0.8, label='Y-axis' if i == 0 else "")
+
+	plt.xlabel("Index")
+	plt.ylabel("Values")
+	ax.set_title(title)
+	ax.legend()
+	plt.grid(visible=True)
+
+	if save_pth is not None:
+		fig.savefig(save_pth, format='svg')
+	
+	plt.show()
+
+def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth: str=None) -> None:
+	matplotlib.use('TkAgg') 
+
+	fig, axs = plt.subplots(3, 1)
+
+	# angles
+	joint_angles = df["angle"] 
+	axs[0].plot(df.index.to_list(), joint_angles.values, label=title, color='y', marker='.', markersize=1)
+	# amplitudes
+	peaks, _ = find_peaks(joint_angles, height=joint_angles.mean(), distance=150) 
+	peak_indices = joint_angles.index[peaks]
+	peak_values = joint_angles.iloc[peaks]
+	axs[0].plot(peak_indices.to_list(), peak_values.values, 'r-', linewidth=1)  
+
+	# smoothed euler rotation components
+	eulers = np.array([getRotation(np.array(lst), RotTypes.QUAT, RotTypes.EULER) for lst in quat_df.values])
+	x = np.arange(len(eulers))
+	spline_r = UnivariateSpline(x, eulers[:,0], s=2000) 
+	spline_p = UnivariateSpline(x, eulers[:,1], s=300) 
+	spline_y = UnivariateSpline(x, eulers[:,2], s=3000) 
+	axs[1].plot(x, spline_r(x), label="roll", color='r')
+	axs[1].plot(x, spline_p(x), label="pitch", color='g')
+	axs[1].plot(x, spline_y(x), label="yaw", color='b')
+	# magnitude
+	quats = np.array([np.array(lst) for lst in quat_df.values])
+	angles = 2 * np.arccos(quats[:,3].clip(-1, 1))
+	spline_angles = UnivariateSpline(x, angles, s=800) 
+	axs[1].plot(df.index.to_list(), spline_angles(x), label="angle magn", color='k')
+
+	Fg = np.array([0,0,-9.81])
+	# gravity force in the world frame (z-aligned)
+	# # solve direct for x
+	# Fx = lambda p: (Fg[2] * np.sin(p) )*0.05 +1
+	# fx = np.array([Fx(p) for r,p,y in eulers])
+	# spline_fx = UnivariateSpline(x, fx, s=300) 
+	# axs[0].plot(x, spline_fx(x), label="Fz_world", color='c')
+
+	# solve for all axes and extract Fx in the tcp frame
+	Fx = lambda q: (getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg)[0]*0.05 +1
+	fx = np.array( [Fx(np.array(q)) for q in quat_df.values] )
+	spline_fx = UnivariateSpline(x, fx, s=300) 
+	axs[0].plot(df.index.to_list(), spline_fx(x), label="Fx_tcp", color='m')
+
+	# zip
+	eulers_smoothed = list(zip(spline_r(x), spline_p(x), spline_y(x)))
+	quaternions_smoothed = np.array([getRotation(e, RotTypes.EULER, RotTypes.QUAT) for e in eulers_smoothed])
+	axs[2].plot(x, quaternions_smoothed[:, 0], label="x", color='r')
+	axs[2].plot(x, quaternions_smoothed[:, 1], label="y", color='g')
+	axs[2].plot(x, quaternions_smoothed[:, 2], label="z", color='b')
+	axs[2].plot(x, quaternions_smoothed[:, 3], label="w", color='k')
+
+	# save for stats
+	# df = pd.DataFrame(columns=["euler"])
+	# for e in eulers_smoothed:
+	# 	df = pd.concat([df, pd.DataFrame([{"euler":e}])], ignore_index=True)
+	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/eulers_smoothed.json"), orient="index", indent=4)
+
+	# df = pd.DataFrame(columns=["quat"])
+	# for q in quaternions_smoothed:
+	# 	df = pd.concat([df, pd.DataFrame([{"quat":q}])], ignore_index=True)
+	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/quaternions_smoothed.json"), orient="index", indent=4)
+
+	# F = lambda q: getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg # R@Fg
+	# f = np.array( [F(np.array(q)) for q in quat_df.values] )
+	# spline_fx = UnivariateSpline(x, f[:,0], s=300) 
+	# spline_fy = UnivariateSpline(x, f[:,1], s=300) 
+	# spline_fz = UnivariateSpline(x, f[:,2], s=300) 
+	# df = pd.DataFrame(columns=["f_tcp"])
+	# for f_elmt in list(zip(spline_fx(x), spline_fy(x), spline_fz(x))):
+	# 	df = pd.concat([df, pd.DataFrame([{"f_tcp":f_elmt}])], ignore_index=True)
+	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp_smoothed.json"), orient="index", indent=4)
+
+	plt.xlabel("Index")
+	plt.ylabel("Values")
+	axs[0].set_title(title)
+	axs[0].legend()
+	axs[1].legend()
+	axs[2].legend()
+	plt.grid(visible=True)
+
+	if save_pth is not None:
+		fig.savefig(save_pth, format='svg')
+	
+	plt.show()
+
+def plotHelper(joint: str='jointM1') -> None:
+	tcp_df: pd.DataFrame = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'), orient='index') 
+	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/joined/detection.json"))
+
+	joint_df: pd.DataFrame = detection_dct[joint]
+	joint_df['angle'] = joint_df['angle'].interpolate()
+	plotDataEuler(tcp_df['quat'], joint_df, joint)
+
+# animate orientation
+is_paused = False
+ani = None
+def animPose() -> None:
+	global ani 
+
+	matplotlib.use('TkAgg') 
+	tcp_df: pd.DataFrame = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'), orient='index') 
+	fixed_pos = np.array([0.5,-0.5,1.2])
+
+	fig = plt.figure(figsize=(10, 8))
+	ax = fig.add_subplot(111, projection='3d')
+	axis_length = 0.2
+
+	# lines for the coordinate frame
+	x_axis, = ax.plot([], [], [], 'r-', label='X', linewidth=2)  
+	y_axis, = ax.plot([], [], [], 'g-', label='Y', linewidth=2) 
+	z_axis, = ax.plot([], [], [], 'b-', label='Z', linewidth=2)
+	text = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12)
+	text2 = ax.text2D(0.05, 0.8, "", transform=ax.transAxes, fontsize=12)
+
+	def init():
+		ax.set_xlim(1, 0)
+		ax.set_ylim(0, -1)
+		ax.set_zlim(0.8, 1.8)
+		ax.set_xlabel('X')
+		ax.set_ylabel('Y')
+		ax.set_zlabel('Z')
+		ax.set_title('Animated Pose')
+		ax.legend()
+		text.set_text("Timestamp: 0.0 s, frame: 0")
+		text2.set_text("r: 0, p: 0, y: 0")
+		return x_axis, y_axis, z_axis, text, text2
+
+	def update(frame):
+		global is_paused
+		if is_paused:
+			return x_axis, y_axis, z_axis, "", ""
+
+		entry = tcp_df.iloc[frame]
+		ts = entry['timestamp']
+		position = fixed_pos # entry['trans']
+		quaternion = entry['quat']
+		R = getRotation(quaternion, RotTypes.QUAT, RotTypes.MAT)
+		euler = getRotation(quaternion, RotTypes.QUAT, RotTypes.EULER)
+
+		x_local = np.array([1, 0, 0]) * axis_length
+		y_local = np.array([0, 1, 0]) * axis_length
+		z_local = np.array([0, 0, 1]) * axis_length
+		
+		x_world = position + R @ x_local
+		y_world = position + R @ y_local
+		z_world = position + R @ z_local
+		
+		x_axis.set_data_3d([position[0], x_world[0]], 
+						[position[1], x_world[1]], 
+						[position[2], x_world[2]])
+		y_axis.set_data_3d([position[0], y_world[0]], 
+						[position[1], y_world[1]], 
+						[position[2], y_world[2]])
+		z_axis.set_data_3d([position[0], z_world[0]], 
+						[position[1], z_world[1]], 
+						[position[2], z_world[2]])
+		
+		text.set_text(f"Timestamp: {ts.strftime('%H:%M:%S')}, frame: {frame}")
+		text2.set_text(f"r: {euler[0]:2f}, p: {euler[1]:2f}, y: {euler[2]:2f}")
+		
+		return x_axis, y_axis, z_axis, text, text2
+
+	def on_key_press(event):
+		global is_paused, ani
+		# space
+		if event.key == ' ': 
+			is_paused = not is_paused
+			if is_paused:
+				ani.event_source.stop()
+				print("Animation paused")
+			else:
+				ani.event_source.start()
+				print("Animation resumed")
+
+	# Bind the key press event
+	fig.canvas.mpl_connect('key_press_event', on_key_press)
+
+	ani = animation.FuncAnimation(fig, update, frames=len(tcp_df), init_func=init, blit=True, interval=3, )
+
+	plt.show()
+
 if __name__ == "__main__":
-	plotKeypoints(0, 1000, True)
+	# plotKeypoints(0, 1000, True)
 	# plotAllTrainingData()
+	# animPose()
+	plotHelper()
