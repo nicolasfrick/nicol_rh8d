@@ -1,5 +1,4 @@
 import os
-import json
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -12,26 +11,27 @@ from statsmodels.tsa.stattools import grangercausalitytests
 from sklearn.feature_selection import mutual_info_regression
 from util import *
 
-with open(os.path.join(DATA_PTH, 'keypoint/post_processed/jointM1_angles.json'), 'r') as f:
-	jointM1_data = json.load(f)
-with open(os.path.join(DATA_PTH, 'keypoint/post_processed/jointM2_angles.json'), 'r') as f:
-	jointM2_data = json.load(f)
-with open(os.path.join(DATA_PTH, 'keypoint/post_processed/jointM3_angles.json'), 'r') as f:
-	jointM3_data = json.load(f)
+writer = open(os.path.join(DATA_PTH, "keypoint/post_processed/stats.txt"), "w")
 
+def writeStats(txt: str) -> None:
+	writer.write(txt)
+	writer.write("\n")
+	print(txt)
+
+detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"))
 angles = pd.DataFrame({
-	'angle_M1': pd.Series(jointM1_data),
-	'angle_M2': pd.Series(jointM2_data),
-	'angle_M3': pd.Series(jointM3_data)
+	'angle_M1': detection_dct['jointM1']['angle'],
+	'angle_M2': detection_dct['jointM2']['angle'],
+	'angle_M3': detection_dct['jointM3']['angle']
 })
 
-quats = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/quaternions_smoothed.json'), orient='index')
+quats = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/quaternions.json'), orient='index')
 quats = pd.DataFrame(quats['quat'].tolist(), index=quats.index, columns=['quat_0', 'quat_1', 'quat_2', 'quat_3'])
 
-eulers = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/eulers_smoothed.json'), orient='index')
+eulers = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/eulers.json'), orient='index')
 eulers = pd.DataFrame(eulers['euler'].tolist(), index=eulers.index, columns=['roll', 'pich', 'yaw'])
 
-forces = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/f_tcp_smoothed.json'), orient='index')
+forces = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/f_tcp.json'), orient='index')
 forces = pd.DataFrame(forces['f_tcp'].tolist(), index=forces.index, columns=['fx', 'fy', 'fz'])
 
 relatives = {'quats':quats, 'eulers':eulers, 'forces':forces}
@@ -44,9 +44,9 @@ forces.index = pd.RangeIndex(0, len(forces))
 def relate() -> None:
 
 	for relative, rel_data in relatives.items():
-		print(f"\n\n========={relative}============\n")
+		writeStats(f"\n\n========={relative}============\n")
 
-		print("=== Cross-Correlation ===")
+		writeStats("=== Cross-Correlation ===")
 		for angle in angles.columns:
 			for col in rel_data.columns:
 				# cross-correlation
@@ -57,15 +57,15 @@ def relate() -> None:
 				max_idx = np.argmax(np.abs(corr))
 				max_corr = corr[max_idx]
 				lag_at_max = lags[max_idx]
-				print(f"{angle} vs {col}: Max Corr = {max_corr:.3f} at lag {lag_at_max}")
+				writeStats(f"{angle} vs {col}: Max Corr = {max_corr:.3f} at lag {lag_at_max}")
 
-		print("\n=== Mutual Information ===")
+		writeStats("\n=== Mutual Information ===")
 		for angle in angles.columns:
 			# compute mi between angle and all quaternion components
 			mi = mutual_info_regression(rel_data, angles[angle], discrete_features=False)
-			print(f"{angle} vs {relative}: MI = {mi} {rel_data.columns.to_list()}")
+			writeStats(f"{angle} vs {relative}: MI = {mi} {rel_data.columns.to_list()}")
 
-		print("\n=== Granger Causality ===")
+		writeStats("\n=== Granger Causality ===")
 		data = pd.concat([angles, rel_data], axis=1)
 		max_lag = 5
 		for angle in angles.columns:
@@ -73,27 +73,27 @@ def relate() -> None:
 				try:
 					result = grangercausalitytests(data[[angle, col]], maxlag=max_lag)
 					min_p = min([result[i+1][0]['ssr_ftest'][1] for i in range(max_lag)])
-					print(f"{col} -> {angle}: Min p-value = {min_p:.4f} (across lags 1-{max_lag})")
+					writeStats(f"{col} -> {angle}: Min p-value = {min_p:.4f} (across lags 1-{max_lag})")
 				except ValueError as e:
-					print(f"{col} -> {angle}: Error - {e}")
+					writeStats(f"{col} -> {angle}: Error - {e}")
 
-		print("\n=== Linear Regression ===")
+		writeStats("\n=== Linear Regression ===")
 		for angle in angles.columns:
 			# fit linear regression model
 			reg = LinearRegression()
 			reg.fit(rel_data, angles[angle])
 			r_squared = reg.score(rel_data, angles[angle])
 			coefs = reg.coef_
-			print(f"{angle}: R² = {r_squared:.3f}, Coefficients = {coefs} {rel_data.columns.to_list()}")
+			writeStats(f"{angle}: R² = {r_squared:.3f}, Coefficients = {coefs} {rel_data.columns.to_list()}")
 
-		print("\n=== Dynamic Time Warping (DTW) ===")
+		writeStats("\n=== Dynamic Time Warping (DTW) ===")
 		for angle in angles.columns:
 			for col in rel_data.columns:
 				# compute DTW distance
 				dist = dtw.distance(angles[angle].values, rel_data[col].values)
 				# normalize by sequence length for comparability
 				normalized_dist = dist / len(angles)
-				print(f"{angle} vs {col}: Normalized DTW Distance = {normalized_dist:.3f}")
+				writeStats(f"{angle} vs {col}: Normalized DTW Distance = {normalized_dist:.3f}")
 			
 relate()
 
@@ -101,10 +101,10 @@ relate()
 data = pd.concat([angles, quats], axis=1)
 
 def analyze_distribution(series, name):
-	print(f"\n=== {name} Distribution Analysis ===")
+	writeStats(f"\n=== {name} Distribution Analysis ===")
 	# Basic statistics
-	print(f"Mean: {series.mean():.3f}, Std: {series.std():.3f}")
-	print(f"Skewness: {stats.skew(series):.3f}, Kurtosis: {stats.kurtosis(series):.3f}")
+	writeStats(f"Mean: {series.mean():.3f}, Std: {series.std():.3f}")
+	writeStats(f"Skewness: {stats.skew(series):.3f}, Kurtosis: {stats.kurtosis(series):.3f}")
 
 	# Convert Series to NumPy array to avoid pandas indexing error
 	series_array = series.to_numpy()
@@ -142,7 +142,7 @@ def analyze_distribution(series, name):
 		else:
 			params = getattr(stats, dist_name).fit(series_array)
 			ks_stat, p_val = stats.kstest(series_array, dist_name, params)
-		print(f"{dist_name}: KS Stat = {ks_stat:.3f}, p-value = {p_val:.3f}")
+		writeStats(f"{dist_name}: KS Stat = {ks_stat:.3f}, p-value = {p_val:.3f}")
 
 def findPdf() -> None:
 	# analyze each column
@@ -158,3 +158,5 @@ def findPdf() -> None:
 	plt.show()
 
 # findPdf()
+
+writer.close()

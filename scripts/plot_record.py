@@ -396,7 +396,7 @@ def plotDataMagn(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth: 
 	
 	plt.show()
 
-def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth: str=None) -> None:
+def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth: str=None, stats: bool=True) -> None:
 	matplotlib.use('TkAgg') 
 
 	fig, axs = plt.subplots(3, 1)
@@ -448,25 +448,46 @@ def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth:
 	axs[2].plot(x, quaternions_smoothed[:, 3], label="w", color='k')
 
 	# save for stats
-	# df = pd.DataFrame(columns=["euler"])
-	# for e in eulers_smoothed:
-	# 	df = pd.concat([df, pd.DataFrame([{"euler":e}])], ignore_index=True)
-	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/eulers_smoothed.json"), orient="index", indent=4)
+	if stats:
+		# smoothed eulers
+		df = pd.DataFrame(columns=["euler"])
+		for e in eulers_smoothed:
+			df = pd.concat([df, pd.DataFrame([{"euler":e}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/eulers_smoothed.json"), orient="index", indent=4)
+		# orig eulers
+		df = pd.DataFrame(columns=["euler"])
+		for e in eulers:
+			df = pd.concat([df, pd.DataFrame([{"euler":e}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/eulers.json"), orient="index", indent=4)
 
-	# df = pd.DataFrame(columns=["quat"])
-	# for q in quaternions_smoothed:
-	# 	df = pd.concat([df, pd.DataFrame([{"quat":q}])], ignore_index=True)
-	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/quaternions_smoothed.json"), orient="index", indent=4)
+		# smoothed quats
+		df = pd.DataFrame(columns=["quat"])
+		for q in quaternions_smoothed:
+			df = pd.concat([df, pd.DataFrame([{"quat": q}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/quaternions_smoothed.json"), orient="index", indent=4)
+		# quats
+		df = pd.DataFrame(columns=["quat"])
+		for q in quat_df.values:
+			df = pd.concat([df, pd.DataFrame([{"quat": np.array(q)}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/quaternions.json"), orient="index", indent=4)
 
-	# F = lambda q: getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg # R@Fg
-	# f = np.array( [F(np.array(q)) for q in quat_df.values] )
-	# spline_fx = UnivariateSpline(x, f[:,0], s=300) 
-	# spline_fy = UnivariateSpline(x, f[:,1], s=300) 
-	# spline_fz = UnivariateSpline(x, f[:,2], s=300) 
-	# df = pd.DataFrame(columns=["f_tcp"])
-	# for f_elmt in list(zip(spline_fx(x), spline_fy(x), spline_fz(x))):
-	# 	df = pd.concat([df, pd.DataFrame([{"f_tcp":f_elmt}])], ignore_index=True)
-	# df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp_smoothed.json"), orient="index", indent=4)
+		# force smoothed
+		F = lambda q: getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg # R@Fg
+		f = np.array( [F(np.array(q)) for q in quat_df.values] )
+		# smooth
+		spline_fx = UnivariateSpline(x, f[:,0], s=300) 
+		spline_fy = UnivariateSpline(x, f[:,1], s=300) 
+		spline_fz = UnivariateSpline(x, f[:,2], s=300) 
+		# save
+		df = pd.DataFrame(columns=["f_tcp"])
+		for f_elmt in list(zip(spline_fx(x), spline_fy(x), spline_fz(x))):
+			df = pd.concat([df, pd.DataFrame([{"f_tcp":f_elmt}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp_smoothed.json"), orient="index", indent=4)
+		# force
+		df = pd.DataFrame(columns=["f_tcp"])
+		for f_elmt in f:
+			df = pd.concat([df, pd.DataFrame([{"f_tcp" :f_elmt}])], ignore_index=True)
+		df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp.json"), orient="index", indent=4)
 
 	plt.xlabel("Index")
 	plt.ylabel("Values")
@@ -481,13 +502,10 @@ def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth:
 	
 	plt.show()
 
-def plotHelper(joint: str='jointM1') -> None:
+def plotHelper(joint: str='jointM2') -> None:
 	tcp_df: pd.DataFrame = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'), orient='index') 
-	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/joined/detection.json"))
-
-	joint_df: pd.DataFrame = detection_dct[joint]
-	joint_df['angle'] = joint_df['angle'].interpolate()
-	plotDataEuler(tcp_df['quat'], joint_df, joint)
+	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json")) # nans and outliers removed
+	plotDataEuler(tcp_df['quat'], detection_dct[joint], joint)
 
 # animate orientation
 is_paused = False
