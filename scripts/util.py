@@ -53,6 +53,8 @@ MLP_CHKPT_PTH = os.path.join(TRAIN_PTH, 'mlp/checkpoints')
 
 # indices for translation data
 TRANS_COLS = ["x", "y", "z"]
+# indices for froce data
+TRANS_COLS = ["fx", "fy", "fz"]
 # indices for orientation data
 QUAT_COLS = ["x", "y", "z", "w"]
 # generate names for a training dataset
@@ -64,6 +66,15 @@ GEN_TRAIN_COLS = lambda feature_names, target_names, trans_names: [f"cmd{name.re
 																																				[f"trans{name.replace('joint_', '').replace('bumper', '')}" for name in trans_names]
 # dynamic index generation for translation data
 format_trans_cols = lambda idx: [f"x_{idx}", f"y_{idx}", f"z_{idx}"]
+
+# generate names for a training dataset
+# ['cmdA1', ..., 'cmdZ1', 'dirA1', ..., 'dirZ1', 'quat', 'force', 'angleA1', ..., 'angleAn', ..., 'angleZn', 'transA', ..., 'transZ']
+GEN_TRAIN_COLS_FORCE = lambda feature_names, target_names, trans_names: [f"cmd{name.replace('joint', '')}" for name in feature_names] + \
+                                                                                                                                                                [f"dir{name.replace('joint', '')}" for name in feature_names] + \
+                                                                                                                                                                ["quat"] + \
+                                                                                                                                                                ["force"] + \
+                                                                                                                                                                [f"angle{name.replace('joint', '')}" for name in target_names] + \
+                                                                                                                                                                [f"trans{name.replace('joint_', '').replace('bumper', '')}" for name in trans_names]
 
 
 def mkDirs() -> None:

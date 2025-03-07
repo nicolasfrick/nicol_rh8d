@@ -101,6 +101,68 @@ def joinTrainingData(  in_joints: list,
 
 	return train_dct
 
+def joinTrainingDataForce(in_joints: list,
+													out_joints: list,
+													tools: list,
+													train_cols: list,
+													detection_dct: pd.DataFrame, 
+													keypoints_dct: pd.DataFrame,
+													fk_df: pd.DataFrame,
+													force_df: pd.DataFrame,
+													tcp: str,
+													) -> dict:
+	
+	col_idx = 0
+	train_dct = {}
+	
+	# copy actuator cmds 
+	for joint in in_joints:
+		cmd_data = detection_dct[joint]['cmd'].tolist()
+		train_dct.update( {train_cols[col_idx] : cmd_data} )
+		col_idx += 1
+
+	# copy actuator dirs 
+	for joint in in_joints:
+		cmd_data = detection_dct[joint]['direction'].tolist()
+		train_dct.update( {train_cols[col_idx] : cmd_data} )
+		col_idx += 1
+
+	# copy tcp orientation
+	quat = fk_df['quat'].tolist()
+	train_dct.update( {train_cols[col_idx] : quat} )
+	col_idx += 1
+
+	# copy tcp forces
+	f_tcp = force_df['f_tcp'].tolist()
+	train_dct.update( {train_cols[col_idx] : f_tcp} )
+	col_idx += 1
+
+	# copy joint angles
+	for joint in out_joints:
+		joint_data = detection_dct[joint]['angle'].tolist()
+		train_dct.update( {train_cols[col_idx] : joint_data} )
+		col_idx += 1
+
+	# copy tip positions
+	for tool in tools:
+		# we want tf tip relative to tcp
+		transformed_trans = []
+		for idx in range(len(keypoints_dct[tool])):
+			tip_trans = keypoints_dct[tool]['trans'][idx]
+			tip_rot = keypoints_dct[tool]['rot_mat'][idx]
+			tcp_trans = keypoints_dct[tcp]['trans'][idx]
+			tcp_rot = keypoints_dct[tcp]['rot_mat'][idx]
+			T_root_tip = pose2Matrix(tip_trans, tip_rot, RotTypes.MAT)
+			(tvec, rot_mat) = invPersp(tcp_trans, tcp_rot, RotTypes.MAT)
+			T_tcp_root = pose2Matrix(tvec, rot_mat, RotTypes.MAT)
+			T_tcp_tip = T_tcp_root @ T_root_tip
+			transformed_trans.append(T_tcp_tip[:3, 3])
+
+		train_dct.update( {train_cols[col_idx] : transformed_trans} )
+		col_idx += 1
+
+	return train_dct
+
 def genTrainingData(net_config: str, folder: str, post_proc: bool=False) -> None:
 	"""  Load joined datasets and create training data
 			for in- and output joints given by the given net_config. 
@@ -166,14 +228,106 @@ def genTrainingData(net_config: str, folder: str, post_proc: bool=False) -> None
 	train_df.to_json(os.path.join(TRAIN_PTH, folder, f'{net_config}_{net_type}.json'), orient="index", indent=4)
 	print("\nFinished dataset generation for", net_config, "with data columns:\n", train_cols)
 
-def genAllTrainingData(post_proc: bool) -> None:
-	fl = os.path.join(os.path.dirname(os.path.dirname(
-		os.path.abspath(__file__))), "cfg/net_config.yaml")
+def genDenseTrainingData(net_config: str, folder: str, data_dct: dict) -> None:
+	"""  Load post processed datasets and create training data
+			for in- and output joints given by the given net_config. 
+			Save training data in a single dataframe.
+	"""
+	# load dataset config for a net type
+	config: dict = loadNetConfig(net_config)
+
+	in_joints: list = config['input']
+	out_joints: list = config['output']
+	tools: list = config['tools']
+	tcp: str = config['relative_to']
+	net_type: str = config['type']
+
+	print("Creating dataset for", net_config, ", type:", net_type, "\ninput:", in_joints,
+		  "\noutput:", out_joints, "\ntools:", tools, "\nrelative to", tcp, "\n")
+
+	for data_type, data in data_dct.items():
+		print("Dataset", data_type)
+
+		detection_dct = data['detection']
+		keypoints_dct = data['keypoints' ]
+		fk_df = data['fk_df']
+		f_tcp = data['f_tcp']
+
+		# create training data
+		train_cols: list = GEN_TRAIN_COLS_FORCE(in_joints, 
+																							out_joints, 
+																							tools)
+		
+		train_dct:  dict =  joinTrainingDataForce(in_joints, 
+																					   out_joints, 
+																					   tools, 
+																					   train_cols, 
+																					   detection_dct, 
+																					   keypoints_dct, 
+																					   fk_df, 
+																					   f_tcp,
+																					   tcp)
+		
+		# final data
+		train_df = pd.DataFrame(columns=train_cols)
+		# arrange per index [0,..,n]
+		for idx in range(len(fk_df)):
+			# new row
+			data = {}
+			for key, val_list in train_dct.items():
+				# feature/target per index
+				data.update( {key : val_list[idx]} )
+			# concat row
+			train_df = pd.concat([train_df, pd.DataFrame([data])], ignore_index=True)
+		
+		# save
+		pth = os.path.join(TRAIN_PTH, folder, data_type)
+		if not os.path.exists(pth):
+			os.makedirs(pth, exist_ok=True)
+		train_df.to_json(os.path.join(pth, f'{net_config}_{net_type}.json'), orient="index", indent=4)
+		print("\nFinished", data_type, "dataset generation for", net_config, "with data columns:\n", train_cols)
+
+def genAllTrainingData(post_proc: bool, dense: bool) -> None:
+	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/net_config.yaml")
 	with open(fl, 'r') as fr:
 		config = yaml.safe_load(fr)
-		for  c in config.keys():
+
+	# load recordings
+	data_pth = os.path.join(DATA_PTH, "keypoint/post_processed/")
+	# detection
+	smoothed_detection_dct: dict = readDetectionDataset(os.path.join(data_pth, 'detection_smoothed.json')) 
+	dense_detection_dct: dict = readDetectionDataset(os.path.join(data_pth, 'dense_detection.json')) 
+	detection_dct = {}
+	for joint, df in smoothed_detection_dct.items():
+		cdf = pd.concat([df, dense_detection_dct[joint]], ignore_index=False)
+		detection_dct.update( {joint: cdf.reset_index(drop=True)} )
+	# keypoints
+	smoothed_keypoints_dct: dict = readDetectionDataset(os.path.join(data_pth, 'kpts3D_smoothed.json'))
+	dense_keypoints_dct: dict = readDetectionDataset(os.path.join(data_pth, 'dense_kpts3D.json'))
+	keypoints_dct = {}
+	for joint, df in smoothed_keypoints_dct.items():
+		cdf = pd.concat([df, dense_keypoints_dct[joint]], ignore_index=False)
+		keypoints_dct.update( {joint: cdf.reset_index(drop=True)} )
+	# forces
+	orig_f_tcp: pd.DataFrame = pd.read_json(os.path.join(data_pth, 'f_tcp.json'), orient='index')  
+	dense_f_tcp: pd.DataFrame = pd.read_json(os.path.join(data_pth, 'dense_f_tcp.json'), orient='index')  
+	f_tcp = pd.concat([orig_f_tcp, dense_f_tcp], ignore_index=False).reset_index(drop=True)
+	# tcp fk
+	orig_fk_df: pd.DataFrame = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'),orient='index')  
+	dense_fk_df: pd.DataFrame = pd.read_json(os.path.join(data_pth, 'dense_tcp_tf.json'),orient='index')  
+	fk_df = pd.concat([orig_fk_df, dense_fk_df], ignore_index=False).reset_index(drop=True)
+	# join all data
+	data_dct = {'smoothed': {'detection': smoothed_detection_dct, 'keypoints': smoothed_keypoints_dct, 'f_tcp': orig_f_tcp, 'fk_df': orig_fk_df},
+			 				'dense': {'detection': dense_detection_dct, 'keypoints': dense_keypoints_dct, 'f_tcp': dense_f_tcp, 'fk_df': dense_fk_df},
+							'all':  {'detection': detection_dct, 'keypoints': keypoints_dct, 'f_tcp': f_tcp, 'fk_df': fk_df},
+						  }
+
+	for  c in config.keys():
+		if dense: 
+			genDenseTrainingData(net_config=c, folder='config_processed_dense', data_dct=data_dct)
+		else:
 			genTrainingData(net_config=c, folder='config_processed' if post_proc else 'config', post_proc=post_proc)
-			print()
+		print()
 
 def replaceNanDataByZeros() -> None:
 	"""Postproc data records by replacing nan values in detection and
@@ -462,6 +616,11 @@ def checkDataIntegrity() -> None:
 	print("\nDone")
 	pb.disconnect()
 
+def decomposeData() -> None:
+	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"))
+	for joint, df in detection_dct.items():
+		df[["angle",  "cmd", "direction", "description"]].to_json(os.path.join(DATA_PTH, f"keypoint/tmp/{joint}.json"), orient="index", indent=4)
+
 def replaceOutliersIQR(df: pd.DataFrame, lim_low: float=-np.pi/2, lim_high: float=np.pi/2) -> pd.DataFrame:
 	"""Replace outliers beyond limits with interpolated values."""
 	df_out = df.copy()
@@ -588,6 +747,10 @@ def denseData(detection_dct: dict, tcp_df: pd.DataFrame) -> Tuple[dict, pd.DataF
 	return dense_df_dict, dense_tcp_tf
 
 def postProcInterpolateNans() -> None:
+	"""	 full dataset:
+			detection_smoothed + dense_detection, tcp_tf + dense_tcp_tf, kpts3D_smoothed + dense_kpts3D, f_tcp + dense_f_tcp
+	"""
+
 	# replace nans by config values
 	# detection_dct: dict = replaceNanDataByZeros()
 	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_nans_replaced.json"))
@@ -655,11 +818,6 @@ def postProcInterpolateNans() -> None:
 		df = pd.concat([df, pd.DataFrame([{"f_tcp" : f_elmt}])], ignore_index=True)
 	df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_f_tcp.json"), orient="index", indent=4)
 
-	# full dataset:
-	# detection_smoothed + dense_detection, tcp_tf + dense_tcp_tf, kpts3D_smoothed + dense_kpts3D, f_tcp + dense_f_tcp
-
 if __name__ == "__main__":
-	postProcInterpolateNans()
-	# genAllTrainingData(post_proc=True)
-	# for joint, df in detection_dct.items():
-	# 	df[["angle",  "cmd", "direction", "description"]].to_json(os.path.join(DATA_PTH, f"keypoint/tmp/{joint}.json"), orient="index", indent=4)
+	# postProcInterpolateNans()
+	genAllTrainingData(post_proc=True, dense=True)
