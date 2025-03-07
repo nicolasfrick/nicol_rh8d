@@ -84,22 +84,22 @@ joint_repl_values:
 
 # descriptions for actuator commands
 description_mapping:
-  joint7: 'wrist abduction'
-  joint8: 'wrist flexion'
-  jointT0: 'thumb abduction'
-  jointT1: 'thumb flexion'
-  jointT2: 'thumb flexion'
-  jointT3: 'thumb flexion'
-  jointI1: 'jointI1 flexion'
-  jointI2: 'jointI1 flexion'
-  jointI3: 'jointI1 flexion'
-  jointM1: 'jointM1 flexion'
-  jointM2: 'jointM1 flexion'
-  jointM3: 'jointM1 flexion'
-  jointR1: 'jointL1R1 flexion'
-  jointR2: 'jointL1R1 flexion'
-  jointR3: 'jointL1R1 flexion'
-  jointL1: 'jointL1R1 flexion'
-  jointL2: 'jointL1R1 flexion'
-  jointL3: 'jointL1R1 flexion'
+  joint7: {name: 'wrist abduction', len: 9, offset: 0}
+  joint8: {name: 'wrist flexion', len: 9, offset: 12}
+  jointT0: {name: 'thumb abduction', len: 12, offset: 22}
+  jointT1: {name: 'thumb flexion', len: 36, offset: 35}
+  jointT2: {name: 'thumb flexion', len: 36, offset: 35}
+  jointT3: {name: 'thumb flexion', len: 36, offset: 35}
+  jointI1: {name: 'jointI1 flexion', len: 36, offset: 72}
+  jointI2: {name: 'jointI1 flexion', len: 36, offset: 72}
+  jointI3: {name: 'jointI1 flexion', len: 36, offset: 72}
+  jointM1: {name: 'jointM1 flexion', len: 36, offset: 109}
+  jointM2: {name: 'jointM1 flexion', len: 36, offset: 109}
+  jointM3: {name: 'jointM1 flexion', len: 36, offset: 109}
+  jointR1: {name: 'jointL1R1 flexion', len: 36, offset: 146}
+  jointR2: {name: 'jointL1R1 flexion', len: 36, offset: 146}
+  jointR3: {name: 'jointL1R1 flexion', len: 36, offset: 146}
+  jointL1: {name: 'jointL1R1 flexion', len: 36, offset: 146}
+  jointL2: {name: 'jointL1R1 flexion', len: 36, offset: 146}
+  jointL3: {name: 'jointL1R1 flexion', len: 36, offset: 146}
   misc: ['home', 'start', 'new sequence', 'reset angle']

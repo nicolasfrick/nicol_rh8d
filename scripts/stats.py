@@ -25,6 +25,9 @@ angles = pd.DataFrame({
 	'angle_M3': detection_dct['jointM3']['angle']
 })
 
+cmds = detection_dct['jointM1']['cmd']
+cmds = pd.DataFrame(cmds.tolist(), index=cmds.index, columns=['cmd'])
+
 quats = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/quaternions.json'), orient='index')
 quats = pd.DataFrame(quats['quat'].tolist(), index=quats.index, columns=['quat_0', 'quat_1', 'quat_2', 'quat_3'])
 
@@ -34,7 +37,7 @@ eulers = pd.DataFrame(eulers['euler'].tolist(), index=eulers.index, columns=['ro
 forces = pd.read_json(os.path.join(DATA_PTH, 'keypoint/post_processed/f_tcp.json'), orient='index')
 forces = pd.DataFrame(forces['f_tcp'].tolist(), index=forces.index, columns=['fx', 'fy', 'fz'])
 
-relatives = {'quats':quats, 'eulers':eulers, 'forces':forces}
+relatives = {'cmds': cmds}#, 'quats':quats, 'eulers':eulers, 'forces':forces}
 
 angles.index = pd.RangeIndex(0, len(angles))
 quats.index = pd.RangeIndex(0, len(quats))

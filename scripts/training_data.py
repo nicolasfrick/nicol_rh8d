@@ -217,7 +217,7 @@ def replaceNanDataByZeros() -> None:
 				preceeding_row = df.loc[predecessor_idx]
 
 				# manipulate only entries where this joint is idle
-				if descr_mapping[joint] != preceeding_row['description']:
+				if descr_mapping[joint]['name'] != preceeding_row['description']:
 					# copy row and replace values
 					rplc_row = preceeding_row.copy()
 					rplc_row['cmd'] =  joint_repl_values[joint]['zero']['cmd']
@@ -340,7 +340,7 @@ def findCommonIndicesAllJoints(detection_dct: dict) -> Tuple[list, list]:
 	# cast
 	return common_indices.tolist(), first_joint_df.index.tolist()
 
-def fkFromDetection(detection_dct: dict=None) -> None:
+def fkFromDetection(detection_dct: dict=None) -> dict:
 	"""Compute keypoints from post-processed
 		 detections. Comput. criteria: all joints have valid 
 		 detection entries/ no nans for complete fk. Invalid
@@ -397,11 +397,9 @@ def fkFromDetection(detection_dct: dict=None) -> None:
 
 		print(f"\r{idx:5}", end="", flush=True)
 
-	# save 
-	print("\ndone. Saving...")
-	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
-	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D_smoothed.json"), orient="index", indent=4)
+	print("\ndone.")
 	pb.disconnect()
+	return 	keypt_df_dict
 	
 def checkDataIntegrity() -> None:
 
@@ -475,7 +473,7 @@ def replaceOutliersIQR(df: pd.DataFrame, lim_low: float=-np.pi/2, lim_high: floa
 	upper_bound = Q3 + 1.5 * IQR
 	
 	condition = (df_out['angle'] >= lower_bound) & (df_out['angle'] <= upper_bound) & \
-	            			(df_out['angle'] >= lim_low) & (df_out['angle'] <= lim_high)
+							(df_out['angle'] >= lim_low) & (df_out['angle'] <= lim_high)
 	
 	df_out.loc[~condition, 'angle'] = np.nan
 	df_out['angle'] = df_out['angle'].interpolate(method='linear').ffill().bfill()
@@ -547,13 +545,53 @@ def postProcRemoveNans() -> None:
 	det_df = pd.DataFrame({joint: [df] for joint, df in smooth_det_dct.items()})
 	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"), orient="index", indent=4)
 		
-	fkFromDetection(detection_dct)
+	keypt_df_dict = fkFromDetection(detection_dct)
+	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
+	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D.json"), orient="index", indent=4)
+
 	checkDataIntegrity()
+	
+def denseData(detection_dct: dict, tcp_df: pd.DataFrame) -> Tuple[dict, pd.DataFrame]:
+	# fixed orientation sequence 
+	sequence_start = detection_dct['joint7'][detection_dct['joint7']['description'] == "new sequence"].index.to_list()
+	sequence_start[0] = 0
+	cols = detection_dct['joint7'].columns
+	
+	# load config
+	fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/post_proc.yaml")
+	with open(fl, 'r') as fr:
+		config = yaml.safe_load(fr)
+	mapping = config['description_mapping']
+
+	max_val = 37 # max len of finger actuations
+	dense_tcp_tf = pd.DataFrame(columns=tcp_df.columns)
+	dense_df_dict = {joint : pd.DataFrame(columns=cols) for joint in detection_dct.keys()}
+
+	# interleave actuated values
+	for idx in range(len(sequence_start)):
+		start_idx = sequence_start[idx]
+		# copy actuation sequence length of quasi-static orientations
+		dense_tcp_tf = pd.concat([dense_tcp_tf, tcp_df[start_idx : start_idx + max_val]], ignore_index=False)
+
+		for joint, df in detection_dct.items():
+			# copy fixed length from actuation offset index
+			actuated_seq_data = df.iloc[start_idx + mapping[joint]['offset'] : start_idx + mapping[joint]['offset'] + max_val]
+			# fill
+			while len(actuated_seq_data) != 37:
+				last_row = actuated_seq_data.iloc[-1]
+				new_row = pd.DataFrame([last_row.to_dict()], index=[len(actuated_seq_data)])
+				actuated_seq_data = pd.concat([actuated_seq_data, new_row], ignore_index=False)
+				print("filled", len(actuated_seq_data), joint, start_idx + mapping[joint]['offset'], start_idx + mapping[joint]['offset'] + max_val)
+			# concat
+			dense_df_dict[joint] = pd.concat([dense_df_dict[joint], actuated_seq_data], ignore_index=False)
+
+	return dense_df_dict, dense_tcp_tf
 
 def postProcInterpolateNans() -> None:
 	# replace nans by config values
 	# detection_dct: dict = replaceNanDataByZeros()
 	detection_dct = readDetectionDataset(os.path.join(DATA_PTH, "keypoint/post_processed/detection_nans_replaced.json"))
+	fk_df = pd.read_json(os.path.join(DATA_PTH, 'keypoint/joined/tcp_tf.json'),orient='index')
 
 	# interpolate other nan values for all angles
 	for joint, df in detection_dct.items():
@@ -583,10 +621,45 @@ def postProcInterpolateNans() -> None:
 	# save
 	det_df = pd.DataFrame({joint: [df] for joint, df in smooth_det_dct.items()})
 	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/detection_smoothed.json"), orient="index", indent=4)
-	
+
 	# compute keypoints
-	fkFromDetection(smooth_det_dct)
+	keypt_df_dict = fkFromDetection(smooth_det_dct)
+	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
+	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/kpts3D_smoothed.json"), orient="index", indent=4)
+
+	# create dense dataset
+	dense_det_dct, dense_tcp_df = denseData(smooth_det_dct, fk_df)
+	# save
+	det_df = pd.DataFrame({joint: [df.reset_index(drop=True)] for joint, df in dense_det_dct.items()})
+	det_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_detection.json"), orient="index", indent=4)
+	dense_tcp_df.reset_index(drop=True).to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_tcp_tf.json"), orient="index", indent=4)
+
+	# compute dense keypoints
+	keypt_df_dict = fkFromDetection({joint: df.reset_index(drop=True) for joint, df in dense_det_dct.items()})
+	kypt_df = pd.DataFrame({link: [df] for link, df in keypt_df_dict.items()})
+	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_kpts3D.json"), orient="index", indent=4)
+
+	# compute forces
+	Fg = np.array([0,0,-9.81])
+	F = lambda q: getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg # R@Fg
+	f = np.array( [F(np.array(q)) for q in fk_df['quat'].values] )
+	df = pd.DataFrame(columns=["f_tcp"])
+	for f_elmt in f:
+		df = pd.concat([df, pd.DataFrame([{"f_tcp" : f_elmt}])], ignore_index=True)
+	df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp.json"), orient="index", indent=4)
+
+	# compute dense forces
+	f = np.array( [F(np.array(q)) for q in dense_tcp_df['quat'].values] )
+	df = pd.DataFrame(columns=["f_tcp"])
+	for f_elmt in f:
+		df = pd.concat([df, pd.DataFrame([{"f_tcp" : f_elmt}])], ignore_index=True)
+	df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_f_tcp.json"), orient="index", indent=4)
+
+	# full dataset:
+	# detection_smoothed + dense_detection, tcp_tf + dense_tcp_tf, kpts3D_smoothed + dense_kpts3D, f_tcp + dense_f_tcp
 
 if __name__ == "__main__":
 	postProcInterpolateNans()
 	# genAllTrainingData(post_proc=True)
+	# for joint, df in detection_dct.items():
+	# 	df[["angle",  "cmd", "direction", "description"]].to_json(os.path.join(DATA_PTH, f"keypoint/tmp/{joint}.json"), orient="index", indent=4)
