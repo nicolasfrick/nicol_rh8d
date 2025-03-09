@@ -107,12 +107,14 @@ class TrainingData():
 
 				# input data
 				self.X_quats = None # single
+				self.X_forces = None # single
 				self.X_cmds = {}
 				self.X_dirs = {}
 				# target data
 				self.y_trans = {}
 				self.y_angles = {}
 				# scalers
+				self.X_forces_scalers = {}
 				self.X_cmds_scalers = {}
 				self.y_angles_scalers = {}
 				self.y_trans_scalers = {}
@@ -203,6 +205,9 @@ class TrainingData():
 					elif 'quat' in col:
 							self.X_quats  = np.array([list(q) for q in data], dtype=np.float32)
 							assert(self.checkUnitQuaternions(self.X_quats)) # require unit quaternions
+					# process input forces
+					elif 'force' in col:
+							self.X_forces  = np.array([list(f) for f in data], dtype=np.float32)
 					# process target angles
 					elif 'angle' in col:
 							self.y_angles.update({col: data})
@@ -213,13 +218,17 @@ class TrainingData():
 							raise NotImplementedError
 					
 		def stackData(self) -> Tuple[np.ndarray, np.ndarray]:
-				"""Stack data to a feature vector X [quats, cmd_1, .., cmd_n, dir_1, ..., dir_n] and
+				"""Stack data to a feature vector X [quats, [forces], cmd_1, .., cmd_n, dir_1, ..., dir_n] and
 						a target vector y [[trans_1, ..., trans_n], angle_1, ..., angle_n].
 				"""
 				# features X:
 				# quaternions first, always present
 				X = self.X_quats.copy()
 				self.feature_names = QUAT_COLS.copy()
+				# forces second, if present
+				if self.X_forces is not None:
+					X = np.hstack([X, self.X_forces.copy()])
+					self.feature_names.extend(FORCE_COLS.copy())
 				# stack commands
 				for name, X_cmd in self.X_cmds.items():
 						self.feature_names.append(name)
@@ -381,12 +390,18 @@ class TrainingData():
 		def normalizeTrainData(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
 			""" Normalize the training data by the given method and save scaler for later use.
 			"""
+			cmds_start_idx = len(QUAT_COLS) if self.X_forces is None else len(QUAT_COLS) + len(FORCE_COLS)
+
 			# features:
-			# normalize only cmds
+			# normalize force
+			if self.X_forces is not None:
+				X_train[:, len(QUAT_COLS) : cmds_start_idx ] = self.normalizeData(X_train[:, len(QUAT_COLS) : cmds_start_idx ], self.input_norm, self.X_forces_scalers, "force")
+
+			# normalize cmds
 			for idx, name in enumerate(self.X_cmds.keys()):
 				# norm separated, quaternions always present
-				assert(self.feature_names[len(QUAT_COLS)+idx] == name)
-				X_train[:, len(QUAT_COLS)+idx] = self.normalizeData(X_train[:, len(QUAT_COLS)+idx].reshape(-1, 1), self.input_norm, self.X_cmds_scalers, name).flatten()
+				assert(self.feature_names[cmds_start_idx + idx] == name)
+				X_train[:, cmds_start_idx + idx] = self.normalizeData(X_train[:, cmds_start_idx + idx].reshape(-1, 1), self.input_norm, self.X_cmds_scalers, name).flatten()
 
 			# targets:
 			start_idx = 0
@@ -405,13 +420,18 @@ class TrainingData():
 			"""	  Scale validation or test data by the scaler instance from train data normalization.
 				 	Skip scaling if no scaler is present
 			"""
+			cmds_start_idx = len(QUAT_COLS) + len(FORCE_COLS) if self.X_forces_scalers else len(QUAT_COLS)
 
 			# features:
+			if self.X_forces_scalers:
+				# scale forces
+				X_val_test[:, len(QUAT_COLS) : cmds_start_idx] = self.scaleInputOutputData(self.X_forces_scalers["force"], X_val_test[:, len(QUAT_COLS) : cmds_start_idx])
+
 			if self.X_cmds_scalers:
-				# scale only commands
+				# scale commands
 				for idx, name in enumerate(self.X_cmds.keys()):
 					# scale separated, quaternions always present
-					X_val_test[:, len(QUAT_COLS)+idx] = self.scaleInputOutputData(self.X_cmds_scalers[name], X_val_test[:, len(QUAT_COLS)+idx].reshape(-1, 1)).flatten()
+					X_val_test[:, cmds_start_idx + idx] = self.scaleInputOutputData(self.X_cmds_scalers[name], X_val_test[:, cmds_start_idx + idx].reshape(-1, 1)).flatten()
 
 			# targets
 			start_idx = 0
@@ -645,7 +665,7 @@ class WrappedMLP(pl.LightningModule):
 				self.r2_score = R2Score()
 				self.cum_r2_score = []
 				# loss
-				self.loss_fn = nn.MSELoss()
+				self.loss_fn = nn.MSELoss(reduction='none')
 				self.cum_train_loss = []
 				self.cum_val_loss = []
 				# test stage

@@ -261,7 +261,7 @@ def plotTrainingDataLogScale(file_pth: str) -> None:
 	
 def plotKeypoints(start: int=0, end: int=10000, plt_pp: bool=False) -> None:
 	# load keypoints
-	keypoints_dct = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/joined/kpts3D.json')) 
+	keypoints_dct = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/post_processed/dense_kpts3D.json')) 
 	if plt_pp:
 		pp_keypoints_dct = readDetectionDataset(os.path.join(DATA_PTH, 'keypoint/post_processed/kpts3D.json')) 
 	# get tcp name
@@ -596,7 +596,7 @@ def animPose() -> None:
 	plt.show()
 
 if __name__ == "__main__":
-	# plotKeypoints(0, 1000, True)
+	plotKeypoints(0, 1000, False)
 	# plotAllTrainingData()
 	# animPose()
-	plotHelper()
+	# plotHelper()

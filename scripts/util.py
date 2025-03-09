@@ -54,7 +54,7 @@ MLP_CHKPT_PTH = os.path.join(TRAIN_PTH, 'mlp/checkpoints')
 # indices for translation data
 TRANS_COLS = ["x", "y", "z"]
 # indices for froce data
-TRANS_COLS = ["fx", "fy", "fz"]
+FORCE_COLS = ["fx", "fy", "fz"]
 # indices for orientation data
 QUAT_COLS = ["x", "y", "z", "w"]
 # generate names for a training dataset
