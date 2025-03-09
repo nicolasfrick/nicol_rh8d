@@ -29,12 +29,15 @@ from optuna.integration import PyTorchLightningPruningCallback
 from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from util import *
 from plot_record import *
+torch.set_printoptions(threshold=10000)
 
 # torch at cuda or cpu
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 NUM_DEV = torch.cuda.device_count()
 DEVICES = list(range(NUM_DEV))
 NAME_DEV = [torch.cuda.get_device_name(cnt) for cnt in range(NUM_DEV)]
+
+CMD_ZEROS = {'cmd7': 0, 'cmd8': 0, 'cmdT0': 0, 'cmdT1': -np.pi, 'cmdI1': -np.pi, 'cmdM1': -np.pi, 'cmdR1': -np.pi}
 
 class TrainingData():
 		"""
@@ -118,6 +121,7 @@ class TrainingData():
 				self.X_cmds_scalers = {}
 				self.y_angles_scalers = {}
 				self.y_trans_scalers = {}
+				self.scaled_zero_cmds = None
 
 				# tensors
 				self.X_train_tensor = None
@@ -390,6 +394,7 @@ class TrainingData():
 		def normalizeTrainData(self, X_train: np.ndarray, y_train: np.ndarray) -> None:
 			""" Normalize the training data by the given method and save scaler for later use.
 			"""
+			self.scaled_zero_cmds = []
 			cmds_start_idx = len(QUAT_COLS) if self.X_forces is None else len(QUAT_COLS) + len(FORCE_COLS)
 
 			# features:
@@ -402,6 +407,9 @@ class TrainingData():
 				# norm separated, quaternions always present
 				assert(self.feature_names[cmds_start_idx + idx] == name)
 				X_train[:, cmds_start_idx + idx] = self.normalizeData(X_train[:, cmds_start_idx + idx].reshape(-1, 1), self.input_norm, self.X_cmds_scalers, name).flatten()
+				# save scaled zero values
+				scaled_zero_cmd = self.scaleInputOutputData(self.X_cmds_scalers[name], np.array(CMD_ZEROS[name]).reshape(-1, 1)).flatten()
+				self.scaled_zero_cmds.append(scaled_zero_cmd[0])
 
 			# targets:
 			start_idx = 0
@@ -632,7 +640,15 @@ class WrappedMLP(pl.LightningModule):
 						@property weight_decay
 						@type float
 						@param log_on_step
-						@param bool
+						@type bool
+						@param loss_weight
+						@type float
+						@param weighting_threshold
+						@type float
+						@param scaled_zero_cmds
+						@type list
+						@param use_loss_weighting
+						@type bool
 
 		"""
 
@@ -647,7 +663,11 @@ class WrappedMLP(pl.LightningModule):
 								 batch_size: int, # for logging only
 								 feature_names: list, # for logging only
 								 target_names: list, # for logging only
+								 scaled_zero_cmds: list,
 								 log_on_step: bool=True,
+								 loss_weight: float=9.0,
+								 weighting_threshold: float=0.1,
+								 use_loss_weighting: bool=True,
 								 ) -> None:
 
 				super().__init__()
@@ -665,7 +685,7 @@ class WrappedMLP(pl.LightningModule):
 				self.r2_score = R2Score()
 				self.cum_r2_score = []
 				# loss
-				self.loss_fn = nn.MSELoss(reduction='none')
+				self.loss_fn = nn.MSELoss(reduction='none' if use_loss_weighting else 'mean')
 				self.cum_train_loss = []
 				self.cum_val_loss = []
 				# test stage
@@ -673,6 +693,44 @@ class WrappedMLP(pl.LightningModule):
 
 				# log per step
 				self.log_on_step = log_on_step
+
+				if use_loss_weighting:
+					# cmd indices to target indices map
+					self.cmd_target_indices = {7: [15], # 'cmd7': 'joint7'
+																		8: [16], # 'cmd8': 'joint8'
+																		9: [0, 1, 2, 17], # 'cmdT0': 'x_T', 'y_T', 'z_T', 'angleT0'
+																		10: [0, 1, 2, 18, 19, 20], # 'cmdT1': 'x_T', 'y_T', 'z_T', 'angleT1', 'angleT2', 'angleT3',
+																		11: [3, 4, 5, 21, 22, 23], # 'cmdI1':  'x_I', 'y_I', 'z_I',  'angleI1', 'angleI2', 'angleI3'
+																		12: [6, 7, 8, 24, 25, 26], # 'cmdM1': 'x_M', 'y_M', 'z_M', 'angleM1', 'angleM2', 'angleM3'
+																		13: [9, 10, 11, 12, 13, 14, 27, 28, 29, 30, 31, 32] # 'cmdR1':  'x_R', 'y_R', 'z_R', 'x_L', 'y_L', 'z_L',  'angleR1', 'angleR2', 'angleR3', 'angleL1', 'angleL2', 'angleL3'
+																		}
+					self.cmd_indices = list(self.cmd_target_indices.keys())
+					# mapping conditions
+					self.scaled_zero_cmds = torch.tensor(scaled_zero_cmds).abs() + weighting_threshold
+					# mapping tensor
+					self.register_buffer('cmd_map', self._create_mapping_matrix(output_dim))	
+
+		def _create_mapping_matrix(self, output_dim: int) -> torch.Tensor:
+				mapping = torch.zeros(len(self.cmd_indices), output_dim)
+				for idx, cmd_idx in enumerate(self.cmd_indices):
+					target_indices = self.cmd_target_indices.get(cmd_idx, [])
+					mapping[idx, target_indices] = 1.0
+				return mapping
+		
+		def _mask_loss(self, preds: torch.Tensor, y: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
+				# extract cmds
+				cmd_values = X[:, self.cmd_indices]
+				# create cmds weighting 
+				weights = 1.0 + self.hparams.loss_weight * (cmd_values.abs() > self.scaled_zero_cmds).float()  
+				# create target weighting from cmds
+				target_weights = weights @ self.cmd_map
+				target_weights = torch.clamp(target_weights, min=1.0)
+				# loss
+				loss = self.loss_fn(preds, y)
+				# weight loss
+				weighted_loss = (loss * target_weights).mean()
+
+				return weighted_loss
 
 		# overwrite
 		def forward(self, data: torch.Tensor) -> torch.Tensor:
@@ -683,7 +741,7 @@ class WrappedMLP(pl.LightningModule):
 				X, y = batch
 				preds = self(X)
 
-				loss = self.loss_fn(preds, y)
+				loss = self._mask_loss(preds, y, X) if self.hparams.use_loss_weighting else self.loss_fn(preds, y)
 				self.cum_train_loss.append(loss.item())
 
 				if self.log_on_step:
@@ -695,13 +753,14 @@ class WrappedMLP(pl.LightningModule):
 		def on_train_epoch_end(self) -> None:
 			tb_log = {"train_loss": np.mean(self.cum_train_loss), "step": self.current_epoch}
 			self.log_dict(tb_log)
+			self.cum_train_loss.clear()
 
 		# overwrite
 		def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
 
-				val_loss = self.loss_fn(preds, y)
+				val_loss = self._mask_loss(preds, y, X) if self.hparams.use_loss_weighting else self.loss_fn(preds, y)
 				self.cum_val_loss.append(val_loss.item())
 
 				r2 = self.r2_score(preds, y)
@@ -724,13 +783,15 @@ class WrappedMLP(pl.LightningModule):
 			 					"r2_score": np.mean(self.cum_r2_score), 
 								"step": self.current_epoch}
 			self.log_dict(tb_log)
-		
+			self.cum_val_loss.clear()
+			self.cum_r2_score.clear()
+
 		# overwrite
 		def test_step(self, batch: List[torch.Tensor], batch_idx: int) -> torch.Tensor:
 				X, y = batch
 				preds = self(X)
 
-				test_loss = self.loss_fn(preds, y)
+				test_loss = self._mask_loss(preds, y, X) if self.hparams.use_loss_weighting else self.loss_fn(preds, y)
 				self.cum_test_loss.append(test_loss.item())
 
 				if self.log_on_step:
@@ -741,6 +802,7 @@ class WrappedMLP(pl.LightningModule):
 
 		def on_test_epoch_end(self) -> None:
 				self.log_dict( {'test_loss': np.mean(self.cum_test_loss), "step": self.current_epoch} )
+				self.cum_test_loss.clear()
 
 		# overwrite
 		def configure_optimizers(self) -> optim.Optimizer:
@@ -1031,6 +1093,7 @@ class Trainer():
 																batch_size=batch_size,
 																feature_names=self.td.feature_names,
 																target_names=self.td.target_names,
+																scaled_zero_cmds=self.td.scaled_zero_cmds,
 																)
 
 					# inst. logger
@@ -1141,6 +1204,7 @@ class Trainer():
 															batch_size=batch_size,
 															feature_names=self.td.feature_names,
 															target_names=self.td.target_names,
+															scaled_zero_cmds=self.td.scaled_zero_cmds,
 															)
 
 			# inst. logger
