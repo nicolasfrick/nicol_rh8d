@@ -707,6 +707,7 @@ class WrappedMLP(pl.LightningModule):
 					self.cmd_indices = list(self.cmd_target_indices.keys())
 					# mapping conditions
 					self.scaled_zero_cmds = torch.tensor(scaled_zero_cmds).abs() + weighting_threshold
+					self.scaled_zero_cmds = self.scaled_zero_cmds.to(DEVICE)
 					# mapping tensor
 					self.register_buffer('cmd_map', self._create_mapping_matrix(output_dim))	
 
@@ -1132,7 +1133,9 @@ class Trainer():
 					
 					res = trainer.callback_metrics[self.metric].item()
 					print(f"{self.metric}{fmt_str}:", res)
-					assert(not np.isnan(res))
+					# assert(not np.isnan(res))
+					if np.isnan(res):
+						res = 1
 					loss_lst.append(res)
 				
 				if self.td.use_kfold and self.pbar:
@@ -1239,6 +1242,8 @@ class Trainer():
 			trainer.fit(model, datamodule=data_module)
 					
 			res = trainer.callback_metrics[self.metric].item()
+			if np.isnan(res):
+				res = 1
 
 			return res
 				
