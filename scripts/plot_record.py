@@ -173,6 +173,10 @@ class KeypointPlot():
 
 		return np.array(self.fig.canvas.renderer.buffer_rgba())
 	
+	def plotOrientation(self, quats: np.ndarray) -> np.ndarray:
+		keypt_dict = {'orientation': {'trans': np.array([0, 0, 0]), 'rot_mat': getRotation(quats, RotTypes.QUAT, RotTypes.MAT), 'color': 'b'}}
+		return self.plotKeypoints(keypt_dict, '', pause=0.0, line=False, elev=10, azim=-20, cla=True)
+	
 def plotData(x: np.ndarray, y: np.ndarray, name: str, save_pth: str=None, grid: bool=True) -> None:
 	fig, ax = plt.subplots()
 	ax.plot(x, y)
@@ -328,7 +332,6 @@ def plotKeypoints(start: int=0, end: int=10000, plt_pp: bool=False) -> None:
 		cv2.destroyAllWindows()
 
 def plotOrientations(quats: pd.Series) -> None:
-	cv2.namedWindow("Keypoints", cv2.WINDOW_NORMAL)
 	keypt_plot = KeypointPlot(x_llim=0.0, 
 														x_hlim=10,
 														y_llim=-0.1,

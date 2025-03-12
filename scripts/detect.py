@@ -1911,6 +1911,9 @@ class KeypointInfer(KeypointDetect):
 		rh8d_tcp_rot = list(map(float, ast.literal_eval(tcp_rot)))
 		self.rh8d_tcp_tf = {'trans': np.array(rh8d_tcp_trans, dtype=np.float32), 'quat': getRotation(rh8d_tcp_rot, RotTypes.EULER, RotTypes.QUAT)}
 
+		# orientation img
+		self.oplot_pub = rospy.Publisher('orientation_plot', Image, queue_size=10)
+
 	def labelInferedAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float, error: Union[None, float]) -> None:
 		txt = "{} {:.2f}, e: {:.2f} deg".format(name, np.rad2deg(angle), 0 if error is None else np.rad2deg(error))
 		xpos = int(img.shape[1] - (13*self.TXT_OFFSET))
@@ -1961,12 +1964,19 @@ class KeypointInfer(KeypointDetect):
 			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
 	def inferenceRoutine(self, pos_cmd: dict, tcp_tf: dict, direction: float)  -> dict:
-		# map input 
+		# input map 
 		model_input = {}
+		# orientation
 		for idx, q in enumerate(tcp_tf['quat']):
 			# x,y,z,w
 			model_input.update( {QUAT_COLS[idx] : q} )
-		for name in self.infer.feature_names[len(QUAT_COLS) :]:
+		# force
+		F = getRotation(tcp_tf['quat'], RotTypes.QUAT, RotTypes.MAT)@np.array([0,0,-9.81])
+		for idx, f in enumerate(F):
+			# fx, fy, fz
+			model_input.update( {FORCE_COLS[idx] : f} )
+		# actuator values
+		for name in self.infer.feature_names[len(QUAT_COLS) + len(FORCE_COLS) :]:
 			if not 'dir' in name:
 				# joint7, ..., jointL1R1
 				model_input.update( {name: pos_cmd[name.replace('cmd', 'joint').replace('jointR1', 'jointL1R1')]} )
@@ -2125,6 +2135,8 @@ class KeypointInfer(KeypointDetect):
 				self.proc_pub.publish(self.bridge.cv2_to_imgmsg(proc_img, encoding="mono8"))
 				self.det_pub.publish(self.bridge.cv2_to_imgmsg(det_img, encoding="bgr8"))
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
+				# tcp orientation
+				self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(self.rh8d_tcp_tf['quat']), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
 				if kpt_plt is not None:
 					self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 

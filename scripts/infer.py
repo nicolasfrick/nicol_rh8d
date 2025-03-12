@@ -39,6 +39,7 @@ class InferMLP():
 											)
 		# load weights
 		model_state = {key.replace("model.model.", "model."): value for key, value in checkpoint['state_dict'].items()}
+		del model_state['cmd_map'] # rm obsolete entry
 		self.model.load_state_dict(model_state)
 		# setup for inference
 		self.model.to(DEVICE)
@@ -76,6 +77,9 @@ class InferMLP():
 	def mapInput(self, input: dict) -> np.ndarray:
 		assert(len(input.keys()) ==  self.len_features)
 		X = np.array([np.nan for _ in range(self.len_features)], dtype=np.float32)
+		# TODO: improve
+		data = np.array([input['fx'], input['fy'], input['fz']], dtype=np.float32).reshape(1, -1) 
+		Fs = self.normalizeInput(self.scaler_dct["force"], data).flatten()
 
 		# map input to tensor
 		for idx, (key, val) in enumerate(input.items()):
@@ -83,6 +87,12 @@ class InferMLP():
 				# index 0 to 3
 				assert(key == QUAT_COLS[idx])
 				X[idx] = val
+
+			elif key in FORCE_COLS and key in self.feature_names:
+				# index 4 to 6
+				fid = idx-len(QUAT_COLS)
+				assert(key == FORCE_COLS[fid])
+				X[idx] = Fs[fid]
 
 			elif 'cmd' in key:
 				# index 4 to n

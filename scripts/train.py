@@ -549,6 +549,9 @@ class TrainingData():
 				for name, scaler in self.X_cmds_scalers.items():
 						pth = os.path.join(self.scaler_pth, name + ".pkl")
 						joblib.dump(scaler, pth)
+				for name, scaler in self.X_forces_scalers.items():
+						pth = os.path.join(self.scaler_pth, name + ".pkl")
+						joblib.dump(scaler, pth)
 				for name, scaler in self.y_angles_scalers.items():
 						pth = os.path.join(self.scaler_pth, name + ".pkl")
 						joblib.dump(scaler, pth)
