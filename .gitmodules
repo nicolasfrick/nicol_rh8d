@@ -8,3 +8,6 @@
 [submodule "INN_Continuum_Robot"]
 	path = INN_Continuum_Robot
 	url = https://github.com/Shaswat2001/INN_Continuum_Robot.git
+[submodule "mpu6050"]
+	path = mpu6050
+	url = https://github.com/ElectronicCats/mpu6050.git
