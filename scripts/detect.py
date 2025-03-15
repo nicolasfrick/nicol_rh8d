@@ -16,6 +16,7 @@ import sensor_msgs.msg
 from pynput import keyboard
 from collections import deque
 from std_msgs.msg import Bool
+from std_msgs.msg import String
 import dynamic_reconfigure.server
 from typing import Optional, Any, Tuple
 from scipy.optimize import least_squares
@@ -61,6 +62,8 @@ class DetectBase():
 		@type bool
 		@param cv_window
 		@type bool
+		@param use_tags
+		@type bool
 
 	"""
 
@@ -84,6 +87,7 @@ class DetectBase():
 				refine_pose: Optional[bool]=False,
 				flip_outliers: Optional[bool]=False,
 				fps: Optional[float]=30.0,
+				use_tags: Optional[bool]=True,
 				) -> None:
 		
 		self.vis = vis
@@ -113,14 +117,14 @@ class DetectBase():
 			print("Camera height:", self.rgb_info.height, "width:", self.rgb_info.width)
 
 		# init detector
-		if use_aruco:
+		if use_aruco and use_tags:
 			self.det = ArucoDetector(marker_length=marker_length, 
 									K=self.rgb_info.K, 
 									D=self.rgb_info.D,
 									dt=1/fps,
 									invert_pose=False,
 									filter_type=filter_type)
-		else:
+		elif use_tags:
 			self.det = AprilDetector(marker_length=marker_length, 
 									K=self.rgb_info.K, 
 									D=self.rgb_info.D,
@@ -129,7 +133,7 @@ class DetectBase():
 									filter_type=filter_type)
 			
 		# init vis	
-		if cv_window:
+		if cv_window and use_tags:
 			cv2.namedWindow("Processed", cv2.WINDOW_NORMAL)
 			cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
 			if plt_id > -1:
@@ -137,7 +141,7 @@ class DetectBase():
 				setPosePlot()
 	
 		# init dynamic reconfigure
-		if use_reconfigure:
+		if use_reconfigure and use_tags:
 			print("Using reconfigure server")
 			self.det_config_server = dynamic_reconfigure.server.Server(DetectorConfig, self.det.setDetectorParams)
 
@@ -2287,6 +2291,530 @@ class KeypointInfer(KeypointDetect):
 			if self.cv_window:
 				cv2.destroyAllWindows()
 
+			pb.disconnect()
+			rospy.signal_shutdown(0)
+
+class KeypointDemo(DetectBase):
+	"""
+		Demo angle and keypoint inference.
+
+		@param rh8d_port
+		@type str
+		@param rh8d_baud
+		@type int
+		@param use_tf
+		@type bool
+		@param attached
+		@type bool
+		@param save_imgs
+		@type bool
+		@param urdf_pth
+		@type str
+		@param topic_wait_secs
+		@type float
+		@param checkpoint_path
+		@type str
+		@param scalers_path
+		@type str
+		@param base_trans
+		@type str
+		@param base_rot
+		@type str
+		@param tcp_trans
+		@type str
+		@param tcp_rot
+		@type str
+
+	"""
+
+	# angle comp.
+	UNIT_AXIS_X = np.array([1, 0, 0], dtype=np.float32)
+	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
+	UNIT_AXIS_Z = np.array([0, 0, 1], dtype=np.float32)
+
+	# cv stuff
+	KEYPT_THKNS = 10
+	KEYPT_LINE_THKNS = 2
+	CHAIN_COLORS = [(255,255,255), (0,0,255), (0,255,0), (255,0,0), (0,255,255), (255,255,0)]
+	PLOT_COLORS = ['w', 'r', 'g', 'b', 'y', 'c']
+	INF_KPT_COLORS = [(255,0,255), (0,252,124), (147,20,255), (30,105,210), (205,90,106)]
+	INF_KPT_NAMES = ['transT', 'transI', 'transM', 'transR', 'transL']
+	INF_KPT_THKNS = 20
+
+	def __init__(self,
+				camera_ns: Optional[str]='',
+				vis :Optional[bool]=True,
+				f_ctrl: Optional[int]=30,
+				rh8d_port: Optional[str]="/dev/ttyUSB1",
+				rh8d_baud: Optional[int]=1000000,
+				use_tf: Optional[bool]=False,
+				test: Optional[bool]=False,
+				save_imgs: Optional[bool]=True,
+				attached: Optional[bool]=False,
+				actuator_state_topic: Optional[str]='actuator_states',
+				urdf_pth: Optional[str]='rh8d.urdf',
+				topic_wait_secs: Optional[float]=15,
+				checkpoint_path: Optional[str]='',
+				scalers_path: Optional[str]='',
+				base_trans: Optional[str]='[0,0,0]',
+				base_rot: Optional[str]='[0,0,0]',
+				tcp_trans: Optional[str]='[0,0,0]',
+				tcp_rot: Optional[str]='[0,0,0]',
+				) -> None:
+		
+		super().__init__(camera_ns=camera_ns,
+						f_ctrl=f_ctrl,
+						test=False,
+						vis=vis,
+						cv_window=False,
+						use_tags=False,
+						)
+
+		self.test = test
+		self.use_tf = use_tf
+		self.attached = attached
+		self.save_record = save_imgs
+		self.camera_ns = camera_ns
+		self.actuator_state_topic = actuator_state_topic
+		self.joint_state_topic = actuator_state_topic.replace('actuator', 'joint')
+		self.topic_wait_secs = topic_wait_secs
+		self.ctrl_str = ''
+
+		# message buffers
+		self.det_img_buffer = deque(maxlen=self.filter_iters)
+		self.actuator_state_buffer = deque(maxlen=1)
+		self.joint_state_buffer = deque(maxlen=1)
+		self.buf_lock = threading.Lock()
+
+		# init ros
+		if use_tf:
+			self.buf = tf2_ros.Buffer(cache_time=rospy.Duration(180))
+			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
+
+		# init controller
+		if attached:
+			self.rh8d_ctrl = MoveRobot()
+		else:
+			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
+
+		# load camera extrinsics
+		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camera_poses.yaml")
+		with open(fl, 'r') as fr:
+			extrinsics = yaml.safe_load(fr)
+			# marker cam
+			marker_cam_holder_to_cam_extr = extrinsics['marker_camera_optical_frame']
+			self.marker_cam_extr = Extrinsics()
+			self.marker_cam_extr.header.stamp = rospy.Time.now()
+			self.marker_cam_extr.header.frame_id = 'marker_camera_optical_frame'
+			self.marker_cam_extr.translation = np.array(marker_cam_holder_to_cam_extr['xyz'], dtype=np.float32)
+			self.marker_cam_extr.rotation = getRotation(marker_cam_holder_to_cam_extr['rpy'], RotTypes.EULER, RotTypes.MAT)
+
+		# load marker config			
+		self.marker_config = loadMarkerConfig()
+		self.root_joint = list(self.marker_config.keys())[0] # first joint
+		# init 3D keypoints dataset
+		self.keypt_keys = [self.marker_config[self.root_joint]['parent']] # base link
+		self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
+		self.fixed_end_joints = self.initRH8DFK(urdf_pth)
+		self.keypt_keys.extend(self.fixed_end_joints) # append tip names
+		self.keypt_plot = KeypointPlot()
+		# get tf links
+		self.tf_links = []
+		for config in self.marker_config.values():
+			link = config['child']
+			self.tf_links.append(link)
+			end_link = config.get('fixed_end')
+			if end_link is not None:
+				self.tf_links.append(end_link.replace('r_', '').replace('joint', 'r'))
+			
+		# control topic
+		self.ctrl_sub = rospy.Subscriber("control", String, self.ctrlCB, queue_size=1)
+		# init ros vis
+		if vis and not self.cv_window:
+			self.out_pub = rospy.Publisher('inference_demo', Image, queue_size=10)
+			self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
+		# cv vis
+		elif vis:
+			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
+			cv2.namedWindow("Output", cv2.WINDOW_NORMAL)
+
+		# create model
+		cp = os.path.join(MLP_CHKPT_PTH, checkpoint_path)
+		sp = os.path.join(MLP_SCLRS_PTH, scalers_path)
+		if not os.path.exists(cp):
+			raise RuntimeError(f"Enter checkpoint path relative to {MLP_CHKPT_PTH}")
+		if not os.path.exists(sp):
+			raise RuntimeError(f"Enter scalers path relative to {MLP_SCLRS_PTH}")
+		self.infer = InferMLP(cp, sp)
+
+		# rh8d base tf
+		rh8d_base_trans = list(map(float, ast.literal_eval(base_trans)))
+		rh8d_base_rot = list(map(float, ast.literal_eval(base_rot)))
+		self.rh8d_base_tf = {'trans': np.array(rh8d_base_trans, dtype=np.float32), 'quat': getRotation(rh8d_base_rot, RotTypes.EULER, RotTypes.QUAT)}
+		# rh8d tcp tf
+		rh8d_tcp_trans = list(map(float, ast.literal_eval(tcp_trans)))
+		rh8d_tcp_rot = list(map(float, ast.literal_eval(tcp_rot)))
+		self.rh8d_tcp_tf = {'trans': np.array(rh8d_tcp_trans, dtype=np.float32), 'quat': getRotation(rh8d_tcp_rot, RotTypes.EULER, RotTypes.QUAT)}
+
+
+	def initRH8DFK(self, urdf_pth: str) -> list:
+		# init pybullet
+		self.physicsClient = pb.connect(pb.DIRECT)
+		self.robot_id = pb.loadURDF(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'urdf/' + urdf_pth), useFixedBase=True)
+
+		# get all present chains
+		self.kinematic_chains = [[]]
+		dfsKinematicChain(self.root_joint, self.kinematic_chains, self.marker_config)
+		self.chain_complete = [False for _ in range(len(self.kinematic_chains))]
+		# revolute end joints to fixed end joint mapping
+		end_joints = [chain[-1] for chain in self.kinematic_chains]
+		fixed_end_joints = [self.marker_config[joint]['fixed_end'] for joint in end_joints]
+
+		# get joint index aka link index
+		self.link_info_dict = {}
+		self.joint_info_dict = {}
+		for idx in range(pb.getNumJoints(self.robot_id)):
+			joint_info = pb.getJointInfo(self.robot_id, idx)
+
+			if joint_info[2] == pb.JOINT_REVOLUTE:
+				joint_name = joint_info[1].decode('utf-8')
+				# revolute joint index
+				self.joint_info_dict.update( {joint_name: idx} )
+			elif joint_info[2] == pb.JOINT_FIXED:
+				joint_name = joint_info[1].decode('utf-8')
+				if joint_name in fixed_end_joints:
+					# fixed joint index matches very last link
+					self.link_info_dict.update( {end_joints[fixed_end_joints.index(joint_name)]: {'index': idx, 'fixed_end': joint_name}} )
+		
+		return fixed_end_joints
+
+	def ctrlCB(self, msg: String) -> None:
+		self.ctrl_str = msg.data
+
+	def lookupTF(self, stamp: rospy.Time, target_frame: str, source_frame: str) -> dict:
+		try:
+			tf = self.buf.lookup_transform(target_frame, source_frame, stamp, rospy.Duration(1.0))
+			trans = tf.transform.translation
+			rot = tf.transform.rotation
+			tf_dict = { 'frame_id': tf.header.frame_id,
+			  			'child_frame_id': tf.child_frame_id,
+						'trans': [trans.x, trans.y, trans.z],
+						'quat': [rot.x, rot.y, rot.z, rot.w],
+						'timestamp': stamp.secs + stamp.nsecs*1e-9
+						}
+			return tf_dict
+		except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+			print(e)
+			return {}
+	
+	def tfPoints(self, tf: np.ndarray, points: np.ndarray) -> np.ndarray:
+		"""Transform marker corners to some frame.
+		""" 
+		homog_points = np.hstack((points, np.ones((points.shape[0], 1))))
+		tf_points = tf @ homog_points.T
+		tf_points = tf_points.T 
+		return tf_points[:, :3]
+
+	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
+		if angle is None: 
+			return
+		txt = "{} {} {:.2f} deg".format(id, name, np.rad2deg(angle))
+		xpos = self.TXT_OFFSET
+		ypos = (id+2)*self.TXT_OFFSET
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, "angle detection", (xpos, 30), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+
+	def visKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict) -> None:
+		# root joints not detected
+		if not self.chain_complete[0] or not fk_dict:
+			return 
+		
+		joints_visualized = []
+		center_point = np.zeros(3, dtype=np.float32)
+		
+		# world to cam holder (joint6) tf (dynamic)
+		base_trans = fk_dict[self.marker_config[self.root_joint]['parent']]['trans']
+		base_rot = fk_dict[self.marker_config[self.root_joint]['parent']]['quat']
+		T_world_cam_holder = pose2Matrix(base_trans, base_rot, RotTypes.QUAT)
+		# cam holder to cam tf (static)
+		T_cam_holder_cam = pose2Matrix(self.marker_cam_extr.translation,  self.marker_cam_extr.rotation, RotTypes.MAT)
+		# world to cam tf
+		T_world_cam = T_world_cam_holder @ T_cam_holder_cam
+		# cam to world tf
+		(inv_trans, inv_rot) = invPersp(T_world_cam[:3, 3],  T_world_cam[:3, :3], RotTypes.MAT)
+
+		# draw base keypoint
+		transformed_point = T_world_cam_holder[:3, :3] @ center_point + T_world_cam_holder[:3, 3]
+		projected_point_parent, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+		projected_point_parent =  np.int32(projected_point_parent.flatten())
+		cv2.circle(img, projected_point_parent, self.KEYPT_THKNS, self.CHAIN_COLORS[0], -1)
+		
+		# draw keypoints
+		for idx, chain in enumerate(self.kinematic_chains):
+			# draw only complete detections
+			if self.chain_complete[idx]:
+				last_projected_point = projected_point_parent
+				
+				for joint in chain:
+					if joint not in joints_visualized:
+						joints_visualized.append(joint)
+						
+						# transform point
+						trans = fk_dict[joint]['trans']
+						rot_mat = getRotation(fk_dict[joint]['quat'], RotTypes.QUAT, RotTypes.MAT)
+						transformed_point = rot_mat @ center_point + trans
+						
+						# draw projected point
+						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
+						projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+						projected_point = np.int32(projected_point.flatten())
+						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
+						
+						# connect points
+						if last_projected_point is not None:
+							cv2.line(img, last_projected_point, projected_point, color, self.KEYPT_LINE_THKNS)
+						last_projected_point = projected_point
+						
+						# root connection
+						if idx == 0:
+							projected_point_parent = projected_point
+							
+						# get end link
+						link_info = self.link_info_dict.get(joint)
+						if link_info is not None:
+							# end link tf
+							trans = fk_dict[link_info['fixed_end']]['trans']
+							rot_mat = getRotation(fk_dict[link_info['fixed_end']]['quat'], RotTypes.QUAT, RotTypes.MAT)
+							# draw end link
+							transformed_point = rot_mat @ center_point + trans
+							projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+							projected_point = np.int32(projected_point.flatten())
+							cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
+							cv2.line(img, last_projected_point, projected_point, color, self.KEYPT_LINE_THKNS)
+							
+	def plotKeypoints(self, keypt_dict: dict, clr: bool=True) -> Union[None, cv2.typing.MatLike]:
+		plot_img = None
+		if not self.chain_complete[0] or not keypt_dict:
+			# root joints not detected
+			return plot_img
+
+		if clr:
+			self.keypt_plot.clear()
+		parent_joint = self.kinematic_chains[0][-1]
+
+		# plot keypoints
+		for idx, chain in enumerate(self.kinematic_chains):
+			# plot only complete detections
+			if self.chain_complete[idx]:
+				plt_dict = {}
+				for joint in chain:
+					plt_dict.update( {joint: keypt_dict[joint]} )
+					plt_dict[joint].update( {'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]} )
+					# end link
+					link_info = self.link_info_dict.get(joint)
+					if link_info is not None:
+						link_name = link_info['fixed_end']
+						plt_dict.update( {link_name: keypt_dict[link_name]} )
+						plt_dict[link_name].update( {'color': self.PLOT_COLORS[idx%len(self.PLOT_COLORS)]} )
+				# plot
+				plot_img = self.keypt_plot.plotKeypoints(plt_dict, parent_joint)
+
+		return cv2.cvtColor(plot_img, cv2.COLOR_RGBA2BGR)
+
+	def rh8dFK(self, joint_angles: dict, base_tf: dict, timestamp: float) -> Tuple[dict, dict]:
+		# reset flag
+		self.chain_complete = [True for _ in range(len(self.chain_complete))]
+
+		fk_dict = {}
+		keypt_dict = {}
+		if base_tf:
+			# applied to link's com
+			pb.resetBasePositionAndOrientation(self.robot_id, base_tf['trans'], base_tf['quat'])
+
+		# save base link pose
+		base_pos, base_orn = pb.getBasePositionAndOrientation(self.robot_id)
+		fk_dict.update({self.marker_config[self.root_joint]['parent']: {'timestamp': timestamp, 'trans': base_pos, 'quat': base_orn}})
+		
+		# set detected angles
+		for joint, angle in joint_angles.items():
+			if angle is not None:
+				# revolute joint index
+				pb.resetJointState(self.robot_id, self.joint_info_dict[joint], angle)
+				
+		# world to tcp joint tf inverse
+		(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.link_info_dict['joint8']['index'], computeForwardKinematics=True)
+		(inv_trans, inv_quat) = invPersp(trans, quat, RotTypes.QUAT)
+		T_tcp_joint_world = pose2Matrix(inv_trans, inv_quat, RotTypes.QUAT)
+
+		# get fk
+		for joint, angle in joint_angles.items():
+			if angle is not None:
+				# revolute joint's attached link
+				(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.joint_info_dict[joint], computeForwardKinematics=True)
+				# add world pose
+				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+				# compute relative pose
+				T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
+				T_root_joint_keypoint = T_tcp_joint_world @ T_world_keypoint
+				keypt_dict.update( {joint: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
+				# additional fk for tip frame
+				if joint in self.link_info_dict.keys():
+					# end link attached to last fixed joint 
+					(_, _, _, _, trans, quat) = pb.getLinkState(self.robot_id, self.link_info_dict[joint]['index'], computeForwardKinematics=True)
+					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': trans, 'quat': quat}} )
+					# compute relative pose
+					T_world_keypoint = pose2Matrix(trans, quat, RotTypes.QUAT)
+					T_root_joint_keypoint = T_tcp_joint_world @ T_world_keypoint
+					keypt_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': T_root_joint_keypoint[:3, 3], 'rot_mat': T_root_joint_keypoint[:3, :3]}} )
+			else:
+				fk_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+				keypt_dict.update( {joint: {'timestamp': timestamp, 'trans': np.nan, 'rot_mat': np.nan}} )
+				if joint in self.link_info_dict.keys():
+					fk_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': np.nan, 'quat': np.nan}} )
+					keypt_dict.update( {self.link_info_dict[joint]['fixed_end']: {'timestamp': timestamp, 'trans': np.nan, 'rot_mat': np.nan}} )
+				# disable chain
+				for idx, chain in enumerate(self.kinematic_chains):
+					if joint in chain:
+						self.chain_complete[idx] = False
+
+		return fk_dict, keypt_dict
+
+	def labelTrans(self, img: cv2.typing.MatLike, name: str, id: int, trans: Union[None, np.ndarray], inf_trans: np.ndarray, error: Union[None, float]) -> None:
+		if not isinstance(trans, np.ndarray):
+			trans = np.zeros(3) 
+		txt = "{} [{:.3f},{:.3f},{:.3f}], [{:.3f},{:.3f},{:.3f}], e: {:.3f} m".format(name.replace("joint", "trans"), trans[0], trans[1], trans[2], inf_trans[0], inf_trans[1], inf_trans[2], 0 if np.isnan(error) else error)
+		xpos = int(img.shape[1] * 0.25)
+		ypos = int((id+2)*self.TXT_OFFSET)
+		cv2.putText(img, txt, (xpos, ypos), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+		cv2.putText(img, "translation detection, prediction, rmse", (xpos, 30), cv2.FONT_HERSHEY_SIMPLEX, self.FONT_SCALE, self.CHAIN_COLORS[-1], self.FONT_THCKNS, cv2.LINE_AA)
+
+	def visInferedKeypoints(self, img: cv2.typing.MatLike, fk_dict: dict, prediction: dict) -> None:
+		center_point = np.zeros(3, dtype=np.float32)
+		
+		# world to cam holder (joint6) tf (dynamic)
+		base_trans = fk_dict[self.marker_config[self.root_joint]['parent']]['trans']
+		base_rot = fk_dict[self.marker_config[self.root_joint]['parent']]['quat']
+		T_world_cam_holder = pose2Matrix(base_trans, base_rot, RotTypes.QUAT)
+		# cam holder to cam tf (static)
+		T_cam_holder_cam = pose2Matrix(self.marker_cam_extr.translation,  self.marker_cam_extr.rotation, RotTypes.MAT)
+		# world to cam tf
+		T_world_cam = T_world_cam_holder @ T_cam_holder_cam
+		# cam to world tf
+		(inv_trans, inv_rot) = invPersp(T_world_cam[:3, 3],  T_world_cam[:3, :3], RotTypes.MAT)
+
+		# world to joint_r_laser tf (dynamic)
+		r_laser_trans = fk_dict['joint_r_laser']['trans']
+		r_laser_rot = fk_dict['joint_r_laser']['quat']
+		T_world_r_laser = pose2Matrix(r_laser_trans, r_laser_rot, RotTypes.QUAT)
+		
+		for idx, name in enumerate(self.INF_KPT_NAMES):
+			# end link tf
+			trans = prediction[name]
+			rot_mat = np.eye(3)
+			T_r_laser_kpt = pose2Matrix(trans, rot_mat, RotTypes.MAT)
+			# tf to world frame
+			T_world_kpt = T_world_r_laser @ T_r_laser_kpt
+			# draw end link
+			transformed_point = T_world_kpt[:3, :3] @ center_point + T_world_kpt[:3, 3]
+			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+			projected_point = np.int32(projected_point.flatten())
+			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
+			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
+
+	def inferenceRoutine(self, pos_cmd: dict, tcp_tf: dict, direction: float)  -> dict:
+		# input map 
+		model_input = {}
+		# orientation
+		for idx, q in enumerate(tcp_tf['quat']):
+			# x,y,z,w
+			model_input.update( {QUAT_COLS[idx] : q} )
+		# force
+		F = getRotation(tcp_tf['quat'], RotTypes.QUAT, RotTypes.MAT)@np.array([0,0,-9.81])
+		for idx, f in enumerate(F):
+			# fx, fy, fz
+			model_input.update( {FORCE_COLS[idx] : f} )
+		# actuator values
+		for name in self.infer.feature_names[len(QUAT_COLS) + len(FORCE_COLS) :]:
+			if not 'dir' in name:
+				# joint7, ..., jointL1R1
+				model_input.update( {name: pos_cmd[name.replace('cmd', 'joint').replace('jointR1', 'jointL1R1')]} )
+			else:
+				# dir7, ..., dirL1R1 = direction
+				model_input.update( {name: direction} )
+		# predict
+		return self.infer.forward(model_input)
+
+	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
+		# get filtered detection and save other resource
+		out_img = rospy.wait_for_message(self.img_topic, Image, )
+		
+		# manual base tf for fk
+		base_tf = self.rh8d_base_tf
+		# manual tcp tf for inference
+		tcp_tf = self.rh8d_tcp_tf
+
+		# predict angles and positions
+		prediction = self.inferenceRoutine(pos_cmd, tcp_tf, direction)
+		inf_joint_angles = {joint: angle for joint, angle in prediction.items() if 'joint' in joint}
+		
+		# compute 3D keypoints
+		(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, base_tf, 0.0)
+		
+		# draw detections
+		if self.vis:
+			# draw infered keypoints
+			self.visKeypoints(out_img, inf_fk_dict) # by inf angles
+			kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
+			self.visInferedKeypoints(out_img, inf_fk_dict, prediction) # use the fk from infered angles to compute keypoints relative to the rh8d tcp
+			# draw angle labels and possibly fixed detections 
+			for joint, angle in inf_joint_angles.items():
+				self.labelAngle(out_img, joint, 0, angle)
+			if self.cv_window:
+				cv2.imshow('Output', out_img)
+				if kpt_plt is not None:
+					cv2.imshow('Plot', kpt_plt)
+			else:
+				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
+				# tcp orientation
+				# self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(self.rh8d_tcp_tf['quat']), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
+				if kpt_plt is not None:
+					self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
+	
+	def run(self) -> None:
+		rate = rospy.Rate(self.f_loop)
+		
+		try:
+			while not rospy.is_shutdown():
+						success = True
+						for joint, id in RH8D_JOINT_IDS.items():
+							cmd = waypoint[joint]
+							step = self.rh8d_ctrl.angle2Step(cmd)
+							# print(joint, id, cmd, step)
+							success = self.rh8d_ctrl.setPos(id, step) and success
+						if success:
+							print("done\n") 
+							# rospy.sleep(np.clip(2.0, 2.0, 5.0))
+						else: 
+							print("fail\n")
+
+						# detect angles
+						self.detectionRoutine(waypoint, e, direction, description, idx)
+
+						if self.vis and not self.attached:
+							if cv2.waitKey(1) == ord("q"):
+								return
+						
+						try:
+							rate.sleep()
+						except:
+							pass
+
+		except Exception as e:
+			rospy.logerr(e)
+
+		finally:
+			if self.cv_window:
+				cv2.destroyAllWindows()
 			pb.disconnect()
 			rospy.signal_shutdown(0)
 
