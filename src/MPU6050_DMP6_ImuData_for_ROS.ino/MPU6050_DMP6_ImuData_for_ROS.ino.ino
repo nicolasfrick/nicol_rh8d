@@ -55,19 +55,19 @@ void setup() {
   #endif
 
   Serial.begin(115200);
-  Serial.println(F("Initializing I2C devices..."));
+  // Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
-  Serial.println(F("Testing MPU6050 connection..."));
+  // Serial.println(F("Testing MPU6050 connection..."));
   if(mpu.testConnection() == false){
-    Serial.println("MPU6050 connection failed");
+    // Serial.println("MPU6050 connection failed");
     while(true);
   }
   else {
-    Serial.println("MPU6050 connection successful");
+    // Serial.println("MPU6050 connection successful");
   }
   
   /* Initializate and configure the DMP*/
-  Serial.println(F("Initializing DMP..."));
+  // Serial.println(F("Initializing DMP..."));
   devStatus = mpu.dmpInitialize();
 
   /* Supply your gyro offsets here, scaled for min sensitivity */
@@ -82,15 +82,15 @@ void setup() {
   if (devStatus == 0) {
     mpu.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
     mpu.CalibrateGyro(6);
-    Serial.println("These are the Active offsets: ");
+    // Serial.println("These are the Active offsets: ");
     mpu.PrintActiveOffsets();
-    Serial.println(F("Enabling DMP..."));   //Turning ON DMP
+    // Serial.println(F("Enabling DMP..."));   //Turning ON DMP
     mpu.setDMPEnabled(true);
 
     MPUIntStatus = mpu.getIntStatus();
 
     /* Set the DMP Ready flag so the main loop() function knows it is okay to use it */
-    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+    // Serial.println(F("DMP ready! Waiting for first interrupt..."));
     DMPReady = true;
     packetSize = mpu.dmpGetFIFOPacketSize(); //Get expected DMP packet size for later comparison
   }
@@ -99,19 +99,26 @@ void setup() {
 void loop() {
   if (!DMPReady) return;
 
-  /* Read a packet from FIFO */
-  if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) { // Get the Latest packet 
-    /*Display quaternion values in easy matrix form: w x y z */
-    mpu.dmpGetQuaternion(&q, FIFOBuffer);
-    Serial.print("quat\t");
-    Serial.print(q.w);
-    Serial.print("\t");
-    Serial.print(q.x);
-    Serial.print("\t");
-    Serial.print(q.y);
-    Serial.print("\t");
-    Serial.println(q.z);
-
+  if (Serial.available()) 
+  {
+    if (Serial.readString() == "r")
+    {
+      /* Read a packet from FIFO */
+      if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) 
+      { // Get the Latest packet 
+        /*Display quaternion values in easy matrix form: w x y z */
+        mpu.dmpGetQuaternion(&q, FIFOBuffer);
+        Serial.print("quat\t");
+        Serial.print(q.w);
+        Serial.print("\t");
+        Serial.print(q.x);
+        Serial.print("\t");
+        Serial.print(q.y);
+        Serial.print("\t");
+        Serial.println(q.z);
+      }
+    }
+  }
     // mpu.dmpGetGravity(&gravity, &q);
 
     /* Display initial world-frame acceleration, adjusted to remove gravity
@@ -146,6 +153,6 @@ void loop() {
     // Serial.println(ypr[2] * RAD_TO_DEG);
     
     // Serial.println();
-    delay(100);
-  }
+    // delay(100);
+  // }
 }
