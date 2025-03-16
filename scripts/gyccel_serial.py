@@ -14,7 +14,7 @@ class GyccelSerial():
 
 	def __init__(self, 
 							port: Optional[str]="/dev/ttyACM0",
-							baud: Optional[int]=38400,
+							baud: Optional[int]=115200,
 							wait: int=2.0,
 							) -> None:
 			
@@ -45,6 +45,7 @@ class GyccelSerial():
 		z = float(msg[3])
 		w = float(msg[0])
 		quats = np.array([x, y, z, w], dtype=np.float32)
+		quats = self.normQuats(quats)
 		return quats
 
 	def multQuats(self, q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
@@ -175,5 +176,5 @@ class GyccelSerial():
 if __name__ == "__main__":
 	gs = GyccelSerial()
 	while 1:
-		print(gs.readOrientation())
+		print(gs.readQuats())
 		sleep(0.1)

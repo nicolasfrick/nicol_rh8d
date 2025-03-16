@@ -2762,7 +2762,7 @@ class KeypointDemo(DetectBase):
 			# x,y,z,w
 			model_input.update( {QUAT_COLS[idx] : q} )
 		# force
-		F = getRotation(quats, RotTypes.QUAT, RotTypes.MAT)@np.array([0,0,-9.81])
+		F = getRotation(quats, RotTypes.QUAT, RotTypes.MAT).T @ np.array([0,0,-9.81])
 		for idx, f in enumerate(F):
 			# fx, fy, fz
 			model_input.update( {FORCE_COLS[idx] : f} )
@@ -2775,12 +2775,14 @@ class KeypointDemo(DetectBase):
 				# dir7, ..., dirL1R1 = direction
 				model_input.update( {name: direction} )
 		# predict
-		return self.infer.forward(model_input), F
+		return self.infer.forward(model_input), F 
 
 	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
 		# get tcp orientation
 		quats = self.gyccel.readQuats()
 		print("quats", quats)
+		# quats = self.rotateGyccelOrientation(quats)
+		# print("rotated quats", quats)
 	
 		# predict angles and positions
 		prediction, Fg = self.inferenceRoutine(pos_cmd, quats, direction)

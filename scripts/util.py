@@ -342,6 +342,10 @@ def findAxisOrientOutliers(rot_mats: np.ndarray, tolerance: float = 1e-6, axis_i
 	return outliers, axs_avg
 
 
+def tfForce(quats: np.ndarray) -> np.ndarray:
+	return getRotation(quats, RotTypes.QUAT, RotTypes.MAT).T @ np.array([0,0,-9.81])
+
+
 def ransacPose(tvec: np.ndarray, rvec: np.ndarray, corners: np.ndarray, obj_points: np.ndarray, cmx: np.ndarray, dist: np.ndarray, solver_flag: int = cv2.SOLVEPNP_IPPE_SQUARE) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
 	"""RANSAC over given pose can improve the accuracy."""
 	(success, out_rvec, out_tvec, inliers) = cv2.solvePnPRansac(objectPoints=obj_points,
