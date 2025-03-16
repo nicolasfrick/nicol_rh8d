@@ -136,6 +136,8 @@ class KeypointPlot():
 										line: Optional[bool]=True, 
 										elev: Optional[Union[float, None]]=None, 
 										azim: Optional[Union[float, None]]=None, 
+										text:  Optional[Union[str, None]]=None, 
+										title:  Optional[str]='', 
 										) -> np.ndarray:
 		if cla:
 			self.clear()
@@ -166,16 +168,20 @@ class KeypointPlot():
 				# save last point before branching
 				self.root_center_point = trans
 
-		# self.ax_3d.set_title('6D Keypoints')
+		if text:
+			text2D = self.ax_3d.text2D(0.05, 0.95, "", transform= self.ax_3d.transAxes, fontsize=12)
+			text2D.set_text("Fg: " + text)
+			
+		self.ax_3d.set_title(title)
 		if pause > 0.0:
 			plt.pause(pause)
 		self.fig.canvas.draw()
 
 		return np.array(self.fig.canvas.renderer.buffer_rgba())
 	
-	def plotOrientation(self, quats: np.ndarray) -> np.ndarray:
+	def plotOrientation(self, quats: np.ndarray, f: np.ndarray) -> np.ndarray:
 		keypt_dict = {'orientation': {'trans': np.array([0, 0, 0]), 'rot_mat': getRotation(quats, RotTypes.QUAT, RotTypes.MAT), 'color': 'b'}}
-		return self.plotKeypoints(keypt_dict, '', pause=0.0, line=False, elev=10, azim=-20, cla=True)
+		return self.plotKeypoints(keypt_dict, '', pause=0.0, line=False, elev=10, azim=-20, cla=True, text=str(f), title="TCP Orientation")
 	
 def plotData(x: np.ndarray, y: np.ndarray, name: str, save_pth: str=None, grid: bool=True) -> None:
 	fig, ax = plt.subplots()

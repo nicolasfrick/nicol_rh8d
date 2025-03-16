@@ -2754,7 +2754,7 @@ class KeypointDemo(DetectBase):
 			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
 			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
-	def inferenceRoutine(self, pos_cmd: dict, quats: np.ndarray, direction: float)  -> dict:
+	def inferenceRoutine(self, pos_cmd: dict, quats: np.ndarray, direction: float)  -> Tuple[dict, np.ndarray]:
 		# input map 
 		model_input = {}
 		# orientation
@@ -2775,20 +2775,15 @@ class KeypointDemo(DetectBase):
 				# dir7, ..., dirL1R1 = direction
 				model_input.update( {name: direction} )
 		# predict
-		return self.infer.forward(model_input)
+		return self.infer.forward(model_input), F
 
 	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
 		# get tcp orientation
 		quats = self.gyccel.readQuats()
-		print(quats)
-		quats = self.rotateGyccelOrientation(quats)
-		print(quats)
-		quats = self.normQuats(quats)
 		print("quats", quats)
-		print()
 	
 		# predict angles and positions
-		prediction = self.inferenceRoutine(pos_cmd, quats, direction)
+		prediction, Fg = self.inferenceRoutine(pos_cmd, quats, direction)
 		inf_joint_angles = {joint: angle for joint, angle in prediction.items() if 'joint' in joint}
 		# print("predict", prediction)
 		
@@ -2816,7 +2811,7 @@ class KeypointDemo(DetectBase):
 				pass
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				# tcp orientation
-				self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(quats), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
+				self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(quats, Fg), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
 				# if kpt_plt is not None:
 				# 	self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
 

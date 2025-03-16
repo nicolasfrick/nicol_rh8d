@@ -25,7 +25,7 @@ void setup() {
   Serial.begin(38400);
   mpu.initialize();
   if (!mpu.testConnection()) {
-    // Serial.println("MPU6050 connection failed");
+//     Serial.println("MPU6050 connection failed");
     while (true);
   }
 
@@ -38,6 +38,7 @@ void setup() {
   mpu.setZGyroOffset(0);
 
   pinMode(LED_BUILTIN, OUTPUT);
+//  Serial.println("Done setup");
 }
 
 void apply_static_rotation(int16_t &ax_in, int16_t &ay_in, int16_t &az_in,
@@ -58,8 +59,10 @@ void apply_static_rotation(int16_t &ax_in, int16_t &ay_in, int16_t &az_in,
 }
 
 void loop() {
+//  Serial.println("Running");
+//  delay(100);
   if (Serial.available()) 
-  {
+  { 
     if (Serial.readString() == "r")
     {
       // Read raw accel/gyro data
