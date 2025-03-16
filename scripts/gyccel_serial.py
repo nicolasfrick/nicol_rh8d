@@ -11,7 +11,7 @@ class GyccelSerial():
 
 	def __init__(self, 
 							port: Optional[str]="/dev/ttyACM0",
-							baud: Optional[int]=115200,
+							baud: Optional[int]=38400,
 							wait: int=2.0,
 							) -> None:
 			
@@ -40,6 +40,23 @@ class GyccelSerial():
 		w = float(msg[0])
 		quats = np.array([x, y, z, w], dtype=np.float32)
 		return quats
+	
+	def readRaw(self) -> np.ndarray:
+		self.write('r')
+		sleep(0.1)
+		msg = self.ser.readline().decode()
+		while not 'g' in msg:
+			msg = self.ser.readline().decode()
+			print(msg)
+			sleep(0.1)
+		msg = msg.replace("g/a:", "").replace("\r\n", "").strip()
+		msg = msg.split("\t")
+		# x = float(msg[1])
+		# y = float(msg[2])
+		# z = float(msg[3])
+		# w = float(msg[0])
+		# quats = np.array([x, y, z, w], dtype=np.float32)
+		return msg
 
 	def flush(self) -> None:
 		self.ser.reset_input_buffer()
@@ -62,6 +79,5 @@ class GyccelSerial():
 if __name__ == "__main__":
 	gs = GyccelSerial()
 	while 1:
-		gs.write('r')
-		print(gs.readQuats())
+		print(gs.readRaw())
 		sleep(0.1)

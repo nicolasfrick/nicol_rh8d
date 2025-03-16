@@ -2338,7 +2338,7 @@ class KeypointDemo(DetectBase):
 	UNIT_AXIS_Z = np.array([0, 0, 1], dtype=np.float32)
 
 	# gyro/accel to tcp rotation
-	ROT_TO_TCP = np.array([-1.57, 0, 0], dtype=np.float32)
+	ROT_TO_TCP = getRotation(np.array([-1.57, 0, 0], dtype=np.float32), RotTypes.EULER, RotTypes.QUAT)
 
 	# cv stuff
 	KEYPT_THKNS = 10
@@ -2533,9 +2533,20 @@ class KeypointDemo(DetectBase):
 		tf_points = tf_points.T 
 		return tf_points[:, :3]
 	
-	def rotateGyccelOrientation(self, quats: np.ndarray) -> np.ndarray:
-		tcp = getRotation(self.ROT_TO_TCP, RotTypes.EULER, RotTypes.MAT) @ getRotation(quats, RotTypes.QUAT, RotTypes.MAT)
-		return getRotation(tcp, RotTypes.MAT, RotTypes.QUAT)
+	def rotateGyccelOrientation(self, quats: np.ndarray, q_static: np.ndarray=ROT_TO_TCP)  -> np.ndarray:
+		x1, y1, z1, w1 = q_static
+		x2, y2, z2, w2 = quats
+		w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+		x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+		y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+		z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+		return np.array([x, y, z, w])
+
+	def normQuats(self, quats: np.ndarray) -> np.ndarray:
+		norm = np.linalg.norm(quats)
+		if norm == 0:
+			return quats
+		return quats / norm
 
 	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
 		if angle is None: 
@@ -2769,11 +2780,12 @@ class KeypointDemo(DetectBase):
 	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
 		# get tcp orientation
 		quats = self.gyccel.readQuats()
+		print(quats)
+		quats = self.rotateGyccelOrientation(quats)
+		print(quats)
+		quats = self.normQuats(quats)
 		print("quats", quats)
-		norm = np.linalg.norm(quats)
-		if not np.isclose(norm, 1.0, rtol=1e-2):
-			print("Normalizing quaternion, norm was:", norm)
-			quats = quats / norm
+		print()
 	
 		# predict angles and positions
 		prediction = self.inferenceRoutine(pos_cmd, quats, direction)
@@ -2804,7 +2816,6 @@ class KeypointDemo(DetectBase):
 				pass
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				# tcp orientation
-				quats = self.rotateGyccelOrientation(quats)
 				self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(quats), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
 				# if kpt_plt is not None:
 				# 	self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))

@@ -15,7 +15,7 @@
 	<arg name="rh8d_port" default="/dev/ttyUSB0" />
 	<arg name="rh8d_baud" default="1000000" />
 	<arg name="gyccel_port" default="/dev/ttyACM0" />
-	<arg name="gyccel_baud" default="115200" />
+	<arg name="gyccel_baud" default="38400" />
 
 	<!-- demo script -->
 	<node pkg="nicol_rh8d" name="dataset_collector" type="detect.py" output="screen" required="true">
