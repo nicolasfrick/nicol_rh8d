@@ -32,6 +32,7 @@ from pose_filter import *
 from qdec_serial import *
 from rh8d_serial import *
 from infer import InferMLP
+from gyccel_serial import GyccelSerial
 from nicol_rh8d.cfg import DetectorConfig
 from marker_detector import ArucoDetector, AprilDetector
 np.set_printoptions(threshold=sys.maxsize, suppress=True)
@@ -2324,6 +2325,10 @@ class KeypointDemo(DetectBase):
 		@type str
 		@param tcp_rot
 		@type str
+		@param gyccel_port
+		@type str
+		@param gyccel_baud
+		@type int
 
 	"""
 
@@ -2331,6 +2336,9 @@ class KeypointDemo(DetectBase):
 	UNIT_AXIS_X = np.array([1, 0, 0], dtype=np.float32)
 	UNIT_AXIS_Y = np.array([0, 1, 0], dtype=np.float32)
 	UNIT_AXIS_Z = np.array([0, 0, 1], dtype=np.float32)
+
+	# gyro/accel to tcp rotation
+	ROT_TO_TCP = np.array([-1.57, 0, 0], dtype=np.float32)
 
 	# cv stuff
 	KEYPT_THKNS = 10
@@ -2345,8 +2353,10 @@ class KeypointDemo(DetectBase):
 				camera_ns: Optional[str]='',
 				vis :Optional[bool]=True,
 				f_ctrl: Optional[int]=30,
-				rh8d_port: Optional[str]="/dev/ttyUSB1",
+				rh8d_port: Optional[str]="/dev/ttyUSB0",
 				rh8d_baud: Optional[int]=1000000,
+				gyccel_port: Optional[str]="/dev/ttyUSB1",
+				gyccel_baud: Optional[int]=115200,
 				use_tf: Optional[bool]=False,
 				test: Optional[bool]=False,
 				save_imgs: Optional[bool]=True,
@@ -2356,10 +2366,7 @@ class KeypointDemo(DetectBase):
 				topic_wait_secs: Optional[float]=15,
 				checkpoint_path: Optional[str]='',
 				scalers_path: Optional[str]='',
-				base_trans: Optional[str]='[0,0,0]',
-				base_rot: Optional[str]='[0,0,0]',
-				tcp_trans: Optional[str]='[0,0,0]',
-				tcp_rot: Optional[str]='[0,0,0]',
+				step_div: Optional[int]=100,
 				) -> None:
 		
 		super().__init__(camera_ns=camera_ns,
@@ -2378,13 +2385,16 @@ class KeypointDemo(DetectBase):
 		self.actuator_state_topic = actuator_state_topic
 		self.joint_state_topic = actuator_state_topic.replace('actuator', 'joint')
 		self.topic_wait_secs = topic_wait_secs
+		self.step_div = step_div
 		self.ctrl_str = ''
+		self.cmx = np.asanyarray(self.rgb_info.K).reshape(3,3)
+		self.dist =  np.asanyarray(self.rgb_info.D)
 
 		# message buffers
-		self.det_img_buffer = deque(maxlen=self.filter_iters)
-		self.actuator_state_buffer = deque(maxlen=1)
-		self.joint_state_buffer = deque(maxlen=1)
-		self.buf_lock = threading.Lock()
+		# self.det_img_buffer = deque(maxlen=self.filter_iters)
+		# self.actuator_state_buffer = deque(maxlen=1)
+		# self.joint_state_buffer = deque(maxlen=1)
+		# self.buf_lock = threading.Lock()
 
 		# init ros
 		if use_tf:
@@ -2392,10 +2402,13 @@ class KeypointDemo(DetectBase):
 			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
 
 		# init controller
-		if attached:
-			self.rh8d_ctrl = MoveRobot()
-		else:
-			self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
+		# if attached:
+		# 	self.rh8d_ctrl = MoveRobot()
+		# else:
+		# 	self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
+			
+		# init gryo/accel
+		self.gyccel = GyccelSerial(gyccel_port, gyccel_baud)
 
 		# load camera extrinsics
 		fl = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cfg/camera_poses.yaml")
@@ -2417,7 +2430,21 @@ class KeypointDemo(DetectBase):
 		self.keypt_keys.extend(list(self.marker_config.keys())) # (joint) links
 		self.fixed_end_joints = self.initRH8DFK(urdf_pth)
 		self.keypt_keys.extend(self.fixed_end_joints) # append tip names
-		self.keypt_plot = KeypointPlot()
+		self.keypt_plot = KeypointPlot(dpi=300,
+																	shape=(1920, 1080),
+																	x_llim=-0.05, 
+																	x_hlim=0.05,
+																	y_llim=-0.05,
+																	y_hlim=0.05,
+																	z_llim=-0.05,
+																	z_hlim=0.05,
+																	ax_scale=0.08,
+																	linewidth=5,
+																	grid_shape=(1, 1),
+																	width_ratios=[10], 
+																	height_ratios=[10],
+																	)
+
 		# get tf links
 		self.tf_links = []
 		for config in self.marker_config.values():
@@ -2433,6 +2460,7 @@ class KeypointDemo(DetectBase):
 		if vis and not self.cv_window:
 			self.out_pub = rospy.Publisher('inference_demo', Image, queue_size=10)
 			self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
+			self.oplot_pub = rospy.Publisher('orientation_plot', Image, queue_size=10)
 		# cv vis
 		elif vis:
 			cv2.namedWindow("Plot", cv2.WINDOW_NORMAL)
@@ -2446,16 +2474,6 @@ class KeypointDemo(DetectBase):
 		if not os.path.exists(sp):
 			raise RuntimeError(f"Enter scalers path relative to {MLP_SCLRS_PTH}")
 		self.infer = InferMLP(cp, sp)
-
-		# rh8d base tf
-		rh8d_base_trans = list(map(float, ast.literal_eval(base_trans)))
-		rh8d_base_rot = list(map(float, ast.literal_eval(base_rot)))
-		self.rh8d_base_tf = {'trans': np.array(rh8d_base_trans, dtype=np.float32), 'quat': getRotation(rh8d_base_rot, RotTypes.EULER, RotTypes.QUAT)}
-		# rh8d tcp tf
-		rh8d_tcp_trans = list(map(float, ast.literal_eval(tcp_trans)))
-		rh8d_tcp_rot = list(map(float, ast.literal_eval(tcp_rot)))
-		self.rh8d_tcp_tf = {'trans': np.array(rh8d_tcp_trans, dtype=np.float32), 'quat': getRotation(rh8d_tcp_rot, RotTypes.EULER, RotTypes.QUAT)}
-
 
 	def initRH8DFK(self, urdf_pth: str) -> list:
 		# init pybullet
@@ -2514,6 +2532,10 @@ class KeypointDemo(DetectBase):
 		tf_points = tf @ homog_points.T
 		tf_points = tf_points.T 
 		return tf_points[:, :3]
+	
+	def rotateGyccelOrientation(self, quats: np.ndarray) -> np.ndarray:
+		tcp = getRotation(self.ROT_TO_TCP, RotTypes.EULER, RotTypes.MAT) @ getRotation(quats, RotTypes.QUAT, RotTypes.MAT)
+		return getRotation(tcp, RotTypes.MAT, RotTypes.QUAT)
 
 	def labelAngle(self, img: cv2.typing.MatLike, name: str, id: int, angle: float) -> None:
 		if angle is None: 
@@ -2545,7 +2567,7 @@ class KeypointDemo(DetectBase):
 
 		# draw base keypoint
 		transformed_point = T_world_cam_holder[:3, :3] @ center_point + T_world_cam_holder[:3, 3]
-		projected_point_parent, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+		projected_point_parent, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.cmx, self.dist)
 		projected_point_parent =  np.int32(projected_point_parent.flatten())
 		cv2.circle(img, projected_point_parent, self.KEYPT_THKNS, self.CHAIN_COLORS[0], -1)
 		
@@ -2566,7 +2588,7 @@ class KeypointDemo(DetectBase):
 						
 						# draw projected point
 						color = self.CHAIN_COLORS[idx%len(self.CHAIN_COLORS)]
-						projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+						projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.cmx, self.dist)
 						projected_point = np.int32(projected_point.flatten())
 						cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
 						
@@ -2587,7 +2609,7 @@ class KeypointDemo(DetectBase):
 							rot_mat = getRotation(fk_dict[link_info['fixed_end']]['quat'], RotTypes.QUAT, RotTypes.MAT)
 							# draw end link
 							transformed_point = rot_mat @ center_point + trans
-							projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+							projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.cmx, self.dist)
 							projected_point = np.int32(projected_point.flatten())
 							cv2.circle(img, projected_point, self.KEYPT_THKNS, color, -1)
 							cv2.line(img, last_projected_point, projected_point, color, self.KEYPT_LINE_THKNS)
@@ -2716,20 +2738,20 @@ class KeypointDemo(DetectBase):
 			T_world_kpt = T_world_r_laser @ T_r_laser_kpt
 			# draw end link
 			transformed_point = T_world_kpt[:3, :3] @ center_point + T_world_kpt[:3, 3]
-			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.det.cmx, self.det.dist)
+			projected_point, _ = cv2.projectPoints(transformed_point, inv_rot, inv_trans, self.cmx, self.dist)
 			projected_point = np.int32(projected_point.flatten())
 			cv2.circle(img, projected_point, self.INF_KPT_THKNS, self.INF_KPT_COLORS[idx], -1)
 			cv2.putText(img, name, projected_point+(-120,-50), cv2.FONT_HERSHEY_SIMPLEX, 1, self.INF_KPT_COLORS[idx], thickness=1, lineType=cv2.LINE_AA)
 
-	def inferenceRoutine(self, pos_cmd: dict, tcp_tf: dict, direction: float)  -> dict:
+	def inferenceRoutine(self, pos_cmd: dict, quats: np.ndarray, direction: float)  -> dict:
 		# input map 
 		model_input = {}
 		# orientation
-		for idx, q in enumerate(tcp_tf['quat']):
+		for idx, q in enumerate(quats):
 			# x,y,z,w
 			model_input.update( {QUAT_COLS[idx] : q} )
 		# force
-		F = getRotation(tcp_tf['quat'], RotTypes.QUAT, RotTypes.MAT)@np.array([0,0,-9.81])
+		F = getRotation(quats, RotTypes.QUAT, RotTypes.MAT)@np.array([0,0,-9.81])
 		for idx, f in enumerate(F):
 			# fx, fy, fz
 			model_input.update( {FORCE_COLS[idx] : f} )
@@ -2745,69 +2767,105 @@ class KeypointDemo(DetectBase):
 		return self.infer.forward(model_input)
 
 	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
-		# get filtered detection and save other resource
-		out_img = rospy.wait_for_message(self.img_topic, Image, )
-		
-		# manual base tf for fk
-		base_tf = self.rh8d_base_tf
-		# manual tcp tf for inference
-		tcp_tf = self.rh8d_tcp_tf
-
+		# get tcp orientation
+		quats = self.gyccel.readQuats()
+		print("quats", quats)
+		norm = np.linalg.norm(quats)
+		if not np.isclose(norm, 1.0, rtol=1e-2):
+			print("Normalizing quaternion, norm was:", norm)
+			quats = quats / norm
+	
 		# predict angles and positions
-		prediction = self.inferenceRoutine(pos_cmd, tcp_tf, direction)
+		prediction = self.inferenceRoutine(pos_cmd, quats, direction)
 		inf_joint_angles = {joint: angle for joint, angle in prediction.items() if 'joint' in joint}
+		# print("predict", prediction)
 		
 		# compute 3D keypoints
-		(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, base_tf, 0.0)
+		(inf_fk_dict, inf_keypt_dict) = self.rh8dFK(inf_joint_angles, {}, 0.0)
+
+		# get image
+		out_img = rospy.wait_for_message(self.img_topic, Image, 15.0)
+		out_img = self.bridge.imgmsg_to_cv2(out_img, 'bgr8')
 		
 		# draw detections
 		if self.vis:
 			# draw infered keypoints
 			self.visKeypoints(out_img, inf_fk_dict) # by inf angles
-			kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
 			self.visInferedKeypoints(out_img, inf_fk_dict, prediction) # use the fk from infered angles to compute keypoints relative to the rh8d tcp
+			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
 			# draw angle labels and possibly fixed detections 
-			for joint, angle in inf_joint_angles.items():
-				self.labelAngle(out_img, joint, 0, angle)
+			for idx, (joint, angle) in enumerate(inf_joint_angles.items()):
+				self.labelAngle(out_img, joint, idx, angle)
 			if self.cv_window:
 				cv2.imshow('Output', out_img)
-				if kpt_plt is not None:
-					cv2.imshow('Plot', kpt_plt)
+				# if kpt_plt is not None:
+				# 	cv2.imshow('Plot', kpt_plt)
 			else:
+				pass
 				self.out_pub.publish(self.bridge.cv2_to_imgmsg(out_img, encoding="bgr8"))
 				# tcp orientation
-				# self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(self.rh8d_tcp_tf['quat']), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
-				if kpt_plt is not None:
-					self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
+				quats = self.rotateGyccelOrientation(quats)
+				self.oplot_pub.publish(self.bridge.cv2_to_imgmsg(cv2.cvtColor(self.keypt_plot.plotOrientation(quats), cv2.COLOR_RGBA2BGR), encoding="bgr8"))
+				# if kpt_plt is not None:
+				# 	self.plot_pub.publish(self.bridge.cv2_to_imgmsg(kpt_plt, encoding="bgr8"))
+
+		return True
+	
+	def mapZeroCenteredCmd(self, cmd: float, direction: int) -> float:
+		if direction > 0:  
+			mapped_cmd = (cmd + np.pi) / 2  
+		else:  
+			if cmd >= 0:
+				mapped_cmd = 2 * cmd - np.pi  
+			else:
+				mapped_cmd = -cmd - np.pi    
+		return mapped_cmd
 	
 	def run(self) -> None:
 		rate = rospy.Rate(self.f_loop)
+		# step resolution
+		step = RH8D_MAX_POS // self.step_div
+		pos_cmd = step
+		# initially closing
+		direction = 1
+		# 0: n/a, 1: closing, -1: opening
+		conditions = [False, lambda cmd: cmd <= RH8D_MAX_POS, lambda cmd: cmd >= RH8D_MIN_POS]
+		# move to zero
+		# self.rh8d_ctrl.rampPalmMinPos()
+		# self.rh8d_ctrl.rampFingerMinPos()
+		# reset gyro
+		self.gyccel.reset()
 		
 		try:
-			while not rospy.is_shutdown():
-						success = True
-						for joint, id in RH8D_JOINT_IDS.items():
-							cmd = waypoint[joint]
-							step = self.rh8d_ctrl.angle2Step(cmd)
-							# print(joint, id, cmd, step)
-							success = self.rh8d_ctrl.setPos(id, step) and success
-						if success:
-							print("done\n") 
-							# rospy.sleep(np.clip(2.0, 2.0, 5.0))
-						else: 
-							print("fail\n")
+			while 1:
+				print("\n", "Closing" if direction > 0 else "Opening", "step: ", step, "direction", direction, "condition", conditions[direction](pos_cmd))
 
-						# detect angles
-						self.detectionRoutine(waypoint, e, direction, description, idx)
+				while not rospy.is_shutdown() and conditions[direction](pos_cmd):
+					cmd_list = {'joint7': 0, 'joint8': 0,  'jointT0': 0, 'jointT1': 0, 'jointI1': 0,  'jointM1': 0, 'jointL1R1': 0}
+					for joint, id in RH8D_JOINT_IDS.items():
+						joint_cmd = self.mapZeroCenteredCmd(RH8DSerial.step2Angle(pos_cmd), direction)
+						joint_cmd = RH8DSerial.angle2Step(joint_cmd) if joint in ['joint7', 'joint8',  'jointT0'] else pos_cmd
+						# self.rh8d_ctrl.setPos(id, joint_cmd)
+						cmd_list[joint] = RH8DSerial.step2Angle(joint_cmd)
+					# set new position 
+					pos_cmd += direction * step
+					print(cmd_list, direction)
 
-						if self.vis and not self.attached:
-							if cv2.waitKey(1) == ord("q"):
-								return
+					# vis angles
+					self.visRoutine(cmd_list, direction)
+					print()
+
+					if self.vis and not self.attached:
+						if cv2.waitKey(1) == ord("q"):
+							return
 						
-						try:
-							rate.sleep()
-						except:
-							pass
+					try:
+						rate.sleep()
+					except:
+						pass
+
+				# invert direction
+				direction *= -1
 
 		except Exception as e:
 			rospy.logerr(e)
@@ -3461,6 +3519,21 @@ def main() -> None:
 									base_rot=rospy.get_param('~base_rot', '[0,0,0]'),
 									tcp_trans=rospy.get_param('~tcp_trans', '[0,0,0]'),
 									tcp_rot=rospy.get_param('~tcp_rot', '[0,0,0]'),
+									).run()
+	elif rospy.get_param('~demo', False):
+		KeypointDemo(camera_ns=rospy.get_param('~markers_camera_name', ''),
+									vis=rospy.get_param('~vis', True),
+									f_ctrl=rospy.get_param('~f_ctrl', 30),
+									use_tf=rospy.get_param('~use_tf', False),
+									rh8d_port=rospy.get_param('~rh8d_port', "/dev/ttyUSB0"),
+									rh8d_baud=rospy.get_param('~rh8d_baud', 1000000),
+									gyccel_port=rospy.get_param('~gyccel_port', "/dev/ttyUSB1"),
+									gyccel_baud=rospy.get_param('~gyccel_baud', 115200),
+									test=rospy.get_param('~test', False),
+									attached=rospy.get_param('~attached', False),
+									save_imgs=rospy.get_param('~save_imgs', False),
+									checkpoint_path=rospy.get_param('~checkpoint_path', ''),
+									scalers_path=rospy.get_param('~scalers_path', ''),
 									).run()
 	else:
 		KeypointDetect(camera_ns=rospy.get_param('~markers_camera_name', ''),

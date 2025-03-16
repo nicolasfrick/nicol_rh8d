@@ -70,11 +70,13 @@ class RH8DSerial():
 				res = self.rampFingerMinPos() and res
 				return res
 		
+		@classmethod
 		def angle2Step(self, angle: float) -> int:
 			step = ((angle + np.pi) / (2 * np.pi)) * RH8D_MAX_POS
 			step = np.clip(step, RH8D_MIN_POS, RH8D_MAX_POS)
 			return int(step)
 		
+		@classmethod
 		def step2Angle(self, step: int) -> float:
 			angle = (2 * np.pi * (step / RH8D_MAX_POS)) - np.pi
 			angle = np.clip(angle, RH8D_MIN_ANGLE, RH8D_MAX_ANGLE)
