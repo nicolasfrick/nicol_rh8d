@@ -3,11 +3,11 @@ import glob
 import matplotlib
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib import gridspec
 from scipy.signal import find_peaks
-from mpl_toolkits.mplot3d import Axes3D 
 from typing import Tuple, Optional, Union
 from scipy.interpolate import UnivariateSpline
 from util import *
@@ -169,7 +169,7 @@ class KeypointPlot():
 				self.root_center_point = trans
 
 		if text:
-			text2D = self.ax_3d.text2D(0.05, 0.95, "", transform= self.ax_3d.transAxes, fontsize=12)
+			text2D = self.ax_3d.text2D(0.0, 0.0, "", transform= self.ax_3d.transAxes, fontsize=10)
 			text2D.set_text("Fg: " + text)
 			
 		self.ax_3d.set_title(title)
@@ -181,6 +181,7 @@ class KeypointPlot():
 	
 	def plotOrientation(self, quats: np.ndarray, f: np.ndarray) -> np.ndarray:
 		keypt_dict = {'orientation': {'trans': np.array([0, 0, 0]), 'rot_mat': getRotation(quats, RotTypes.QUAT, RotTypes.MAT), 'color': 'b'}}
+		qtxt = f"fx: {f[0]:2f}, fy: {f[1]:2f}, fz: {f[2]:2f}"
 		return self.plotKeypoints(keypt_dict, '', pause=0.0, line=False, elev=10, azim=-20, cla=True, text=str(f), title="TCP Orientation")
 	
 def plotData(x: np.ndarray, y: np.ndarray, name: str, save_pth: str=None, grid: bool=True) -> None:
@@ -434,16 +435,8 @@ def plotDataEuler(quat_df: pd.Series, df: pd.DataFrame, title: str='', save_pth:
 	spline_angles = UnivariateSpline(x, angles, s=800) 
 	axs[1].plot(df.index.to_list(), spline_angles(x), label="angle magn", color='k')
 
-	Fg = np.array([0,0,-9.81])
-	# gravity force in the world frame (z-aligned)
-	# # solve direct for x
-	# Fx = lambda p: (Fg[2] * np.sin(p) )*0.05 +1
-	# fx = np.array([Fx(p) for r,p,y in eulers])
-	# spline_fx = UnivariateSpline(x, fx, s=300) 
-	# axs[0].plot(x, spline_fx(x), label="Fz_world", color='c')
-
 	# solve for all axes and extract Fx in the tcp frame
-	Fx = lambda q: (getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg)[0]*0.05 +1
+	Fx = lambda q: tfForce(q)[0]*0.05 +1
 	fx = np.array( [Fx(np.array(q)) for q in quat_df.values] )
 	spline_fx = UnivariateSpline(x, fx, s=300) 
 	axs[0].plot(df.index.to_list(), spline_fx(x), label="Fx_tcp", color='m')
@@ -536,6 +529,7 @@ def animPose() -> None:
 	z_axis, = ax.plot([], [], [], 'b-', label='Z', linewidth=2)
 	text = ax.text2D(0.05, 0.95, "", transform=ax.transAxes, fontsize=12)
 	text2 = ax.text2D(0.05, 0.8, "", transform=ax.transAxes, fontsize=12)
+	text3 = ax.text2D(0.05, 0.65, "", transform=ax.transAxes, fontsize=12)
 
 	def init():
 		ax.set_xlim(1, 0)
@@ -548,7 +542,8 @@ def animPose() -> None:
 		ax.legend()
 		text.set_text("Timestamp: 0.0 s, frame: 0")
 		text2.set_text("r: 0, p: 0, y: 0")
-		return x_axis, y_axis, z_axis, text, text2
+		text3.set_text("[]")
+		return x_axis, y_axis, z_axis, text, text2, text3
 
 	def update(frame):
 		global is_paused
@@ -561,6 +556,8 @@ def animPose() -> None:
 		quaternion = entry['quat']
 		R = getRotation(quaternion, RotTypes.QUAT, RotTypes.MAT)
 		euler = getRotation(quaternion, RotTypes.QUAT, RotTypes.EULER)
+		# force
+		Fg = tfForce(quaternion)
 
 		x_local = np.array([1, 0, 0]) * axis_length
 		y_local = np.array([0, 1, 0]) * axis_length
@@ -582,8 +579,9 @@ def animPose() -> None:
 		
 		text.set_text(f"Timestamp: {ts.strftime('%H:%M:%S')}, frame: {frame}")
 		text2.set_text(f"r: {euler[0]:2f}, p: {euler[1]:2f}, y: {euler[2]:2f}")
+		text3.set_text(f"fx: {Fg[0]:2f}, p: {Fg[1]:2f}, y: {Fg[2]:2f}")
 		
-		return x_axis, y_axis, z_axis, text, text2
+		return x_axis, y_axis, z_axis, text, text2, text3
 
 	def on_key_press(event):
 		global is_paused, ani
@@ -603,9 +601,39 @@ def animPose() -> None:
 	ani = animation.FuncAnimation(fig, update, frames=len(tcp_df), init_func=init, blit=True, interval=3, )
 
 	plt.show()
+	
+def visFeatCont(attributions: Any, target_names: list, feature_names: list) -> None:
+	"""Plot feature contribution matrix with heatmap style."""
+	matplotlib.use('TkAgg') 
+	plt.figure(figsize=(12, 8))
+	sns.heatmap(attributions, annot=True, cmap="YlGnBu", 
+				xticklabels=target_names, yticklabels=feature_names, fmt=".2f")
+	plt.title("Feature Contributions")
+	plt.xlabel("Output Dimensions")
+	plt.ylabel("Input Features")
+	plt.tight_layout()
+	plt.show()
+	
+def visActivationHist(activation_dict: dict) -> None:
+	""" Plot histograms of activations per layer """
+	matplotlib.use('TkAgg') 
+	num_layers = len(activation_dict)
+	fig, axes = plt.subplots(1, num_layers, figsize=(5 * num_layers, 5))
+	if num_layers == 1:
+		axes = [axes]  # single-layer case
+	for i, (key, acts) in enumerate(activation_dict.items()):
+		acts_flat = np.concatenate(acts)
+		# include negative values
+		min_val, max_val = min(acts_flat.min(), -1), max(acts_flat.max(), 1)
+		axes[i].hist(acts_flat, bins=50, range=(min_val, max_val), log=True)
+		axes[i].set_title(f"{key} PReLU Activation Histogram")
+		axes[i].set_xlabel("Activation Value")
+		axes[i].set_ylabel("Frequency (Log Scale)")
+	plt.tight_layout()
+	plt.show()
 
 if __name__ == "__main__":
-	plotKeypoints(0, 1000, False)
+	# plotKeypoints(0, 1000, False)
 	# plotAllTrainingData()
-	# animPose()
+	animPose()
 	# plotHelper()

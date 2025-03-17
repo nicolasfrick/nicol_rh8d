@@ -2329,7 +2329,9 @@ class KeypointDemo(DetectBase):
 		@type str
 		@param gyccel_baud
 		@type int
-
+		@param dry_run
+		@type bool
+		
 	"""
 
 	# angle comp.
@@ -2367,6 +2369,7 @@ class KeypointDemo(DetectBase):
 				checkpoint_path: Optional[str]='',
 				scalers_path: Optional[str]='',
 				step_div: Optional[int]=100,
+				dry_run: Optional[bool]=False,
 				) -> None:
 		
 		super().__init__(camera_ns=camera_ns,
@@ -2389,6 +2392,7 @@ class KeypointDemo(DetectBase):
 		self.ctrl_str = ''
 		self.cmx = np.asanyarray(self.rgb_info.K).reshape(3,3)
 		self.dist =  np.asanyarray(self.rgb_info.D)
+		self.dry_run = dry_run
 
 		# message buffers
 		# self.det_img_buffer = deque(maxlen=self.filter_iters)
@@ -2402,10 +2406,11 @@ class KeypointDemo(DetectBase):
 			self.listener = tf2_ros.TransformListener(self.buf, tcp_nodelay=True)
 
 		# init controller
-		# if attached:
-		# 	self.rh8d_ctrl = MoveRobot()
-		# else:
-		# 	self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
+		if not self.dry_run:
+			if attached:
+				self.rh8d_ctrl = MoveRobot()
+			else:
+				self.rh8d_ctrl = RH8DSerial(rh8d_port, rh8d_baud) if not test else RH8DSerialStub()
 			
 		# init gryo/accel
 		self.gyccel = GyccelSerial(gyccel_port, gyccel_baud)
@@ -2762,7 +2767,7 @@ class KeypointDemo(DetectBase):
 			# x,y,z,w
 			model_input.update( {QUAT_COLS[idx] : q} )
 		# force
-		F = getRotation(quats, RotTypes.QUAT, RotTypes.MAT).T @ np.array([0,0,-9.81])
+		F = tfForce(quats)
 		for idx, f in enumerate(F):
 			# fx, fy, fz
 			model_input.update( {FORCE_COLS[idx] : f} )
@@ -2780,9 +2785,7 @@ class KeypointDemo(DetectBase):
 	def visRoutine(self, pos_cmd: dict, direction: int) -> bool:
 		# get tcp orientation
 		quats = self.gyccel.readQuats()
-		print("quats", quats)
-		# quats = self.rotateGyccelOrientation(quats)
-		# print("rotated quats", quats)
+		# print("quats", quats)
 	
 		# predict angles and positions
 		prediction, Fg = self.inferenceRoutine(pos_cmd, quats, direction)
@@ -2839,8 +2842,9 @@ class KeypointDemo(DetectBase):
 		# 0: n/a, 1: closing, -1: opening
 		conditions = [False, lambda cmd: cmd <= RH8D_MAX_POS, lambda cmd: cmd >= RH8D_MIN_POS]
 		# move to zero
-		# self.rh8d_ctrl.rampPalmMinPos()
-		# self.rh8d_ctrl.rampFingerMinPos()
+		if not self.dry_run:
+			self.rh8d_ctrl.rampPalmMinPos()
+			self.rh8d_ctrl.rampFingerMinPos()
 		# reset gyro
 		self.gyccel.reset()
 		
@@ -2853,7 +2857,8 @@ class KeypointDemo(DetectBase):
 					for joint, id in RH8D_JOINT_IDS.items():
 						joint_cmd = self.mapZeroCenteredCmd(RH8DSerial.step2Angle(pos_cmd), direction)
 						joint_cmd = RH8DSerial.angle2Step(joint_cmd) if joint in ['joint7', 'joint8',  'jointT0'] else pos_cmd
-						# self.rh8d_ctrl.setPos(id, joint_cmd)
+						if not self.dry_run:
+							self.rh8d_ctrl.setPos(id, joint_cmd)
 						cmd_list[joint] = RH8DSerial.step2Angle(joint_cmd)
 					# set new position 
 					pos_cmd += direction * step

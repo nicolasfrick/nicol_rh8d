@@ -803,16 +803,14 @@ def postProcInterpolateNans() -> None:
 	kypt_df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/dense_kpts3D.json"), orient="index", indent=4)
 
 	# compute forces
-	Fg = np.array([0,0,-9.81])
-	F = lambda q: getRotation(q, RotTypes.QUAT, RotTypes.MAT)@Fg # R@Fg
-	f = np.array( [F(np.array(q)) for q in fk_df['quat'].values] )
+	f = np.array( [tfForce(np.array(q)) for q in fk_df['quat'].values] )
 	df = pd.DataFrame(columns=["f_tcp"])
 	for f_elmt in f:
 		df = pd.concat([df, pd.DataFrame([{"f_tcp" : f_elmt}])], ignore_index=True)
 	df.to_json(os.path.join(DATA_PTH, "keypoint/post_processed/f_tcp.json"), orient="index", indent=4)
 
 	# compute dense forces
-	f = np.array( [F(np.array(q)) for q in dense_tcp_df['quat'].values] )
+	f = np.array( [tfForce(np.array(q)) for q in dense_tcp_df['quat'].values] )
 	df = pd.DataFrame(columns=["f_tcp"])
 	for f_elmt in f:
 		df = pd.concat([df, pd.DataFrame([{"f_tcp" : f_elmt}])], ignore_index=True)

@@ -88,7 +88,7 @@ class RH8DSerial():
 				crnt = np.array([self.getpos(id) for id in self.palm_ids], dtype=np.int16)
 				zeros = np.array([RH8D_MIN_POS for _ in range(len(crnt))])
 
-				while not np.isclose(crnt, zeros):
+				while not all(np.isclose(crnt, zeros)):
 						for idx, id in enumerate(self.palm_ids):
 								if not np.isclose(crnt[idx], zeros[idx]):
 										if abs(crnt[idx]) <= (RH8D_MAX_POS - (RH8D_MAX_POS*0.875))*0.5 and step > 1:
@@ -102,7 +102,7 @@ class RH8DSerial():
 												crnt[idx] = min(crnt[idx], RH8D_MIN_POS)
 										self.setPos(id, crnt[idx], 0.0)
 
-						time.sleep(t_sleep)
+						sleep(t_sleep)
 						cnt += 1
 						if cnt > 1000:
 								print("RH8D Timeout ramping to zero:", crnt)
@@ -125,7 +125,7 @@ class RH8DSerial():
 										crnt[idx] = max(crnt, RH8D_MIN_POS)
 										self.setPos(id, crnt[idx], 0.0)
 
-						time.sleep(t_sleep)
+						sleep(t_sleep)
 						cnt += 1
 						if cnt > 1000:
 								print("RH8D Timeout ramping to zero:", crnt)
@@ -202,10 +202,10 @@ if __name__ == "__main__":
 						print(s.getpos(id))
 						pass
 
-				time.sleep(1)
+				sleep(1)
 				for pos in range(100, RH8D_MAX_POS, 100):
 						s.setPos(id, pos)
-						time.sleep(0.1)
+						sleep(0.1)
 
-				time.sleep(2)
+				sleep(2)
 				s.setMinPos(id)

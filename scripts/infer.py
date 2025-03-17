@@ -3,8 +3,10 @@ import glob
 import torch
 import numpy as np
 from typing import Union
+from captum.attr import IntegratedGradients
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from train import DEVICE, MLP, TrainingData as TD
+from plot_record import visFeatCont, visActivationHist
 from util import *
 
 class InferMLP():
@@ -64,6 +66,7 @@ class InferMLP():
 		print(self.feature_names)
 		print("and targets")
 		print(self.target_names)
+		print()
 
 	def loadScaler(self, pth: str) -> Union[MinMaxScaler, StandardScaler]:
 		return TD.loadScaler(pth)
@@ -144,7 +147,7 @@ class InferMLP():
 		""" Predict joint angles and tip link positions 
 			  from actuator angles, direction and eef orientation.
 
-							                [quaternions, actuator commands, direction of rotations]
+											[quaternions, actuator commands, direction of rotations]
 			  @param input [x, y, z, w, cmd7, cmd8, cmdT0, cmdT1, cmdI1, cmdM1, cmdL1R1, dirT0, dirT1, dirI1, dirM1, dirL1R1]
 			  @type dict
 			  								  [translations, joint angles]
@@ -163,11 +166,75 @@ class InferMLP():
 
 			return self.mapOutput(output)
 		
-def test(idx: int) -> None:
-	infer = InferMLP(os.path.join(MLP_CHKPT_PTH, 'rh8d_all/01_06_15_01/final_best_model_epoch=24_train_loss=0.033.ckpt'),
+	def visFeatureCont(self, input: dict, plot: bool = True) -> np.ndarray:
+		X = self.mapInput(input)
+		X = torch.from_numpy(X).float().to(DEVICE).requires_grad_(True)
+		baseline = torch.zeros_like(X)  # zero input no actuation/forces
+
+		# init
+		ig = IntegratedGradients(self.model)
+
+		# compute attributions for each output dimension
+		num_outputs = self.len_targets 
+		attributions_list = []
+		for target_idx in range(num_outputs):
+			attr = ig.attribute(X.unsqueeze(0), baselines=baseline.unsqueeze(0), target=target_idx)
+			# [1, num_features] -> [num_features]
+			attr = attr.squeeze(0).abs().detach().cpu().numpy()
+			attributions_list.append(attr)
+
+		# [num_features, num_outputs]
+		attributions = np.stack(attributions_list, axis=1)
+
+		if plot:
+			visFeatCont(attributions, self.target_names, self.feature_names)
+
+		return attributions
+	
+	def visActivations(self, inputs: list[dict]) -> dict:
+		self.model.eval()
+		activation_dict = {}
+
+		def hook_fn(module: torch.nn.Module, input: torch.Tensor, output: torch.Tensor, name: str) -> None:
+			if name not in activation_dict:
+				activation_dict[name] = []
+			activation_dict[name].append(output.detach().cpu().numpy().flatten())
+
+		handles = []
+		for i, layer in enumerate(self.model.model):
+			if isinstance(layer, torch.nn.PReLU):
+				handle = layer.register_forward_hook(
+					lambda m, i, o, n=f"Layer {i//3 + 1}": hook_fn(m, i, o, n)
+				)
+				handles.append(handle)
+
+		# forward passes
+		for input_dict in inputs:
+			X = self.mapInput(input_dict)
+			X = torch.from_numpy(X).float().to(DEVICE)
+			self.model(X)  # hooks capture activations
+
+		# rm hooks
+		for handle in handles:
+			handle.remove()
+
+		# utilization stats
+		stats = {}
+		for layer, acts in activation_dict.items():
+			acts_flat = np.concatenate(acts)
+			mean_abs = np.mean(np.abs(acts_flat))
+			std_abs = np.std(np.abs(acts_flat))
+			# percentage of activations with low magnitude 
+			low_magnitude = np.sum(np.abs(acts_flat) < 0.01) / len(acts_flat) * 100
+			stats[layer] = {"mean_abs": mean_abs, "std_abs": std_abs, "low_magnitude_percent": low_magnitude}
+
+		return {"activations": activation_dict, "stats": stats}
+		
+def testSingle(idx: int) -> None:
+	infer = InferMLP(os.path.join(MLP_CHKPT_PTH, 'rh8d_all/validation/final_best_model_epoch=299_train_loss=0.009.ckpt'),
 				  					 os.path.join(MLP_SCLRS_PTH, 'rh8d_all'),)
 	
-	dataset = pd.read_json(os.path.join(TRAIN_PTH, 'config_processed/rh8d_all.json'),orient='index')
+	dataset = pd.read_json(os.path.join(TRAIN_PTH, 'config_processed_dense/all/rh8d_all.json'),orient='index')
 	row:pd.Series = dataset.loc[idx]
 	
 	input = {}
@@ -175,17 +242,82 @@ def test(idx: int) -> None:
 	quat = row.loc['quat']
 	for idx, q in enumerate(QUAT_COLS):
 		input.update( {q: quat[idx]} )
-	# cmd 2nd, dir 3rd
+	# force 2nd
+	F = tfForce(quat)
+	for idx, f in enumerate(FORCE_COLS):
+		input.update( {f: F[idx]} )
+	# cmd 3nd, dir 4th
 	for key, val in row.items():
 		if 'cmd' in key:
-			input.update( {key.replace('cmd', 'joint') : val} )
+			input.update( {key : val} )
 		elif 'dir' in key:
 			input.update( {key: val} )
 
 	prediction = infer.forward(input)
 
 	for key, val in prediction.items():
-		print(key, "prediction error:", abs(val - row.loc[key]))
+		print(key, "prediction error:", abs(val - row.loc[key.replace('joint', 'angle')]))
+
+	infer.visFeatureCont(input)
+
+def testAll(start_idx: int=0, end_idx: int=0) -> None:
+	infer = InferMLP(os.path.join(MLP_CHKPT_PTH, 'rh8d_all/validation/final_best_model_epoch=299_train_loss=0.009.ckpt'),
+				  					 os.path.join(MLP_SCLRS_PTH, 'rh8d_all'),)
+	
+	dataset = pd.read_json(os.path.join(TRAIN_PTH, 'config_processed_dense/all/rh8d_all.json'),orient='index')
+	print("Testing model from index", start_idx, "to",  len(dataset) if end_idx == 0 else end_idx)
+	inputs = []
+	errors_all = {}
+	attributions_all = []
+	for idx in range(start_idx, len(dataset) if end_idx == 0 else end_idx):
+		print(f"\r{idx:5}", end="", flush=True)
+		row: pd.Series = dataset.loc[idx]
+		input = {}
+		# quaternions 1st
+		quat = row.loc['quat']
+		for idx, q in enumerate(QUAT_COLS):
+			input.update( {q: quat[idx]} )
+		# force 2nd
+		F = row.loc['force']
+		for idx, f in enumerate(FORCE_COLS):
+			input.update( {f: F[idx]} )
+		# cmd 3nd, dir 4th
+		for key, val in row.items():
+			if 'cmd' in key:
+				input.update( {key : val} )
+			elif 'dir' in key:
+				input.update( {key: val} )
+
+		inputs.append(input)
+		prediction = infer.forward(input)
+
+		for key, val in prediction.items():
+			err = abs(val - row.loc[key.replace('joint', 'angle')])
+			if errors_all.get(key) is None:
+				errors_all.update( {key: [err]} )
+			else:
+				errors_all[key].append(err)
+
+		attributions = infer.visFeatureCont(input, plot=False)
+		attributions_all.append(attributions)
+
+	print("\ndone")
+
+	# error
+	for key, err in errors_all.items():
+		print(key, "mean error", np.mean(err))
+
+	# contributions
+	attributions_mean = np.mean(attributions_all, axis=0)
+	visFeatCont(attributions_mean, infer.target_names, infer.feature_names)
+
+	# activations
+	results = infer.visActivations(inputs)
+	visActivationHist(results["activations"])
+	print("Utilization Stats:")
+	for layer, stat in results["stats"].items():
+		print(f"{layer}: Mean |Act| = {stat['mean_abs']:.4f}, Std |Act| = {stat['std_abs']:.4f}, "
+			  f"Low Magnitude (< 0.01) = {stat['low_magnitude_percent']:.2f}%")
 
 if __name__ == "__main__":
-	test(8555)
+	testAll(end_idx=100)
