@@ -261,7 +261,7 @@ def testSingle(idx: int) -> None:
 	infer.visFeatureCont(input)
 
 def testAll(start_idx: int=0, end_idx: int=0) -> None:
-	infer = InferMLP(os.path.join(MLP_CHKPT_PTH, 'rh8d_all/validation/final_best_model_epoch=299_train_loss=0.009.ckpt'),
+	infer = InferMLP(os.path.join(MLP_CHKPT_PTH, 'rh8d_all/validation/final_best_model_epoch=199_train_loss=0.018.ckpt'),
 				  					 os.path.join(MLP_SCLRS_PTH, 'rh8d_all'),)
 	
 	dataset = pd.read_json(os.path.join(TRAIN_PTH, 'config_processed_dense/all/rh8d_all.json'),orient='index')
@@ -320,4 +320,4 @@ def testAll(start_idx: int=0, end_idx: int=0) -> None:
 			  f"Low Magnitude (< 0.01) = {stat['low_magnitude_percent']:.2f}%")
 
 if __name__ == "__main__":
-	testAll(end_idx=0)
+	testAll()
