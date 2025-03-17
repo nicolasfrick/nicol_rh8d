@@ -2835,12 +2835,13 @@ class KeypointDemo(DetectBase):
 	def run(self) -> None:
 		rate = rospy.Rate(self.f_loop)
 		# step resolution
-		step = RH8D_MAX_POS // self.step_div
+		max_pos = 1000
+		step = max_pos // self.step_div
 		pos_cmd = step
 		# initially closing
 		direction = 1
 		# 0: n/a, 1: closing, -1: opening
-		conditions = [False, lambda cmd: cmd <= RH8D_MAX_POS, lambda cmd: cmd >= RH8D_MIN_POS]
+		conditions = [False, lambda cmd: cmd <= max_pos, lambda cmd: cmd >= RH8D_MIN_POS]
 		# move to zero
 		if not self.dry_run:
 			self.rh8d_ctrl.rampPalmMinPos()

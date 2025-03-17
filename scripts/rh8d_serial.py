@@ -7,6 +7,7 @@ from dynamixel_sdk import PortHandler, PacketHandler
 
 RH8D_MIN_POS   = 0
 RH8D_MAX_POS = 4095
+RH8D_ZERO_POS = int(RH8D_MAX_POS/2)
 RH8D_IDS               = {'palm_flex': 32, 'palm_abd': 33, 'index_flex': 36, 'ring_flex': 38,  'middle_flex': 37, 'thumb_abd': 34, 'thumb_flex': 35}
 RH8D_JOINT_IDS           = {'joint7': 32, 'joint8': 33, 'jointI1': 36, 'jointL1R1': 38,  'jointM1': 37, 'jointT0': 34, 'jointT1': 35}
 RH8D_MIN_ANGLE = -np.pi
@@ -86,7 +87,7 @@ class RH8DSerial():
 				cnt = 0
 				step = 100
 				crnt = np.array([self.getpos(id) for id in self.palm_ids], dtype=np.int16)
-				zeros = np.array([RH8D_MIN_POS for _ in range(len(crnt))])
+				zeros = np.array([RH8D_ZERO_POS for _ in range(len(crnt))])
 
 				while not all(np.isclose(crnt, zeros)):
 						for idx, id in enumerate(self.palm_ids):
@@ -94,12 +95,12 @@ class RH8DSerial():
 										if abs(crnt[idx]) <= (RH8D_MAX_POS - (RH8D_MAX_POS*0.875))*0.5 and step > 1:
 												step *= 0.91
 												step = max(int(step), 1)
-										if crnt[idx] > RH8D_MIN_POS:
+										if crnt[idx] > RH8D_ZERO_POS:
 												crnt[idx] -= step
-												crnt[idx] = max(crnt[idx], RH8D_MIN_POS)
+												crnt[idx] = max(crnt[idx], RH8D_ZERO_POS)
 										else:
 												crnt[idx] += step
-												crnt[idx] = min(crnt[idx], RH8D_MIN_POS)
+												crnt[idx] = min(crnt[idx], RH8D_ZERO_POS)
 										self.setPos(id, crnt[idx], 0.0)
 
 						sleep(t_sleep)
@@ -122,7 +123,7 @@ class RH8DSerial():
 												step *= 0.91
 												step = max(int(step), 1)
 										crnt[idx] -= step
-										crnt[idx] = max(crnt, RH8D_MIN_POS)
+										crnt[idx] = max(crnt[idx], RH8D_MIN_POS)
 										self.setPos(id, crnt[idx], 0.0)
 
 						sleep(t_sleep)

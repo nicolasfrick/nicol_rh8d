@@ -320,4 +320,4 @@ def testAll(start_idx: int=0, end_idx: int=0) -> None:
 			  f"Low Magnitude (< 0.01) = {stat['low_magnitude_percent']:.2f}%")
 
 if __name__ == "__main__":
-	testAll(end_idx=100)
+	testAll(end_idx=0)
