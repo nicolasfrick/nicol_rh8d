@@ -2368,7 +2368,7 @@ class KeypointDemo(DetectBase):
 				topic_wait_secs: Optional[float]=15,
 				checkpoint_path: Optional[str]='',
 				scalers_path: Optional[str]='',
-				step_div: Optional[int]=100,
+				step_div: Optional[int]=350,
 				dry_run: Optional[bool]=False,
 				) -> None:
 		
@@ -2464,7 +2464,7 @@ class KeypointDemo(DetectBase):
 		# init ros vis
 		if vis and not self.cv_window:
 			self.out_pub = rospy.Publisher('inference_demo', Image, queue_size=10)
-			self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
+			# self.plot_pub = rospy.Publisher('keypoint_plot', Image, queue_size=10)
 			self.oplot_pub = rospy.Publisher('orientation_plot', Image, queue_size=10)
 		# cv vis
 		elif vis:
@@ -2512,7 +2512,10 @@ class KeypointDemo(DetectBase):
 		return fixed_end_joints
 
 	def ctrlCB(self, msg: String) -> None:
-		self.ctrl_str = msg.data
+		if msg.data == 'r':
+			self.gyccel.reset()
+		else:
+			self.ctrl_str = msg.data
 
 	def lookupTF(self, stamp: rospy.Time, target_frame: str, source_frame: str) -> dict:
 		try:
@@ -2803,7 +2806,8 @@ class KeypointDemo(DetectBase):
 		if self.vis:
 			# draw infered keypoints
 			self.visKeypoints(out_img, inf_fk_dict) # by inf angles
-			self.visInferedKeypoints(out_img, inf_fk_dict, prediction) # use the fk from infered angles to compute keypoints relative to the rh8d tcp
+			if self.ctrl_str == 's':
+				self.visInferedKeypoints(out_img, inf_fk_dict, prediction) # use the fk from infered angles to compute keypoints relative to the rh8d tcp
 			# kpt_plt = self.plotKeypoints(inf_keypt_dict, False) # by inf angles
 			# draw angle labels and possibly fixed detections 
 			for idx, (joint, angle) in enumerate(inf_joint_angles.items()):
@@ -2835,7 +2839,7 @@ class KeypointDemo(DetectBase):
 	def run(self) -> None:
 		rate = rospy.Rate(self.f_loop)
 		# step resolution
-		max_pos = 1000
+		max_pos = 2700
 		step = max_pos // self.step_div
 		pos_cmd = step
 		# initially closing
@@ -2867,6 +2871,8 @@ class KeypointDemo(DetectBase):
 
 					# vis angles
 					self.visRoutine(cmd_list, direction)
+					while self.ctrl_str == 'p':
+						self.visRoutine(cmd_list, direction)
 					print()
 
 					if self.vis and not self.attached:

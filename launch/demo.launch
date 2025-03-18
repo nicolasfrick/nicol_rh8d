@@ -1,7 +1,7 @@
 <!-- run alongside: roslaunch nicol_rh8d dataset_cameras.launch marker_fps:=8 enable_depth:=false -->
 <launch>
 
-	<arg name="checkpoint_path" default="rh8d_all/validation/final_best_model_epoch=299_train_loss=0.009.ckpt" doc="Relative to MLP_CHKPT_PTH"/>
+	<arg name="checkpoint_path" default="rh8d_all/validation/final_best_model_epoch=199_train_loss=0.018.ckpt" doc="Relative to MLP_CHKPT_PTH"/>
 	<arg name="scalers_path" default="rh8d_all" doc="Relative to MLP_SCLRS_PTH"/>
 	<arg name="markers_camera_name" default="markers_camera" /> <!-- set params as in dataset_cameras.launch -->
 
